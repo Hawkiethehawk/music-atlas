@@ -1,0 +1,11 @@
+.env
+.env.example
+secrets/
+state.json
+*.log
+__pycache__/
+*.pyc
+input/
+runtime/
+.apple-web-profile/
+auth_server.py

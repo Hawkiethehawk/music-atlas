@@ -1,0 +1,606 @@
+{
+  "schema_version": "1.0",
+  "catalog_type": "curated_public_facts",
+  "artists": {
+    "Imminence": {
+      "canonical_name": "Imminence",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Eddie Berg",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Imminence_(band)"]
+        }
+      ],
+      "related_projects": []
+    },
+    "Bad Omens": {
+      "canonical_name": "Bad Omens",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Noah Sebastian",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Bad_Omens_(band)"]
+        }
+      ],
+      "related_projects": []
+    },
+    "Stereophonics": {
+      "canonical_name": "Stereophonics",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Kelly Jones",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Stereophonics"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Far from Saints",
+          "relation": "side_project",
+          "person": "Kelly Jones",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Far_from_Saints"]
+        }
+      ]
+    },
+    "The Plot In You": {
+      "canonical_name": "The Plot In You",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Landon Tewers",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/The_Plot_in_You"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Landon Tewers",
+          "relation": "solo_project",
+          "person": "Landon Tewers",
+          "status": "active",
+          "confidence": "medium",
+          "sources": ["https://landontewers.bandcamp.com/"]
+        }
+      ]
+    },
+    "twenty one pilots": {
+      "canonical_name": "twenty one pilots",
+      "aliases": ["Twenty One Pilots"],
+      "entity_type": "duo",
+      "lead_vocalists": [
+        {
+          "name": "Tyler Joseph",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Twenty_One_Pilots"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "No Phun Intended",
+          "relation": "former_solo_project",
+          "person": "Tyler Joseph",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/No_Phun_Intended"]
+        }
+      ]
+    },
+    "Bring Me The Horizon": {
+      "canonical_name": "Bring Me The Horizon",
+      "aliases": ["Bring Me the Horizon"],
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Oli Sykes",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Bring_Me_the_Horizon"]
+        }
+      ],
+      "related_projects": []
+    },
+    "Deftones": {
+      "canonical_name": "Deftones",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Chino Moreno",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Deftones"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Team Sleep",
+          "relation": "side_project",
+          "person": "Chino Moreno",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Team_Sleep"]
+        },
+        {
+          "name": "Crosses",
+          "relation": "side_project",
+          "person": "Chino Moreno",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Crosses_(band)"]
+        },
+        {
+          "name": "Palms",
+          "relation": "side_project",
+          "person": "Chino Moreno",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Palms_(band)"]
+        }
+      ]
+    },
+    "LINKIN PARK": {
+      "canonical_name": "LINKIN PARK",
+      "aliases": ["Linkin Park"],
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Emily Armstrong",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+        },
+        {
+          "name": "Mike Shinoda",
+          "role": "co-lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+        },
+        {
+          "name": "Chester Bennington",
+          "role": "lead vocalist",
+          "status": "former",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Fort Minor",
+          "relation": "side_project",
+          "person": "Mike Shinoda",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Fort_Minor"]
+        },
+        {
+          "name": "Dead by Sunrise",
+          "relation": "side_project",
+          "person": "Chester Bennington",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Dead_by_Sunrise"]
+        },
+        {
+          "name": "Grey Daze",
+          "relation": "former_band",
+          "person": "Chester Bennington",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Grey_Daze"]
+        },
+        {
+          "name": "Dead Sara",
+          "relation": "former_band",
+          "person": "Emily Armstrong",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Dead_Sara"]
+        }
+      ]
+    },
+    "MNQN": {
+      "canonical_name": "MNQN",
+      "entity_type": "solo_project",
+      "lead_vocalists": [
+        {
+          "name": "Devin Oliver",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/I_See_Stars"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "I See Stars",
+          "relation": "main_band",
+          "person": "Devin Oliver",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/I_See_Stars"]
+        }
+      ]
+    },
+    "Mike Shinoda": {
+      "canonical_name": "Mike Shinoda",
+      "entity_type": "solo_artist",
+      "lead_vocalists": [
+        {
+          "name": "Mike Shinoda",
+          "role": "vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Mike_Shinoda"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "LINKIN PARK",
+          "relation": "main_band",
+          "person": "Mike Shinoda",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+        },
+        {
+          "name": "Fort Minor",
+          "relation": "side_project",
+          "person": "Mike Shinoda",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Fort_Minor"]
+        }
+      ]
+    },
+    "Eminem": {
+      "canonical_name": "Eminem",
+      "entity_type": "solo_artist",
+      "lead_vocalists": [
+        {
+          "name": "Eminem",
+          "role": "rapper and vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Eminem"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "D12",
+          "relation": "group",
+          "person": "Eminem",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/D12"]
+        },
+        {
+          "name": "Bad Meets Evil",
+          "relation": "duo",
+          "person": "Eminem",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Bad_Meets_Evil"]
+        }
+      ]
+    },
+    "Hurtwave": {
+      "canonical_name": "Hurtwave",
+      "entity_type": "side_project",
+      "lead_vocalists": [
+        {
+          "name": "Rory Rodriguez",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "medium",
+          "sources": ["https://en.wikipedia.org/wiki/Dayseeker"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Dayseeker",
+          "relation": "main_band",
+          "person": "Rory Rodriguez",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Dayseeker"]
+        }
+      ]
+    },
+    "Spiritbox": {
+      "canonical_name": "Spiritbox",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Courtney LaPlante",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Spiritbox"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Iwrestledabearonce",
+          "relation": "former_band",
+          "person": "Courtney LaPlante",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Iwrestledabearonce"]
+        }
+      ]
+    },
+    "Dayseeker": {
+      "canonical_name": "Dayseeker",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Rory Rodriguez",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Dayseeker"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Hurtwave",
+          "relation": "side_project",
+          "person": "Rory Rodriguez",
+          "status": "active",
+          "confidence": "medium",
+          "sources": ["https://dayseekerband.com/"]
+        }
+      ]
+    },
+    "Dead By Sunrise": {
+      "canonical_name": "Dead By Sunrise",
+      "aliases": ["Dead by Sunrise"],
+      "entity_type": "side_project",
+      "lead_vocalists": [
+        {
+          "name": "Chester Bennington",
+          "role": "lead vocalist",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Dead_by_Sunrise"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "LINKIN PARK",
+          "relation": "main_band",
+          "person": "Chester Bennington",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+        },
+        {
+          "name": "Grey Daze",
+          "relation": "former_band",
+          "person": "Chester Bennington",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Grey_Daze"]
+        }
+      ]
+    },
+    "Fort Minor": {
+      "canonical_name": "Fort Minor",
+      "entity_type": "side_project",
+      "lead_vocalists": [
+        {
+          "name": "Mike Shinoda",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Fort_Minor"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "LINKIN PARK",
+          "relation": "main_band",
+          "person": "Mike Shinoda",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+        }
+      ]
+    },
+    "I See Stars": {
+      "canonical_name": "I See Stars",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Devin Oliver",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/I_See_Stars"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "MNQN",
+          "relation": "side_project",
+          "person": "Devin Oliver",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/I_See_Stars"]
+        }
+      ]
+    },
+    "Falling In Reverse": {
+      "canonical_name": "Falling In Reverse",
+      "aliases": ["Falling in Reverse"],
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Ronnie Radke",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Falling_in_Reverse"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Escape the Fate",
+          "relation": "former_band",
+          "person": "Ronnie Radke",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Escape_the_Fate"]
+        }
+      ]
+    },
+    "Three Days Grace": {
+      "canonical_name": "Three Days Grace",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Matt Walst",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Three_Days_Grace"]
+        },
+        {
+          "name": "Adam Gontier",
+          "role": "lead vocalist",
+          "status": "former",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Three_Days_Grace"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Saint Asonia",
+          "relation": "side_project",
+          "person": "Adam Gontier",
+          "status": "active",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Saint_Asonia"]
+        }
+      ]
+    },
+    "Slowdive": {
+      "canonical_name": "Slowdive",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Neil Halstead",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Slowdive"]
+        },
+        {
+          "name": "Rachel Goswell",
+          "role": "co-lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Slowdive"]
+        }
+      ],
+      "related_projects": [
+        {
+          "name": "Mojave 3",
+          "relation": "former_band",
+          "person": "Neil Halstead",
+          "status": "historical",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Mojave_3"]
+        }
+      ]
+    },
+    "Halestorm": {
+      "canonical_name": "Halestorm",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Lzzy Hale",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/Halestorm"]
+        }
+      ],
+      "related_projects": []
+    },
+    "I Prevail": {
+      "canonical_name": "I Prevail",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Brian Burkheiser",
+          "role": "clean vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/I_Prevail"]
+        },
+        {
+          "name": "Eric Vanlerberghe",
+          "role": "harsh vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/I_Prevail"]
+        }
+      ],
+      "related_projects": []
+    },
+    "The Pretty Reckless": {
+      "canonical_name": "The Pretty Reckless",
+      "entity_type": "band",
+      "lead_vocalists": [
+        {
+          "name": "Taylor Momsen",
+          "role": "lead vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/The_Pretty_Reckless"]
+        }
+      ],
+      "related_projects": []
+    },
+    "WZRD": {
+      "canonical_name": "WZRD",
+      "entity_type": "duo",
+      "lead_vocalists": [
+        {
+          "name": "Kid Cudi",
+          "role": "vocalist",
+          "status": "current",
+          "confidence": "high",
+          "sources": ["https://en.wikipedia.org/wiki/WZRD_(band)"]
+        },
+        {
+          "name": "Dot da Genius",
+          "role": "producer and vocalist",
+          "status": "current",
+          "confidence": "medium",
+          "sources": ["https://en.wikipedia.org/wiki/WZRD_(band)"]
+        }
+      ],
+      "related_projects": []
+    }
+  }
+}

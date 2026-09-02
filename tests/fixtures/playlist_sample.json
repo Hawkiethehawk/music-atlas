@@ -1,0 +1,26 @@
+{
+  "declared_track_count": 3,
+  "tracks": [
+    {
+      "title": "Sample Anchor",
+      "artist": "Imminence",
+      "artists": ["Imminence"],
+      "album": "Sample Release",
+      "song_url": "https://music.apple.com/us/song/sample-anchor/1001"
+    },
+    {
+      "title": "Sample Cross",
+      "artist": "Deftones",
+      "artists": ["Deftones"],
+      "album": "Sample Release",
+      "song_url": "https://music.apple.com/us/song/sample-cross/1002"
+    },
+    {
+      "title": "Sample Feature",
+      "artist": "LINKIN PARK",
+      "artists": ["LINKIN PARK", "Mike Shinoda"],
+      "album": "Sample Release",
+      "song_url": "https://music.apple.com/us/song/sample-feature/1003"
+    }
+  ]
+}
