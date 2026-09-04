@@ -43,6 +43,8 @@
 
 同日补记：Apple Music 歌单导出固化为项目能力。新增 `tools/export_apple_playlist.mjs`（Playwright 无头，事件驱动等待，下载后校验表头与行数，失败显式报错并提示页面改版风险）与 `workflow.py export-apple-playlist` 子命令（node 缺失时给出安装指引）；`tools/README.md` 记录依赖与用法，`tools/node_modules/` 入 Git 忽略。修复过程中定位三处问题：目标网格未点击（漏掉 Choose Destination 点击）、`has-text("Export")` 误匹配服务块（改 exact 匹配）、页面中英双语渲染（主选择器改用语言无关的 aria-label）。验收：真实 115 首歌单经新子命令重新导出成功，snapshot(complete) -> analyze(68 实体) -> prepare-agent 全链路通过，67 个测试全绿。新增 `atlas.md` 项目总结。
 
+维护标签：`patch-20260904-183859`
+
 同日补记：工作流定位从"每周"改为"按需触发、不绑定时间"，明确对本次输入的整个歌单做全量解析；每次运行固定输出 10 首推荐，与歌单规模无关。仅调整描述性文案（workflow 帮助文本、contracts docstring、README 首段、hermes_weekly.sh 注释），无任何逻辑变更；hermes_weekly.sh 文件名保持不变并在注释中标注为可选调度模板。
 
 同日补记：新增 `qq_public` QQ 音乐公开歌单匿名读取器（免登录、零新依赖）。走 `musicu.fcg` 网关 `music.srfDissInfo.DissInfo/CgiGetDiss` 模块，按接口 `hasmore` 信号分页（每页 100 首），歌曲以 `mid` 作为稳定 platform_track_id，数量取接口 `total_song_num`；接口拒绝（req_1.code 非 0）与坏行跳过均有显式语义。真实验证：30 首公开歌单 snapshot complete；三页小分页探针确认 hasmore/偏移正确；analyze -> prepare-agent 链路通过。
