@@ -488,7 +488,7 @@ def _add_source_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--reader",
         default="local_json",
-        choices=("local_json", "apple_music_json", "netease_json", "netease_public", "csv"),
+        choices=("local_json", "apple_music_json", "netease_json", "netease_public", "qq_public", "csv"),
     )
     parser.add_argument("--platform", default="apple_music")
     parser.add_argument("--playlist-id", default="favorite-songs-web")

@@ -41,6 +41,15 @@
 
 同日补记：新增 `netease_public` 网易云公开歌单匿名读取器（免登录、零新依赖）。网络与解析分离，支持数字 ID 与分享链接，数量取接口 `trackIds`，坏行跳过并在数量不一致时标记 `incomplete`；隐私歌单明确不在能力范围。真实验证：热歌榜 3778678 全链路 snapshot（200 首 complete）→ analyze（172 艺人实体）→ prepare-agent。
 
+同日补记：新增 `qq_public` QQ 音乐公开歌单匿名读取器（免登录、零新依赖）。走 `musicu.fcg` 网关 `music.srfDissInfo.DissInfo/CgiGetDiss` 模块，按接口 `hasmore` 信号分页（每页 100 首），歌曲以 `mid` 作为稳定 platform_track_id，数量取接口 `total_song_num`；接口拒绝（req_1.code 非 0）与坏行跳过均有显式语义。真实验证：30 首公开歌单 snapshot complete；三页小分页探针确认 hasmore/偏移正确；analyze -> prepare-agent 链路通过。
+
+验证：
+
+- `python -m unittest discover -s tests -v`：65 个测试通过（新增 QQ 音乐 ID/URL 解析、payload 归一化、分页信号与快照构建九组）。
+- `python -m compileall -q .`：通过。
+
+维护标签：`patch-20260904-170410`
+
 验证：
 
 - `python -m unittest discover -s tests -v`：56 个测试通过（新增 `tests/test_source_adapters.py` 十组，ID/URL 解析、payload 归一化、快照构建均以 mock 网络覆盖）。

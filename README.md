@@ -61,7 +61,7 @@ declared_track_count == track_count == len(tracks)
 
 ## 扩展点
 
-- `source_adapters.py`：本地 JSON、Apple Music JSON、网易云 JSON 和 CSV 读取器，以及 `netease_public` 网易云公开歌单匿名读取器。
+- `source_adapters.py`：本地 JSON、Apple Music JSON、网易云 JSON 和 CSV 读取器，以及 `netease_public` / `qq_public` 公开歌单匿名读取器。
 - 网易云公开歌单（匿名，不使用登录态）：
 
   ```bash
@@ -69,7 +69,15 @@ declared_track_count == track_count == len(tracks)
     --playlist-id 3778678 --playlist-name '热歌榜' --output runtime/snapshot.json
   ```
 
-  `--playlist-id` 接受数字 ID 或 `music.163.com` 分享链接（含 `#/playlist/...` 形式）；仅能读取公开歌单，隐私歌单（如“我喜欢的音乐”）无法匿名获取。响应缓存于 `input_sha256`，数量来自接口 `trackIds`，与实际解析数不一致时 `reader_status` 为 `incomplete`。
+  `--playlist-id` 接受数字 ID 或 `music.163.com` 分享链接（含 `#/playlist/...` 形式）；仅能读取公开歌单，隐私歌单（如“我喜欢的音乐”）无法匿名获取。数量来自接口 `trackIds`，与实际解析数不一致时 `reader_status` 为 `incomplete`。
+- QQ 音乐公开歌单（匿名，不使用登录态）：
+
+  ```bash
+  python workflow.py snapshot --reader qq_public --platform qq_music \
+    --playlist-id 7399480361 --output runtime/snapshot.json
+  ```
+
+  `--playlist-id` 接受数字 ID 或 `y.qq.com` 分享链接；自动按接口 `hasmore` 信号分页拉取（每页 100 首）；歌曲以 `mid` 作为稳定 `platform_track_id`；数量来自接口 `total_song_num`，与实际解析数不一致时 `reader_status` 为 `incomplete`。
 - `relations/artist_relations.json`：可审计的公开音乐人关系目录。
 - `channels.py`：微信、飞书和 Telegram 的纯文本渲染适配器，只负责输出，不负责发送。
 - `visualization_interface.py`：预留可视化后端接口，当前不包含实现。

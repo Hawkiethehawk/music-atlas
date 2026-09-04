@@ -312,6 +312,16 @@ NETEASE_REQUEST_HEADERS = {
     "Referer": "https://music.163.com/",
 }
 
+QQ_MUSICU_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+QQ_REQUEST_HEADERS = {
+    "Content-Type": "application/json",
+    "Referer": "https://y.qq.com/",
+    "Origin": "https://y.qq.com",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+}
+QQ_PAGE_SIZE = 100
+QQ_MAX_PAGES = 50
+
 
 def _playlist_id_from_arg(value: str) -> str:
     """Extract the numeric playlist id from an id string or a share URL."""
@@ -456,11 +466,226 @@ class NeteasePublicPlaylistReader:
         }
 
 
+def _playlist_id_from_qq_arg(value: str) -> str:
+    """Extract the numeric playlist id from an id string or a share URL."""
+
+    text = normalized_text(value)
+    if not text:
+        raise ContractError("QQ 音乐歌单 ID 不能为空")
+    if re.fullmatch(r"\d+", text):
+        return text
+    parsed = urlparse(text)
+    host = (parsed.netloc or "").casefold()
+    if host.endswith("qq.com"):
+        query_id = parse_qs(parsed.query).get("id", [""])[0].strip()
+        if query_id.isdigit():
+            return query_id
+        match = re.search(r"/playlist/(\d+)", parsed.path or "")
+        if match:
+            return match.group(1)
+    match = re.search(r"playlist[/=#]*(\d+)", text)
+    if match:
+        return match.group(1)
+    raise ContractError(f"无法从 QQ 音乐歌单来源解析数字 ID：{value}")
+
+
+def _qq_diss_payload(playlist_id: str, song_begin: int, song_num: int) -> dict[str, Any]:
+    return {
+        "comm": {"ct": 24, "cv": 0},
+        "req_1": {
+            "module": "music.srfDissInfo.DissInfo",
+            "method": "CgiGetDiss",
+            "param": {
+                "disstid": int(playlist_id),
+                "dirid": 0,
+                "tag": False,
+                "song_begin": song_begin,
+                "song_num": song_num,
+                "userinfo": False,
+                "orderlist": True,
+                "onlysonglist": False,
+            },
+        },
+    }
+
+
+def _fetch_qq_playlist_page(playlist_id: str, song_begin: int, song_num: int) -> bytes:
+    """Fetch one page of an anonymous public QQ Music playlist."""
+
+    request = Request(
+        QQ_MUSICU_URL,
+        data=json.dumps(_qq_diss_payload(playlist_id, song_begin, song_num)).encode("utf-8"),
+        headers=QQ_REQUEST_HEADERS,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read()
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise ContractError(f"QQ 音乐接口请求失败：{exc}") from exc
+
+
+def _parse_qq_diss_page(payload: Any) -> dict[str, Any]:
+    """Normalize one CgiGetDiss page into snapshot tracks.
+
+    Returns a dict with ``tracks``, ``total`` (declared song count),
+    ``hasmore`` (API pagination flag; ``None`` when absent), ``raw_count``
+    (rows received before normalization) and ``playlist_name``. Malformed
+    song entries are skipped, not fatal; a resulting difference between
+    the declared total and the collected count surfaces as
+    ``reader_status="incomplete"`` through the existing Step 1 contract.
+    """
+
+    if not isinstance(payload, dict) or payload.get("code") != 0:
+        code = payload.get("code") if isinstance(payload, dict) else "非对象"
+        raise ContractError(f"QQ 音乐接口返回异常：code={code}")
+    req = payload.get("req_1")
+    if not isinstance(req, dict) or req.get("code") != 0:
+        req_code = req.get("code") if isinstance(req, dict) else "缺失"
+        raise ContractError(f"QQ 音乐歌单请求被拒绝：req_1.code={req_code}")
+    data = req.get("data")
+    if not isinstance(data, dict):
+        raise ContractError("QQ 音乐接口缺少 data 对象")
+    raw_songs = data.get("songlist") or []
+    if not isinstance(raw_songs, list):
+        raise ContractError("QQ 音乐接口的 songlist 必须是数组")
+    dirinfo = data.get("dirinfo")
+    playlist_name = normalized_text(dirinfo.get("title")) if isinstance(dirinfo, dict) else ""
+    total = data.get("total_song_num")
+    if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        total = 0
+    hasmore_raw = data.get("hasmore")
+    hasmore = bool(hasmore_raw) if isinstance(hasmore_raw, int) and not isinstance(hasmore_raw, bool) else None
+    normalized: list[dict[str, Any]] = []
+    for raw_song in raw_songs:
+        if not isinstance(raw_song, dict):
+            continue
+        title = normalized_text(raw_song.get("name") or raw_song.get("title"))
+        singers = [
+            normalized_text(singer.get("name"))
+            for singer in (raw_song.get("singer") or [])
+            if isinstance(singer, dict) and normalized_text(singer.get("name"))
+        ]
+        if not title or not singers:
+            continue
+        song_mid = normalized_text(raw_song.get("mid"))
+        song_id = normalized_text(raw_song.get("id"))
+        album_value = raw_song.get("album")
+        album = (
+            normalized_text(album_value.get("name"))
+            if isinstance(album_value, dict)
+            else normalized_text(album_value)
+        )
+        links: dict[str, str] = {}
+        if song_mid:
+            links["qq_music"] = f"https://y.qq.com/n/ryqq/songDetail/{song_mid}"
+        normalized.append(
+            {
+                "position": len(normalized) + 1,
+                "title": title,
+                "artist": singers[0],
+                "artists": singers,
+                "album": album,
+                "duration": "",
+                "platform_track_id": song_mid or song_id,
+                "track_key": track_key(title, singers[0]),
+                "links": links,
+            }
+        )
+    return {
+        "tracks": normalized,
+        "total": total,
+        "hasmore": hasmore,
+        "raw_count": len(raw_songs),
+        "playlist_name": playlist_name,
+    }
+
+
+class QQPublicPlaylistReader:
+    """Read a *public* QQ Music playlist via the anonymous musicu gateway.
+
+    No login state is used or accepted. The ``input_path`` argument is
+    ignored; the playlist comes from ``playlist_id`` (numeric id or a
+    y.qq.com share URL).
+    """
+
+    def read(
+        self,
+        input_path: Path | None,
+        *,
+        platform: str,
+        playlist_id: str,
+        playlist_name: str,
+        declared_count: int | None = None,
+        declared_count_file: Path | None = None,
+    ) -> dict[str, Any]:
+        playlist_arg = _playlist_id_from_qq_arg(playlist_id)
+        collected: list[dict[str, Any]] = []
+        raw_collected = 0
+        total = 0
+        api_playlist_name = ""
+        first_page_bytes = b""
+        for page_index in range(QQ_MAX_PAGES):
+            raw = _fetch_qq_playlist_page(playlist_arg, page_index * QQ_PAGE_SIZE, QQ_PAGE_SIZE)
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ContractError(f"QQ 音乐接口响应不是有效 UTF-8 JSON：{exc}") from exc
+            page = _parse_qq_diss_page(payload)
+            if page_index == 0:
+                first_page_bytes = raw
+                api_playlist_name = page["playlist_name"]
+            collected.extend(page["tracks"])
+            raw_collected += page["raw_count"]
+            total = page["total"] or total
+            if page["hasmore"] is True:
+                continue
+            if page["hasmore"] is False:
+                break
+            # 接口未返回 hasmore 时按原始行数推断分页边界；
+            # 坏行跳过导致的 declared 差异交给 incomplete 语义处理，
+            # 绝不因收集数少于声明数而重复拉取已读页面。
+            if not page["tracks"] or page["raw_count"] < QQ_PAGE_SIZE:
+                break
+            if total and raw_collected >= total:
+                break
+        declared = _declared_count(
+            {"declared_track_count": total or len(collected)},
+            explicit=declared_count,
+            count_file=declared_count_file,
+        )
+        actual = len(collected)
+        for position, track in enumerate(collected, 1):
+            track["position"] = position
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "snapshot_id": f"{platform}-{hashlib.sha256(first_page_bytes).hexdigest()[:16]}",
+            "platform": platform,
+            "playlist_id": playlist_arg,
+            "playlist_name": api_playlist_name or normalized_text(playlist_name),
+            "declared_track_count": declared,
+            "track_count": actual,
+            "reader_status": "complete" if declared == actual else "incomplete",
+            "captured_at": utc_now(),
+            "input_sha256": hashlib.sha256(first_page_bytes).hexdigest(),
+            "reader": {
+                "type": "qq_public",
+                "source_playlist_id": playlist_arg,
+                "fetched_pages": (actual + QQ_PAGE_SIZE - 1) // QQ_PAGE_SIZE or 1,
+                "declared_count_source": (
+                    "argument" if declared_count is not None else "api_total_song_num"
+                ),
+            },
+            "tracks": collected,
+        }
+
+
 READERS: dict[str, type[PlaylistReader]] = {
     "local_json": LocalJsonReader,
     "apple_music_json": LocalJsonReader,
     "netease_json": NeteaseJsonReader,
     "netease_public": NeteasePublicPlaylistReader,
+    "qq_public": QQPublicPlaylistReader,
     "csv": CsvPlaylistReader,
 }
 
