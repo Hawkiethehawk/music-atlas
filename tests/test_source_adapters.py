@@ -11,8 +11,10 @@ sys.path.insert(0, str(ROOT))
 
 from contracts import ContractError
 from source_adapters import (
+    CsvPlaylistReader,
     NeteasePublicPlaylistReader,
     QQPublicPlaylistReader,
+    _normalize_csv_key,
     _parse_netease_detail,
     _parse_qq_diss_page,
     _playlist_id_from_arg,
@@ -71,6 +73,42 @@ class PlaylistIdParsingTests(unittest.TestCase):
     def test_unparsable_argument_raises(self) -> None:
         with self.assertRaises(ContractError):
             _playlist_id_from_arg("not-a-playlist")
+
+
+class CsvHeaderNormalizationTests(unittest.TestCase):
+    def test_tunemymusic_headers_map_to_candidates(self) -> None:
+        self.assertEqual(_normalize_csv_key("Track name"), "track_name")
+        self.assertEqual(_normalize_csv_key("Artist name"), "artist_name")
+        self.assertEqual(_normalize_csv_key("Apple - id"), "apple_id")
+        self.assertEqual(_normalize_csv_key("Album"), "album")
+
+    def test_tunemymusic_export_parses_with_stable_ids(self) -> None:
+        # TuneMyMusic 真实导出表头：Track name, Artist name, Album,
+        # Playlist name, Type, ISRC, Apple - id
+        import csv as csv_module
+        import tempfile
+
+        sample = (
+            "Track name,Artist name,Album,Playlist name,Type,ISRC,Apple - id\n"
+            "Song One,Artist One,Album One,PL,Playlist,AA111,1111111111\n"
+            "Song Two,Artist Two,Album Two,PL,Playlist,AA222,2222222222\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "export.csv"
+            path.write_text(sample, encoding="utf-8-sig")
+            snapshot = CsvPlaylistReader().read(
+                path,
+                platform="apple_music",
+                playlist_id="pl.u-test",
+                playlist_name="PL",
+            )
+        self.assertEqual(snapshot["reader_status"], "complete")
+        self.assertEqual(snapshot["declared_track_count"], 2)
+        self.assertEqual(snapshot["track_count"], 2)
+        first = snapshot["tracks"][0]
+        self.assertEqual(first["title"], "Song One")
+        self.assertEqual(first["artist"], "Artist One")
+        self.assertEqual(first["platform_track_id"], "1111111111")
 
 
 class NeteaseDetailParsingTests(unittest.TestCase):

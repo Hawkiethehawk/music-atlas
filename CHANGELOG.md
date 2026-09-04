@@ -52,6 +52,15 @@
 
 维护标签：`patch-20260904-170410`
 
+同日补记：打通 Apple Music 个人歌单免登录导入链路（TuneMyMusic 中转）。实测：tunemymusic.com 无需注册登录，源选 Apple Music → "Load from URL" 粘贴歌单分享链接即可加载（本次"喜爱歌曲"歌单 115 首），目标 "Export to file" 导出 CSV。适配：`CsvPlaylistReader` 表头归一化（`Track name`→`track_name` 等），`Apple - id` 作稳定 `platform_track_id`，无元数据 CSV 以数据行数为声明数量。直接抓取 Apple 网页仅预渲染约 40 首，已验证不可行并记录。真实验证：115 首 CSV → snapshot complete → analyze（68 艺人实体）→ prepare-agent。
+
+验证：
+
+- `python -m unittest discover -s tests -v`：67 个测试通过（新增 CSV 表头归一化与 TuneMyMusic 导出解析两组）。
+- `python -m compileall -q .`：通过。
+
+维护标签：`patch-20260904-180934`
+
 验证：
 
 - `python -m unittest discover -s tests -v`：56 个测试通过（新增 `tests/test_source_adapters.py` 十组，ID/URL 解析、payload 归一化、快照构建均以 mock 网络覆盖）。

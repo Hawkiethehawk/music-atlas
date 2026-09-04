@@ -78,6 +78,7 @@ declared_track_count == track_count == len(tracks)
   ```
 
   `--playlist-id` 接受数字 ID 或 `y.qq.com` 分享链接；自动按接口 `hasmore` 信号分页拉取（每页 100 首）；歌曲以 `mid` 作为稳定 `platform_track_id`；数量来自接口 `total_song_num`，与实际解析数不一致时 `reader_status` 为 `incomplete`。
+- Apple Music 个人歌单（免登录，经 TuneMyMusic 中转）：在 tunemymusic.com 网页无需注册登录，源选 Apple Music → "Load from URL" 粘贴歌单分享链接 → 目标选 "Export to file" → CSV → 下载；用 `csv` reader 解析，表头自动归一化（`Track name`/`Artist name`/`Apple - id`），`Apple - id` 作稳定 `platform_track_id`。直接抓取 Apple 网页仅能拿到部分预渲染曲目，不作为方案。
 - `relations/artist_relations.json`：可审计的公开音乐人关系目录。
 - `channels.py`：微信、飞书和 Telegram 的纯文本渲染适配器，只负责输出，不负责发送。
 - `visualization_interface.py`：预留可视化后端接口，当前不包含实现。

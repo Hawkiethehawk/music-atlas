@@ -72,7 +72,7 @@ def _first_value(mapping: dict[str, Any], *keys: str) -> Any:
 
 
 def _track_id(item: dict[str, Any], song_url: str) -> str:
-    direct = _first_value(item, "platform_track_id", "track_id", "song_id", "id")
+    direct = _first_value(item, "platform_track_id", "track_id", "song_id", "id", "apple_id")
     if direct is not None and not isinstance(direct, dict):
         value = normalized_text(direct)
         if value:
@@ -259,6 +259,17 @@ class NeteaseJsonReader(LocalJsonReader):
     """网易云歌单导出适配器占位：沿用统一 JSON 字段归一化，不读个性化推荐。"""
 
 
+def _normalize_csv_key(key: str) -> str:
+    """Normalize a CSV header cell, e.g. ``Track name`` -> ``track_name``.
+
+    Tunemymusic exports use capitalized spaced headers such as
+    ``Track name`` / ``Artist name`` / ``Apple - id``; mapping them onto
+    the lowercase underscore form lets the existing field candidates hit.
+    """
+
+    return re.sub(r"[^a-z0-9]+", "_", normalized_text(key).casefold()).strip("_")
+
+
 class CsvPlaylistReader:
     """Small CSV import adapter for future platform exports."""
 
@@ -274,17 +285,26 @@ class CsvPlaylistReader:
     ) -> dict[str, Any]:
         try:
             with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
-                items = list(csv.DictReader(handle))
+                raw_rows = list(csv.DictReader(handle))
         except FileNotFoundError as exc:
             raise ContractError(f"找不到歌单输入：{input_path}") from exc
         except OSError as exc:
             raise ContractError(f"无法读取歌单输入：{input_path}：{exc}") from exc
-        raw_bytes = input_path.read_bytes()
+        # 头部归一化后，现有字段候选（track_name/artist_name/album/apple_id）直接命中
+        items = [
+            {_normalize_csv_key(k): v for k, v in row.items() if k is not None}
+            for row in raw_rows
+        ]
         raw_metadata = {}
         tracks = [_normalize_track(item, position, platform) for position, item in enumerate(items, 1)]
-        declared = _declared_count(raw_metadata, explicit=declared_count, count_file=declared_count_file)
+        # 导出文件的全部数据行即来源声明；无元数据时以行数为声明数量
+        declared = _declared_count(
+            {"declared_track_count": len(tracks)},
+            explicit=declared_count,
+            count_file=declared_count_file,
+        )
         actual = len(tracks)
-        input_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        input_sha256 = hashlib.sha256(input_path.read_bytes()).hexdigest()
         return {
             "schema_version": SCHEMA_VERSION,
             "snapshot_id": f"{platform}-{input_sha256[:16]}",
@@ -299,7 +319,7 @@ class CsvPlaylistReader:
             "reader": {
                 "type": "csv",
                 "source_file_name": input_path.name,
-                "declared_count_source": "argument" if declared_count is not None else "declared_count_file",
+                "declared_count_source": "argument" if declared_count is not None else "row_count",
             },
             "tracks": tracks,
         }
