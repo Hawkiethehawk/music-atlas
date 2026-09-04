@@ -483,6 +483,38 @@ def command_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_export_apple_playlist(args: argparse.Namespace) -> int:
+    """Export a shared Apple Music playlist to CSV via TuneMyMusic (no login)."""
+
+    import shutil
+    import subprocess
+
+    tool_path = ROOT / "tools" / "export_apple_playlist.mjs"
+    if not tool_path.is_file():
+        raise ContractError(f"找不到导出工具：{tool_path}")
+    node_executable = shutil.which("node")
+    if node_executable is None:
+        raise ContractError(
+            "未找到 node；请先安装 Node.js，并在 tools/ 目录执行 "
+            "`npm install playwright`（见 tools/README.md）"
+        )
+    output_path = _path(args.output, ROOT / "input" / "apple_favorite_songs.csv")
+    command = [node_executable, str(tool_path), args.url, str(output_path)]
+    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=600)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")[:500]
+        raise ContractError(f"Apple 歌单导出失败：{detail}")
+    import json as json_module
+
+    try:
+        summary = json_module.loads(completed.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        raise ContractError(f"导出工具输出无法解析：{completed.stdout[:200]}") from exc
+    summary["output"] = str(output_path)
+    _print_summary(summary)
+    return 0
+
+
 def _add_source_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--input", default=None, help="Step 1 原始歌单 JSON/CSV")
     parser.add_argument(
@@ -602,6 +634,14 @@ def build_parser() -> argparse.ArgumentParser:
     archive_parser = subparsers.add_parser("archive-schema1", help="将历史 Schema 1 运行时产物迁移到 runtime/archive")
     archive_parser.add_argument("--runtime-dir", default=None)
     archive_parser.set_defaults(func=command_archive_schema1)
+
+    export_parser = subparsers.add_parser(
+        "export-apple-playlist",
+        help="经 TuneMyMusic 免登录导出 Apple Music 公开分享歌单为 CSV",
+    )
+    export_parser.add_argument("--url", required=True, help="Apple Music 歌单分享链接")
+    export_parser.add_argument("--output", default=None, help="CSV 输出路径（默认 input/apple_favorite_songs.csv）")
+    export_parser.set_defaults(func=command_export_apple_playlist)
     return parser
 
 

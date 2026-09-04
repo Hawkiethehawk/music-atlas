@@ -9,3 +9,4 @@ input/
 runtime/
 styles/artist_style_profiles.json
 auth_server.py
+tools/node_modules/

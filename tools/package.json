@@ -1,0 +1,8 @@
+{
+  "name": "tools",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  },
+  "private": true,
+  "description": "维护性辅助工具（Apple 歌单导出）；不属于纯 Python 工作流本体。"
+}
