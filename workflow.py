@@ -485,7 +485,11 @@ def command_run(args: argparse.Namespace) -> int:
 
 def _add_source_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--input", default=None, help="Step 1 原始歌单 JSON/CSV")
-    parser.add_argument("--reader", default="local_json", choices=("local_json", "apple_music_json", "netease_json", "csv"))
+    parser.add_argument(
+        "--reader",
+        default="local_json",
+        choices=("local_json", "apple_music_json", "netease_json", "netease_public", "csv"),
+    )
     parser.add_argument("--platform", default="apple_music")
     parser.add_argument("--playlist-id", default="favorite-songs-web")
     parser.add_argument("--playlist-name", default="喜爱歌曲")

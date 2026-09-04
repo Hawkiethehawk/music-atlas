@@ -39,7 +39,14 @@
 
 补记：创建仓库级 `AGENTS.md`，固化独立仓库边界（不随外层 AI 仓库发布）、无版本对象规则、个人数据禁止提交清单、设计边界与提交前验证方式。
 
-维护标签：`patch-20260904-152856`
+同日补记：新增 `netease_public` 网易云公开歌单匿名读取器（免登录、零新依赖）。网络与解析分离，支持数字 ID 与分享链接，数量取接口 `trackIds`，坏行跳过并在数量不一致时标记 `incomplete`；隐私歌单明确不在能力范围。真实验证：热歌榜 3778678 全链路 snapshot（200 首 complete）→ analyze（172 艺人实体）→ prepare-agent。
+
+验证：
+
+- `python -m unittest discover -s tests -v`：56 个测试通过（新增 `tests/test_source_adapters.py` 十组，ID/URL 解析、payload 归一化、快照构建均以 mock 网络覆盖）。
+- `python -m compileall -q .`：通过。
+
+维护标签：`patch-20260904-165242`
 
 ## 2026-09-02
 
