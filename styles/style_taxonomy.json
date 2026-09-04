@@ -1,0 +1,335 @@
+{
+  "schema_version": "1.0",
+  "taxonomy_type": "music_style_taxonomy",
+  "taxonomy_version": "1.0",
+  "axes": {
+    "heaviness": "失真、低频和整体冲击的重量",
+    "aggression": "riff、鼓组和演唱的攻击性",
+    "atmosphere": "空间、延音、梦幻或沉浸式层次",
+    "electronic_presence": "合成器、采样、电子鼓和制作纹理的比重",
+    "pop_accessibility": "旋律直达性、hook 和结构的易听程度",
+    "rhythmic_density": "切分、律动变化、说唱和复杂节奏的密度",
+    "vocal_harshness": "嘶吼、喊唱、失真和极端唱法的比重",
+    "emotional_intensity": "歌词、音色和动态带来的情绪张力"
+  },
+  "styles": {
+    "metalcore.traditional": {
+      "label": "传统金属核",
+      "parent": "metalcore",
+      "definition": "金属 riff 与 hardcore breakdown 并置，强调硬核冲击和极端演唱。",
+      "boundary": "不能因为存在失真吉他或 breakdown 就自动归入此类。"
+    },
+    "metalcore.melodic": {
+      "label": "旋律金属核",
+      "parent": "metalcore",
+      "definition": "金属核骨架上突出清晰副歌、旋律 lead 和 clean/harsh 对比。",
+      "boundary": "比传统金属核更重视旋律，但不等同于普通硬摇滚。"
+    },
+    "metalcore.modern_alternative": {
+      "label": "现代另类金属核",
+      "parent": "metalcore",
+      "definition": "金属核与另类金属、现代制作、低调弦和大体量副歌融合。",
+      "boundary": "不能简化为传统金属核，也不等同于普通摇滚。"
+    },
+    "metalcore.progressive_djent": {
+      "label": "渐进/ djent 金属核",
+      "parent": "metalcore",
+      "definition": "复杂节拍、低音弦切分、技术性 riff 和渐进结构形成的金属核分支。",
+      "boundary": "需要有技术节奏或渐进结构证据，不能只凭沉重音色判断。"
+    },
+    "metalcore.atmospheric_post": {
+      "label": "氛围/后金属核",
+      "parent": "metalcore",
+      "definition": "金属核冲击与宽阔空间、后金属式层次、梦幻或电影化质感结合。",
+      "boundary": "氛围感不是 shoegaze 的同义词，仍需看金属核结构。"
+    },
+    "metalcore.electronic": {
+      "label": "电子金属核",
+      "parent": "metalcore",
+      "definition": "金属核/后硬核与合成器、电子鼓、采样或舞曲段落形成结构性融合。",
+      "boundary": "有零星音效不等于 electronicore。"
+    },
+    "deathcore": {
+      "label": "死亡核",
+      "parent": "extreme_metal",
+      "definition": "death metal 的极端 riff、低频和 growl 与 hardcore breakdown 结合。",
+      "boundary": "不能把所有 harsh vocal 的金属核都归为死亡核。"
+    },
+    "symphonic_metal": {
+      "label": "交响金属",
+      "parent": "metal",
+      "definition": "管弦、合唱或交响编曲参与核心层次，而不是只作背景铺垫。",
+      "boundary": "电影化氛围本身不等于交响金属。"
+    },
+    "djent": {
+      "label": "djent",
+      "parent": "progressive_metal",
+      "definition": "以低音弦的棱角化切分、棕榈闷音和多变节拍为主要听感信号。",
+      "boundary": "低调弦和现代金属制作不足以单独证明 djent。"
+    },
+    "alternative_metal": {
+      "label": "另类金属",
+      "parent": "metal",
+      "definition": "金属重量与另类摇滚、实验制作或非传统结构融合。",
+      "boundary": "比泛称 rock 更具体，但不能替代有明确证据的 metalcore 分支。"
+    },
+    "nu_metal": {
+      "label": "nu metal",
+      "parent": "alternative_metal",
+      "definition": "低调弦 groove、嘻哈节奏、采样或说唱与金属/另类摇滚结合。",
+      "boundary": "有说唱或电子元素不自动等于 nu metal。"
+    },
+    "industrial_metal": {
+      "label": "工业金属",
+      "parent": "metal",
+      "definition": "机械化节奏、工业噪点、合成器和冷峻制作与金属 riff 结合。",
+      "boundary": "单纯使用合成器不等于工业金属。"
+    },
+    "post_hardcore": {
+      "label": "后硬核",
+      "parent": "hardcore",
+      "definition": "硬核能量与动态变化、旋律段落、后朋克或另类编曲结合。",
+      "boundary": "后硬核与金属核、emo 可重叠，但不能互相无条件替换。"
+    },
+    "screamo": {
+      "label": "screamo",
+      "parent": "post_hardcore",
+      "definition": "以尖锐嘶喊、失控动态和情绪爆发为显著特征的后硬核分支。",
+      "boundary": "出现一次喊叫不等于 screamo。"
+    },
+    "emo": {
+      "label": "emo",
+      "parent": "alternative_rock",
+      "definition": "以私密叙事、脆弱情绪、旋律化吉他和动态宣泄为核心。",
+      "boundary": "情绪低落或歌词伤感不单独构成 emo。"
+    },
+    "melodic_hardcore": {
+      "label": "旋律硬核",
+      "parent": "hardcore",
+      "definition": "硬核速度和直接性保留，同时使用高辨识度旋律和合唱。",
+      "boundary": "不能仅凭快节奏流行朋克判断。"
+    },
+    "pop_punk": {
+      "label": "流行朋克",
+      "parent": "punk",
+      "definition": "朋克速度与三和弦推进结合，突出短促结构、朗朗上口副歌和青春叙事。",
+      "boundary": "有吉他和副歌不等于 pop punk。"
+    },
+    "punk_rock": {
+      "label": "朋克摇滚",
+      "parent": "rock",
+      "definition": "直接、粗粝、快速或反叛的摇滚表达，强调乐队现场感。",
+      "boundary": "不能覆盖所有另类摇滚。"
+    },
+    "alternative_rock": {
+      "label": "另类摇滚",
+      "parent": "rock",
+      "definition": "以非主流摇滚传统为基础，允许粗粝、实验、阴郁或跨风格编曲。",
+      "boundary": "这是兜底层级，不应覆盖已经能确认的细分类型。"
+    },
+    "hard_rock": {
+      "label": "硬摇滚",
+      "parent": "rock",
+      "definition": "强失真吉他、厚重鼓组、riff 和有穿透力的主唱组成的传统重型摇滚。",
+      "boundary": "硬摇滚不等于金属，也不等于金属核。"
+    },
+    "post_grunge": {
+      "label": "后垃圾摇滚",
+      "parent": "alternative_rock",
+      "definition": "90 年代 grunge 的粗粝音色与更规整的主流摇滚结构结合。",
+      "boundary": "阴郁歌词或失真音色不足以单独证明 post-grunge。"
+    },
+    "grunge": {
+      "label": "grunge",
+      "parent": "alternative_rock",
+      "definition": "粗粝失真、松弛或重压动态、反光泽制作和 90 年代另类摇滚语汇。",
+      "boundary": "不能把所有低保真或阴郁摇滚都称为 grunge。"
+    },
+    "indie_rock": {
+      "label": "独立摇滚",
+      "parent": "alternative_rock",
+      "definition": "独立音乐语境下的吉他摇滚，重视个性化编曲和非标准流行结构。",
+      "boundary": "indie 是语境与美学，不是单一听感。"
+    },
+    "garage_rock": {
+      "label": "车库摇滚",
+      "parent": "alternative_rock",
+      "definition": "直接、粗糙、带现场冲击的吉他摇滚和强烈人声。",
+      "boundary": "录音不精致不自动等于 garage rock。"
+    },
+    "math_rock": {
+      "label": "数学摇滚",
+      "parent": "indie_rock",
+      "definition": "不规则拍号、跳跃式吉他分解、精细节奏和器乐互动。",
+      "boundary": "复杂不等于 math rock，需要可听见的节拍/吉他组织。"
+    },
+    "progressive_rock": {
+      "label": "前卫摇滚",
+      "parent": "rock",
+      "definition": "长线结构、技术演奏、主题发展和非标准段落的摇滚。",
+      "boundary": "歌曲较长或有键盘不自动等于前卫摇滚。"
+    },
+    "art_rock": {
+      "label": "艺术摇滚",
+      "parent": "rock",
+      "definition": "以概念、戏剧性、实验结构或跨艺术表达为重心的摇滚。",
+      "boundary": "华丽制作不一定意味着 art rock。"
+    },
+    "electronic_rock": {
+      "label": "电子摇滚",
+      "parent": "rock",
+      "definition": "摇滚乐队骨架与合成器、采样、电子鼓或数字音色形成明显融合。",
+      "boundary": "电子摇滚不等于 electronicore，也不等于 synth-pop。"
+    },
+    "electronicore": {
+      "label": "电子核",
+      "parent": "post_hardcore",
+      "definition": "后硬核/金属核的 breakdown、harsh vocal 与舞曲或电子段落结构性并置。",
+      "boundary": "电子背景音不够，必须能影响歌曲结构和能量。"
+    },
+    "dark_pop": {
+      "label": "暗黑流行",
+      "parent": "pop",
+      "definition": "流行结构与阴郁歌词、低饱和音色、暗色合成器或戏剧化制作结合。",
+      "boundary": "悲伤流行不一定是 dark pop。"
+    },
+    "synth_pop": {
+      "label": "合成器流行",
+      "parent": "pop",
+      "definition": "合成器旋律、电子鼓和流行副歌构成主要编曲骨架。",
+      "boundary": "有合成器点缀不等于 synth-pop。"
+    },
+    "electropop": {
+      "label": "电子流行",
+      "parent": "pop",
+      "definition": "数字制作、电子节拍和流行人声结合，强调现代制作和直接 hook。",
+      "boundary": "不能把所有现代流行都归为 electropop。"
+    },
+    "dream_pop": {
+      "label": "梦幻流行",
+      "parent": "alternative_pop",
+      "definition": "柔和人声、延展和声、漂浮质感与较易进入的流行旋律结合。",
+      "boundary": "梦幻氛围不一定有 shoegaze 的失真墙。"
+    },
+    "shoegaze": {
+      "label": "shoegaze",
+      "parent": "alternative_rock",
+      "definition": "失真/调制吉他墙、混融人声、延音和沉浸式空间层次。",
+      "boundary": "空灵人声或混响 alone 不足以证明 shoegaze。"
+    },
+    "nu_gaze": {
+      "label": "nu gaze",
+      "parent": "shoegaze",
+      "definition": "shoegaze 音墙与更现代、流行、低频或数字化制作结合。",
+      "boundary": "不是所有新 shoegaze 都是 nu gaze。"
+    },
+    "post_rock": {
+      "label": "后摇",
+      "parent": "alternative_rock",
+      "definition": "以器乐层层推进、长线动态和电影化空间取代传统主歌副歌中心。",
+      "boundary": "有氛围或无主唱不自动等于后摇。"
+    },
+    "ambient_pop": {
+      "label": "氛围流行",
+      "parent": "pop",
+      "definition": "流行旋律置于宽阔、稀疏、漂浮或环境化的制作空间中。",
+      "boundary": "氛围音色不等于 ambient pop，仍需有流行歌曲骨架。"
+    },
+    "indie_pop": {
+      "label": "独立流行",
+      "parent": "pop",
+      "definition": "独立摇滚/民谣语汇与清晰、轻盈或非传统的流行旋律结合。",
+      "boundary": "独立发行本身不是 indie pop 的声音证据。"
+    },
+    "singer_songwriter": {
+      "label": "创作歌手",
+      "parent": "folk_pop",
+      "definition": "以个人创作、演唱表达和歌曲叙事为中心，编曲服务于人声与文本。",
+      "boundary": "这是创作/表达取向，不替代具体编曲风格。"
+    },
+    "rnb": {
+      "label": "R&B",
+      "parent": "black_music",
+      "definition": "以律动、和声、灵活人声和 soul/现代制作语汇为核心。",
+      "boundary": "慢歌或高音人声不自动等于 R&B。"
+    },
+    "hip_hop": {
+      "label": "嘻哈",
+      "parent": "black_music",
+      "definition": "以 flow、鼓点、采样/制作和说唱表达为核心的音乐语境。",
+      "boundary": "出现说唱客串不代表整首歌属于嘻哈。"
+    },
+    "alternative_hip_hop": {
+      "label": "另类嘻哈",
+      "parent": "hip_hop",
+      "definition": "嘻哈核心与另类摇滚、实验电子、歌唱或非主流制作结合。",
+      "boundary": "需要有明确跨界制作或表达，不是所有独立说唱都属于此类。"
+    },
+    "rap_rock": {
+      "label": "说唱摇滚",
+      "parent": "rock",
+      "definition": "摇滚乐队编曲与说唱主歌、hip-hop 节奏或 flow 并列。",
+      "boundary": "一段 rap feature 不足以将全曲定义为 rap rock。"
+    },
+    "emo_rap": {
+      "label": "emo rap",
+      "parent": "hip_hop",
+      "definition": "trap/嘻哈节奏与 emo 的脆弱叙事、旋律化说唱和阴郁氛围结合。",
+      "boundary": "情绪化说唱不一定是 emo rap，需要相应的旋律与制作语汇。"
+    },
+    "trap": {
+      "label": "trap",
+      "parent": "hip_hop",
+      "definition": "808 低音、快速 hi-hat、循环式鼓组和空间化制作构成的嘻哈分支。",
+      "boundary": "使用 808 或电子鼓不自动等于 trap。"
+    },
+    "lo_fi": {
+      "label": "lo-fi",
+      "parent": "production_aesthetic",
+      "definition": "有意保留噪声、失真、朦胧动态或卧室录音质感的制作美学。",
+      "boundary": "低预算录音不必然是 lo-fi 美学。"
+    },
+    "psychedelic_rock": {
+      "label": "迷幻摇滚",
+      "parent": "rock",
+      "definition": "循环、空间效果、非线性段落和迷幻音色形成的摇滚表达。",
+      "boundary": "有回声或合成器不等于迷幻摇滚。"
+    },
+    "new_wave": {
+      "label": "新浪潮",
+      "parent": "alternative_rock",
+      "definition": "后朋克之后的合成器、机械律动、简洁吉他和冷感流行结构。",
+      "boundary": "使用合成器不自动等于 new wave。"
+    },
+    "pop_rock": {
+      "label": "流行摇滚",
+      "parent": "rock",
+      "definition": "摇滚乐器和现场感与清晰流行结构、宽广副歌结合。",
+      "boundary": "这是结构层描述，不能替代更明确的金属核或后硬核判断。"
+    },
+    "j_rock": {
+      "label": "日本摇滚",
+      "parent": "rock",
+      "definition": "日本流行/动画/独立音乐语境中的吉他摇滚、流行朋克或乐队流行。",
+      "boundary": "这是场景标签，必要时仍需补充具体声音分支。"
+    },
+    "blues_rock": {
+      "label": "蓝调摇滚",
+      "parent": "rock",
+      "definition": "蓝调音阶、riff、即兴和粗粝主唱与摇滚编曲结合。",
+      "boundary": "有吉他 solo 不等于 blues rock。"
+    },
+    "space_rock": {
+      "label": "太空摇滚",
+      "parent": "progressive_rock",
+      "definition": "延展空间、迷幻音色、科幻意象和渐进式摇滚结构结合。",
+      "boundary": "歌词涉及宇宙不等于 space rock。"
+    },
+    "cloud_rap": {
+      "label": "cloud rap",
+      "parent": "hip_hop",
+      "definition": "漂浮合成器、宽混响、松弛 flow 和稀疏鼓组构成的嘻哈分支。",
+      "boundary": "有氛围 beat 不自动等于 cloud rap。"
+    }
+  }
+}

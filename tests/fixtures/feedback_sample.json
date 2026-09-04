@@ -1,0 +1,38 @@
+[
+  {
+    "schema_version": "2.0",
+    "record_type": "recommendation_feedback",
+    "outcome": "saved",
+    "timestamp": "2026-09-04T08:00:00Z",
+    "analysis_id": "analysis-eval-fixture",
+    "recommendation_id": "musicbrainz:fixture-saved-1",
+    "position": 1
+  },
+  {
+    "schema_version": "2.0",
+    "record_type": "recommendation_feedback",
+    "outcome": "skipped",
+    "timestamp": "2026-09-04T08:01:00Z",
+    "analysis_id": "analysis-eval-fixture",
+    "recommendation_id": "musicbrainz:fixture-skipped-2",
+    "position": 2
+  },
+  {
+    "schema_version": "2.0",
+    "record_type": "recommendation_feedback",
+    "outcome": "replayed",
+    "timestamp": "2026-09-04T08:02:00Z",
+    "analysis_id": "analysis-eval-fixture",
+    "recommendation_id": "musicbrainz:fixture-replayed-3",
+    "position": 3
+  },
+  {
+    "schema_version": "2.0",
+    "record_type": "recommendation_feedback",
+    "outcome": "hidden",
+    "timestamp": "2026-09-04T08:03:00Z",
+    "analysis_id": "analysis-eval-fixture",
+    "recommendation_id": "musicbrainz:fixture-hidden-4",
+    "position": 4
+  }
+]

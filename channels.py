@@ -23,7 +23,13 @@ def _link_lines(links: dict[str, Any]) -> list[str]:
     return lines
 
 
-def render_text(bundle: dict[str, Any], analysis: dict[str, Any], *, title: str = "本周音乐推荐") -> str:
+def render_text(
+    bundle: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    title: str = "本周音乐推荐",
+    include_audit_links: bool = False,
+) -> str:
     validate_recommendation_bundle(bundle, analysis)
     lines = [title, f"分析包：{analysis['analysis_id']}", f"偏好清单歌曲数：{analysis['source_track_count']}", ""]
     if bundle["status"] == "insufficient_evidence":
@@ -33,15 +39,21 @@ def render_text(bundle: dict[str, Any], analysis: dict[str, Any], *, title: str 
         album = recommendation.get("album")
         album_suffix = f"《{album}》" if isinstance(album, str) and album.strip() else ""
         lines.append(f"{index}. {recommendation['title']} - {recommendation['artist']} {album_suffix}".rstrip())
+        if "ranking_score" in recommendation:
+            lines.append(
+                f"   综合分：{float(recommendation['ranking_score']):.1f}；"
+                f"召回：{recommendation.get('candidate_type', 'unknown')}"
+            )
+        lines.append(f"   风格匹配：{recommendation['explanation']['style_fit']}")
         lines.append(f"   {recommendation['explanation']['text']}")
-        links = _link_lines(recommendation.get("platform_links", {}))
-        if links:
-            lines.extend(f"   {line}" for line in links)
-        sources = recommendation.get("sources", [])
-        if isinstance(sources, list) and sources:
-            lines.append("   依据：" + "；".join(str(source) for source in sources[:2]))
+        if include_audit_links:
+            links = _link_lines(recommendation.get("platform_links", {}))
+            if links:
+                lines.extend(f"   {line}" for line in links)
+            sources = recommendation.get("sources", [])
+            if isinstance(sources, list) and sources:
+                lines.append("   依据：" + "；".join(str(source) for source in sources[:2]))
         lines.append("")
-    lines.append("说明来源为公开资料；Apple Music 仅用于跳转，不参与候选发现和排序。")
     return "\n".join(lines).rstrip() + "\n"
 
 

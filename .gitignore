@@ -7,5 +7,5 @@ __pycache__/
 *.pyc
 input/
 runtime/
-.apple-web-profile/
+styles/artist_style_profiles.json
 auth_server.py

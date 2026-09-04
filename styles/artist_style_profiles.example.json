@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "catalog_type": "example_artist_style_profiles",
+  "profile_version": "1.0",
+  "artists": {
+    "Imminence": {
+      "canonical_name": "Imminence",
+      "classification_status": "classified",
+      "confidence": "high",
+      "style_mix": [
+        {"style_ref": "style:metalcore.atmospheric_post", "role": "primary", "weight": 0.5},
+        {"style_ref": "style:symphonic_metal", "role": "secondary", "weight": 0.3},
+        {"style_ref": "style:metalcore.melodic", "role": "secondary", "weight": 0.2}
+      ],
+      "style_axes": {"heaviness": 86, "aggression": 82, "atmosphere": 65, "electronic_presence": 30, "pop_accessibility": 48, "rhythmic_density": 68, "vocal_harshness": 78, "emotional_intensity": 88},
+      "summary": "以金属核冲击为底，交响与空间层次把歌曲推向电影化的高张力。",
+      "boundaries": ["优先称为氛围/交响旋律金属核，不归入传统金属核兜底。"],
+      "sources": ["https://en.wikipedia.org/wiki/Imminence_(band)"]
+    },
+    "Deftones": {
+      "canonical_name": "Deftones",
+      "classification_status": "classified",
+      "confidence": "high",
+      "style_mix": [
+        {"style_ref": "style:alternative_metal", "role": "primary", "weight": 0.5},
+        {"style_ref": "style:shoegaze", "role": "secondary", "weight": 0.3},
+        {"style_ref": "style:nu_metal", "role": "secondary", "weight": 0.2}
+      ],
+      "style_axes": {"heaviness": 76, "aggression": 65, "atmosphere": 82, "electronic_presence": 35, "pop_accessibility": 55, "rhythmic_density": 30, "vocal_harshness": 18, "emotional_intensity": 88},
+      "summary": "另类金属的低频和 groove 与 shoegaze 式音墙、柔和人声和梦幻空间共存。",
+      "boundaries": ["不要把 Deftones 当作标准 nu metal 或普通 metal。"],
+      "sources": ["https://en.wikipedia.org/wiki/Deftones"]
+    },
+    "LINKIN PARK": {
+      "canonical_name": "LINKIN PARK",
+      "aliases": ["Linkin Park"],
+      "classification_status": "classified",
+      "confidence": "high",
+      "style_mix": [
+        {"style_ref": "style:nu_metal", "role": "primary", "weight": 0.4},
+        {"style_ref": "style:electronic_rock", "role": "secondary", "weight": 0.3},
+        {"style_ref": "style:rap_rock", "role": "secondary", "weight": 0.3}
+      ],
+      "style_axes": {"heaviness": 70, "aggression": 65, "atmosphere": 42, "electronic_presence": 55, "pop_accessibility": 65, "rhythmic_density": 75, "vocal_harshness": 45, "emotional_intensity": 80},
+      "summary": "低调弦 groove、说唱/唱腔对话、采样和强副歌共同构成 nu metal 与电子摇滚的混合。",
+      "boundaries": ["不能把全部作品归为 nu metal，电子摇滚和流行结构需按时期保留。"],
+      "sources": ["https://en.wikipedia.org/wiki/Linkin_Park"]
+    },
+    "Mike Shinoda": {
+      "canonical_name": "Mike Shinoda",
+      "classification_status": "classified",
+      "confidence": "high",
+      "style_mix": [
+        {"style_ref": "style:alternative_hip_hop", "role": "primary", "weight": 0.5},
+        {"style_ref": "style:hip_hop", "role": "secondary", "weight": 0.3},
+        {"style_ref": "style:electronic_rock", "role": "secondary", "weight": 0.2}
+      ],
+      "style_axes": {"heaviness": 38, "aggression": 25, "atmosphere": 45, "electronic_presence": 62, "pop_accessibility": 58, "rhythmic_density": 78, "vocal_harshness": 0, "emotional_intensity": 75},
+      "summary": "以说唱、采样和数字制作驱动，个人作品更直接地落在另类嘻哈与电子跨界。",
+      "boundaries": ["不能把个人作品自动算作 Linkin Park 的 nu metal。"],
+      "sources": ["https://en.wikipedia.org/wiki/Mike_Shinoda"]
+    }
+  }
+}

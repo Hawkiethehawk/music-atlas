@@ -16,9 +16,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agent_prompt import build_agent_prompt_from_file
+from agent_prompt import (
+    apply_context_budget,
+    build_agent_prompt_from_file,
+    prompt_size_telemetry,
+    write_agent_context_manifest,
+)
 from channels import render_for_channel
 from contracts import ContractError, read_json, utc_now, validate_analysis_packet, validate_recommendation_bundle, write_json
+from recommender import rank_bundle
+from visualization_interface import render_recommendation_card
 
 
 def parse_agent_json(output: str) -> dict[str, Any]:
@@ -40,8 +47,9 @@ def mock_bundle(packet: dict[str, Any]) -> dict[str, Any]:
     """Return a no-send contract fixture without inventing music facts."""
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "bundle_type": "recommendation_bundle",
+        "bundle_stage": "final",
         "status": "insufficient_evidence",
         "analysis_id": packet["analysis_id"],
         "generated_at": utc_now(),
@@ -83,20 +91,41 @@ def run_agent(
     prompt_path: Path,
     output_path: Path,
     channel_output_path: Path,
+    channel_image_path: Path | None = None,
+    prompt_dir: Path | None = None,
     channel: str,
     command: str | None,
     mock: bool,
     timeout: int,
+    context_budget: int | None = None,
 ) -> dict[str, Any]:
     packet_value = read_json(analysis_path)
     packet = validate_analysis_packet(packet_value)
-    prompt = build_agent_prompt_from_file(analysis_path, prompt_path)
+    prompt = build_agent_prompt_from_file(analysis_path, prompt_path, prompt_dir=prompt_dir)
+    prompt, budget_report = apply_context_budget(prompt, context_budget)
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(prompt, encoding="utf-8")
+    context_manifest_path = prompt_path.with_name("agent_context_manifest.json")
+    write_agent_context_manifest(
+        packet,
+        context_manifest_path,
+        prompt_dir=prompt_dir,
+        prompt=prompt,
+        context_budget=context_budget,
+        budget_report=budget_report,
+    )
     bundle = mock_bundle(packet) if mock else run_external_agent(command or "", prompt, timeout=timeout)
     validate_recommendation_bundle(bundle, packet)
+    ranked_bundle = rank_bundle(bundle, packet)
+    validate_recommendation_bundle(ranked_bundle, packet)
+    bundle = ranked_bundle
     write_json(output_path, bundle)
     channel_text = render_for_channel(channel, bundle, packet)
     channel_output_path.parent.mkdir(parents=True, exist_ok=True)
     channel_output_path.write_text(channel_text, encoding="utf-8")
+    image_summary = None
+    if channel_image_path is not None:
+        image_summary = render_recommendation_card(bundle, packet, channel_image_path)
     return {
         "status": "agent_bundle_validated",
         "agent_mode": "mock" if mock else "external_command",
@@ -104,8 +133,20 @@ def run_agent(
         "source_track_count": packet["source_track_count"],
         "recommendation_status": bundle["status"],
         "recommendation_count": len(bundle["recommendations"]),
+        "ranking_applied": bool(bundle.get("ranking")),
+        "prompt_characters": len(prompt),
+        "estimated_tokens": prompt_size_telemetry(prompt)["estimated_tokens"],
+        "context_budget": context_budget,
+        "budget_exceeded": budget_report.get("budget_exceeded"),
         "bundle_path": str(output_path),
         "channel_text_path": str(channel_output_path),
+        "channel_image_path": image_summary["path"] if image_summary else None,
+        "channel_image_size": {
+            "width": image_summary["width"],
+            "height": image_summary["height"],
+        }
+        if image_summary
+        else None,
         "send_performed": False,
     }
 
@@ -116,10 +157,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", default="runtime/current-run/agent_prompt.md")
     parser.add_argument("--output", default="runtime/current-run/recommendation_bundle.json")
     parser.add_argument("--channel-output", default="runtime/current-run/channel_text.txt")
+    parser.add_argument(
+        "--image-output",
+        default=None,
+        help="预留可视化输出接口；当前未配置渲染后端",
+    )
+    parser.add_argument("--prompt-dir", default="prompts", help="可编辑提示词插槽目录")
     parser.add_argument("--channel", default="weixin", choices=("weixin", "feishu", "telegram"))
     parser.add_argument("--command", help="读取 stdin 中 prompt 并向 stdout 输出 JSON 的 Agent 命令")
     parser.add_argument("--mock", action="store_true", help="不调用外部模型，只验证无推荐证据不足分支")
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--context-budget", type=int, default=None, help="Agent 提示词字符预算")
     return parser
 
 
@@ -140,15 +188,19 @@ def main(argv: list[str] | None = None) -> int:
                 return cwd_candidate
             return root / candidate
 
+        image_output = resolve(args.image_output) if args.image_output else None
         summary = run_agent(
             resolve(args.analysis),
             prompt_path=resolve(args.prompt),
             output_path=resolve(args.output),
             channel_output_path=resolve(args.channel_output),
+            channel_image_path=image_output,
+            prompt_dir=resolve(args.prompt_dir),
             channel=args.channel,
             command=args.command,
             mock=args.mock,
             timeout=max(1, args.timeout),
+            context_budget=args.context_budget,
         )
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0

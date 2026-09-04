@@ -15,6 +15,7 @@ from typing import Any
 from contracts import (
     ContractError,
     SCHEMA_VERSION,
+    STYLE_AXIS_IDS,
     artist_key,
     normalized_name,
     normalized_text,
@@ -23,19 +24,88 @@ from contracts import (
     stable_hash,
     track_key,
     utc_now,
+    validate_analysis_packet,
     validate_playlist_snapshot,
     write_json,
 )
 
 
+STYLE_AXIS_LABELS = {
+    "heaviness": "重量感",
+    "aggression": "攻击性",
+    "atmosphere": "氛围感",
+    "electronic_presence": "电子存在感",
+    "pop_accessibility": "流行可及性",
+    "rhythmic_density": "节奏密度",
+    "vocal_harshness": "人声极端度",
+    "emotional_intensity": "情绪强度",
+}
+
+STYLE_AXIS_GUIDE = {
+    "heaviness": "失真、低频和整体冲击的重量",
+    "aggression": "riff、鼓组和演唱的攻击性",
+    "atmosphere": "空间、延音、梦幻或沉浸式层次",
+    "electronic_presence": "合成器、采样、电子鼓和制作纹理的比重",
+    "pop_accessibility": "旋律直达性、hook 和结构的易听程度",
+    "rhythmic_density": "切分、律动变化、说唱和复杂节奏的密度",
+    "vocal_harshness": "嘶吼、喊唱、失真和极端唱法的比重",
+    "emotional_intensity": "歌词、音色和动态带来的情绪张力",
+}
+
+
+DEFAULT_STYLE_TAXONOMY_PATH = Path(__file__).resolve().parent / "styles" / "style_taxonomy.json"
+DEFAULT_STYLE_PROFILE_PATH = Path(__file__).resolve().parent / "styles" / "artist_style_profiles.json"
+
+
 DEFAULT_POLICY: dict[str, Any] = {
     "min_recommendations": 10,
     "max_recommendations": 12,
+    "target_recommendations": 10,
     "max_per_artist": 2,
     "max_per_project": 3,
     "min_projects": 6,
+    "candidate_pool_min": 20,
     "exclude_current_favorites": True,
     "cross_platform_links_allowed": True,
+    "algorithm_version": "hybrid_music_discovery_v2",
+    "display_limits": {
+        "artists": 5,
+        "styles": 5,
+    },
+    "recall_mix": [
+        {"candidate_type": "artist_continuation", "target_ratio": 0.30},
+        {"candidate_type": "musician_relation", "target_ratio": 0.25},
+        {"candidate_type": "style_neighbor", "target_ratio": 0.30},
+        {"candidate_type": "exploration", "target_ratio": 0.15},
+    ],
+    "ranking_weights": {
+        "style_fit": 0.30,
+        "axis_fit": 0.20,
+        "relation_fit": 0.15,
+        "frequency_fit": 0.10,
+        "novelty": 0.10,
+        "evidence_quality": 0.10,
+        "public_association": 0.05,
+    },
+    "diversity_policy": {
+        "mmr_penalty": 12.0,
+        "candidate_type_bonus": 3.0,
+        "new_project_bonus": 4.0,
+        "similarity_weights": {
+            "style": 0.45,
+            "axis": 0.25,
+            "artist": 0.20,
+            "project": 0.10,
+        },
+    },
+    "sequence_policy": {
+        "mode": "energy_arc",
+        "prefer_adjacent_transitions": True,
+        "allow_familiar_anchor": True,
+        "transition_weight": 0.55,
+        "arc_weight": 0.35,
+        "ranking_weight": 0.10,
+    },
     "source_policy": {
         "candidate_discovery": [
             "official_artist_or_label",
@@ -61,6 +131,278 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ContractError(f"{path} 必须是 JSON 对象")
     return value
+
+
+def load_style_taxonomy(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise ContractError(f"找不到风格本体：{path}")
+    payload = _load_json_object(path)
+    version = normalized_text(payload.get("taxonomy_version"))
+    styles = payload.get("styles")
+    axis_definitions = payload.get("axes")
+    if not version or not isinstance(styles, dict) or not styles:
+        raise ContractError(f"风格本体必须包含 taxonomy_version 和 styles：{path}")
+    if not isinstance(axis_definitions, dict):
+        raise ContractError(f"风格本体必须包含 axes 对象：{path}")
+    cleaned_axes = {
+        axis: normalized_text(axis_definitions.get(axis))
+        for axis in STYLE_AXIS_IDS
+    }
+    if any(not description for description in cleaned_axes.values()):
+        raise ContractError(f"风格本体 axes 必须完整覆盖听感轴：{path}")
+    cleaned: dict[str, dict[str, Any]] = {}
+    for style_id, raw_style in styles.items():
+        if not isinstance(raw_style, dict):
+            raise ContractError(f"风格定义不是对象：{style_id}")
+        key = normalized_text(style_id)
+        label = normalized_text(raw_style.get("label"))
+        if not key or not label:
+            raise ContractError(f"风格定义缺少 id 或 label：{style_id}")
+        cleaned[key] = {
+            "style_id": key,
+            "style_ref": f"style:{key}",
+            "label": label,
+            "parent": normalized_text(raw_style.get("parent")),
+            "definition": normalized_text(raw_style.get("definition")),
+            "boundary": normalized_text(raw_style.get("boundary")),
+        }
+    return {
+        "taxonomy_version": version,
+        "styles": cleaned,
+        "known_style_refs": [item["style_ref"] for item in cleaned.values()],
+        "axis_definitions": cleaned_axes,
+    }
+
+
+def _normalize_style_axes(value: Any, label: str) -> dict[str, float]:
+    if not isinstance(value, dict):
+        raise ContractError(f"{label} 必须是对象")
+    axes: dict[str, float] = {}
+    for axis in STYLE_AXIS_IDS:
+        score = value.get(axis)
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= float(score) <= 100:
+            raise ContractError(f"{label}.{axis} 必须是 0 到 100 的数字")
+        axes[axis] = float(score)
+    return axes
+
+
+def _normalize_style_mix(
+    value: Any,
+    label: str,
+    known_style_refs: set[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ContractError(f"{label} 必须是数组")
+    mix: list[dict[str, Any]] = []
+    total = 0.0
+    for index, raw_item in enumerate(value):
+        if not isinstance(raw_item, dict):
+            raise ContractError(f"{label}[{index}] 必须是对象")
+        style_ref = normalized_text(raw_item.get("style_ref"))
+        if style_ref not in known_style_refs:
+            raise ContractError(f"{label}[{index}] 包含未知风格引用：{style_ref}")
+        role = normalized_text(raw_item.get("role"))
+        if role not in {"primary", "secondary"}:
+            raise ContractError(f"{label}[{index}].role 必须是 primary 或 secondary")
+        weight = raw_item.get("weight")
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not 0 < float(weight) <= 1:
+            raise ContractError(f"{label}[{index}].weight 必须大于 0 且小于等于 1")
+        item = {
+            "style_ref": style_ref,
+            "role": role,
+            "weight": round(float(weight), 6),
+        }
+        confidence = normalized_text(raw_item.get("confidence"))
+        if confidence:
+            item["confidence"] = confidence
+        mix.append(item)
+        total += float(weight)
+    if mix and abs(total - 1.0) > 0.001:
+        raise ContractError(f"{label} 权重总和必须为 1，实际为 {total:.6f}")
+    return mix
+
+
+def _normalize_style_profile(
+    raw_profile: dict[str, Any],
+    *,
+    fallback_name: str,
+    known_style_refs: set[str],
+) -> dict[str, Any]:
+    canonical_name = normalized_text(raw_profile.get("canonical_name") or fallback_name)
+    if not canonical_name:
+        raise ContractError("风格画像缺少 canonical_name")
+    aliases = raw_profile.get("aliases", [])
+    if not isinstance(aliases, list):
+        aliases = []
+    status = normalized_text(raw_profile.get("classification_status") or "classified")
+    if status not in {"classified", "unclassified"}:
+        raise ContractError(f"{canonical_name} 的 classification_status 无效：{status}")
+    sources = raw_profile.get("sources", [])
+    if not isinstance(sources, list):
+        sources = []
+    cleaned_sources = [normalized_text(source) for source in sources if normalized_text(source)]
+    boundaries = raw_profile.get("boundaries", [])
+    if not isinstance(boundaries, list):
+        boundaries = []
+    cleaned_boundaries = [normalized_text(item) for item in boundaries if normalized_text(item)]
+    profile = {
+        "canonical_name": canonical_name,
+        "aliases": [normalized_text(alias) for alias in aliases if normalized_text(alias)],
+        "classification_status": status,
+        "confidence": normalized_text(raw_profile.get("confidence") or "medium"),
+        "style_mix": _normalize_style_mix(
+            raw_profile.get("style_mix", []),
+            f"{canonical_name}.style_mix",
+            known_style_refs,
+        ),
+        "style_axes": _normalize_style_axes(
+            raw_profile.get("style_axes"),
+            f"{canonical_name}.style_axes",
+        ),
+        "summary": normalized_text(raw_profile.get("summary")),
+        "boundaries": cleaned_boundaries,
+        "sources": cleaned_sources,
+        "release_overrides": [],
+    }
+    if not profile["summary"]:
+        raise ContractError(f"{canonical_name} 的 summary 不能为空")
+    if status == "classified" and not profile["style_mix"]:
+        raise ContractError(f"{canonical_name} 已分类但没有 style_mix")
+    raw_overrides = raw_profile.get("release_overrides", [])
+    if not isinstance(raw_overrides, list):
+        raise ContractError(f"{canonical_name}.release_overrides 必须是数组")
+    for index, raw_override in enumerate(raw_overrides):
+        if not isinstance(raw_override, dict):
+            raise ContractError(f"{canonical_name}.release_overrides[{index}] 必须是对象")
+        albums = raw_override.get("match_albums", [])
+        titles = raw_override.get("match_titles", [])
+        if not isinstance(albums, list):
+            albums = []
+        if not isinstance(titles, list):
+            titles = []
+        if not albums and not titles:
+            raise ContractError(f"{canonical_name}.release_overrides[{index}] 缺少匹配条件")
+        override: dict[str, Any] = {
+            "match_albums": [normalized_name(item) for item in albums if normalized_name(item)],
+            "match_titles": [normalized_name(item) for item in titles if normalized_name(item)],
+            "style_mix": _normalize_style_mix(
+                raw_override.get("style_mix", profile["style_mix"]),
+                f"{canonical_name}.release_overrides[{index}].style_mix",
+                known_style_refs,
+            ),
+        }
+        if "style_axes" in raw_override:
+            override["style_axes"] = _normalize_style_axes(
+                raw_override.get("style_axes"),
+                f"{canonical_name}.release_overrides[{index}].style_axes",
+            )
+        summary = normalized_text(raw_override.get("summary"))
+        if summary:
+            override["summary"] = summary
+        override_sources = raw_override.get("sources", [])
+        if isinstance(override_sources, list):
+            override["sources"] = [
+                normalized_text(source)
+                for source in override_sources
+                if normalized_text(source)
+            ]
+        profile["release_overrides"].append(override)
+    return profile
+
+
+def load_style_profile_catalog(path: Path, taxonomy: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    if not path.is_file():
+        raise ContractError(f"找不到逐艺人风格画像：{path}")
+    payload = _load_json_object(path)
+    entries = payload.get("artists", payload)
+    if not isinstance(entries, dict):
+        raise ContractError(f"逐艺人风格画像必须包含 artists 对象：{path}")
+    known_style_refs = set(taxonomy["known_style_refs"])
+    catalog: dict[str, dict[str, Any]] = {}
+    for key, raw_profile in entries.items():
+        if not isinstance(raw_profile, dict):
+            raise ContractError(f"风格画像不是对象：{key}")
+        profile = _normalize_style_profile(
+            raw_profile,
+            fallback_name=normalized_text(key),
+            known_style_refs=known_style_refs,
+        )
+        names = [profile["canonical_name"], *profile["aliases"], normalized_text(key)]
+        for name in names:
+            marker = normalized_name(name)
+            if not marker:
+                continue
+            if marker in catalog and catalog[marker]["canonical_name"] != profile["canonical_name"]:
+                raise ContractError(f"风格画像别名冲突：{name}")
+            catalog[marker] = profile
+    return catalog
+
+
+def resolve_style_profile_path(path: Path) -> Path:
+    if path.is_file():
+        return path
+    fallback = path.with_name("artist_style_profiles.example.json")
+    if path.name == "artist_style_profiles.json" and fallback.is_file():
+        return fallback
+    raise ContractError(f"找不到逐艺人风格画像：{path}")
+
+
+def _unclassified_profile(name: str) -> dict[str, Any]:
+    return {
+        "canonical_name": normalized_text(name),
+        "aliases": [],
+        "classification_status": "unclassified",
+        "confidence": "low",
+        "style_mix": [],
+        "style_axes": {axis: 0.0 for axis in STYLE_AXIS_IDS},
+        "summary": f"{normalized_text(name)} 的公开资料未达到细分风格核验阈值，本次不将其自动归入摇滚、金属核或其他粗分类。",
+        "boundaries": ["不把未核验艺人自动归入摇滚或金属核。"],
+        "sources": [],
+        "release_overrides": [],
+    }
+
+
+def _style_profile_for(name: str, catalog: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    return catalog.get(normalized_name(name), _unclassified_profile(name))
+
+
+def _release_override(profile: dict[str, Any], track: dict[str, Any]) -> dict[str, Any] | None:
+    album_marker = normalized_name(track.get("album"))
+    title_marker = normalized_name(track.get("title"))
+    for override in profile.get("release_overrides", []):
+        if album_marker in override.get("match_albums", []) or title_marker in override.get("match_titles", []):
+            return override
+    return None
+
+
+def _style_assignment(track: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    override = _release_override(profile, track)
+    effective_mix = override.get("style_mix", profile["style_mix"]) if override else profile["style_mix"]
+    effective_axes = override.get("style_axes", profile["style_axes"]) if override else profile["style_axes"]
+    effective_summary = override.get("summary", profile["summary"]) if override else profile["summary"]
+    effective_sources = list(profile.get("sources", []))
+    if override:
+        for source in override.get("sources", []):
+            if source not in effective_sources:
+                effective_sources.append(source)
+    refs = [item["style_ref"] for item in effective_mix]
+    primary_ref = next((item["style_ref"] for item in effective_mix if item["role"] == "primary"), "")
+    return {
+        "position": track.get("position"),
+        "track_key": track["track_key"],
+        "title": track["title"],
+        "artist": track["artist"],
+        "album": track.get("album", ""),
+        "classification_status": profile["classification_status"],
+        "confidence": profile["confidence"],
+        "primary_style_ref": primary_ref,
+        "style_refs": refs,
+        "style_mix": effective_mix,
+        "style_axes": effective_axes,
+        "applied_scope": "release_override" if override else "artist_profile",
+        "rationale": effective_summary,
+        "sources": effective_sources,
+    }
 
 
 def load_preferred_artists(path: Path) -> list[str]:
@@ -227,6 +569,142 @@ def _copy_track(track: dict[str, Any], resolved_artist: str, resolved_artists: l
     return result
 
 
+def _style_distribution(
+    assignments: list[dict[str, Any]],
+    taxonomy: dict[str, Any],
+    *,
+    source_count: int,
+    classified_count: int,
+) -> list[dict[str, Any]]:
+    counts: Counter[str] = Counter(
+        assignment["primary_style_ref"]
+        for assignment in assignments
+        if assignment["classification_status"] == "classified" and assignment["primary_style_ref"]
+    )
+    styles_by_ref = {item["style_ref"]: item for item in taxonomy["styles"].values()}
+    result: list[dict[str, Any]] = []
+    for rank, (style_ref, count) in enumerate(
+        sorted(counts.items(), key=lambda entry: (-entry[1], entry[0])),
+        1,
+    ):
+        style = styles_by_ref[style_ref]
+        result.append(
+            {
+                "rank": rank,
+                "style_ref": style_ref,
+                "style_id": style["style_id"],
+                "label": style["label"],
+                "count": count,
+                "share": round(count / source_count, 6) if source_count else 0,
+                "classified_share": round(count / classified_count, 6) if classified_count else 0,
+            }
+        )
+    return result
+
+
+def build_overlap_style_distribution(
+    assignments: list[dict[str, Any]],
+    taxonomy: dict[str, Any],
+    *,
+    source_count: int,
+    classified_count: int,
+    primary_distribution: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Count every distinct style tag attached to a classified track.
+
+    ``style_distribution`` intentionally remains a mutually-exclusive primary
+    style view for audit and backwards compatibility.  This companion view is
+    the user-facing preference signal: one track may increment several styles,
+    so its percentages are coverage values and are not expected to sum to 1.
+    """
+
+    counts: Counter[str] = Counter()
+    for assignment in assignments:
+        if assignment.get("classification_status") != "classified":
+            continue
+        refs = [
+            ref
+            for ref in dict.fromkeys(assignment.get("style_refs", []))
+            if isinstance(ref, str) and ref
+        ]
+        counts.update(refs)
+
+    styles_by_ref = {item["style_ref"]: item for item in taxonomy["styles"].values()}
+    primary_rank = {
+        item.get("style_ref"): int(item.get("rank") or 999999)
+        for item in (primary_distribution or [])
+        if isinstance(item, dict) and item.get("style_ref")
+    }
+    result: list[dict[str, Any]] = []
+    ordered = sorted(
+        counts.items(),
+        key=lambda entry: (-entry[1], primary_rank.get(entry[0], 999999), entry[0]),
+    )
+    for rank, (style_ref, count) in enumerate(ordered, 1):
+        style = styles_by_ref.get(style_ref)
+        if not style:
+            continue
+        result.append(
+            {
+                "rank": rank,
+                "style_ref": style_ref,
+                "style_id": style["style_id"],
+                "label": style["label"],
+                "count": count,
+                "share": round(count / source_count, 6) if source_count else 0,
+                "classified_share": round(count / classified_count, 6) if classified_count else 0,
+                "overlap": True,
+            }
+        )
+    return result
+
+
+def _aggregate_style_axes(assignments: list[dict[str, Any]]) -> dict[str, float]:
+    classified = [
+        assignment
+        for assignment in assignments
+        if assignment["classification_status"] == "classified"
+    ]
+    if not classified:
+        return {axis: 0.0 for axis in STYLE_AXIS_IDS}
+    return {
+        axis: round(
+            sum(float(assignment["style_axes"][axis]) for assignment in classified) / len(classified),
+            2,
+        )
+        for axis in STYLE_AXIS_IDS
+    }
+
+
+def _style_profile_output(
+    name: str,
+    profile: dict[str, Any],
+    *,
+    primary_count: int,
+    credited_count: int,
+) -> dict[str, Any]:
+    primary_style_ref = next(
+        (item["style_ref"] for item in profile["style_mix"] if item["role"] == "primary"),
+        "",
+    )
+    return {
+        "artist": name,
+        "entity_ref": _artist_ref(name),
+        "primary_track_count": primary_count,
+        "credited_track_count": credited_count,
+        "is_core_artist": primary_count > 0,
+        "classification_status": profile["classification_status"],
+        "confidence": profile["confidence"],
+        "primary_style_ref": primary_style_ref,
+        "style_mix": profile["style_mix"],
+        "style_axes": profile["style_axes"],
+        "summary": profile["summary"],
+        "boundaries": profile["boundaries"],
+        "sources": profile["sources"],
+        "release_override_count": len(profile.get("release_overrides", [])),
+    }
+
+
 def analyze_snapshot(
     snapshot_path: Path,
     *,
@@ -235,10 +713,24 @@ def analyze_snapshot(
     output_path: Path,
     markdown_path: Path | None = None,
     manifest_path: Path | None = None,
+    style_taxonomy_path: Path | None = None,
+    style_profile_path: Path | None = None,
 ) -> dict[str, Any]:
     snapshot = validate_playlist_snapshot(read_json(snapshot_path), require_complete=True)
     preferred_names = load_preferred_artists(preferred_path)
-    catalog = load_relationship_catalog(relation_path)
+    relation_catalog = load_relationship_catalog(relation_path)
+    taxonomy_path = style_taxonomy_path or DEFAULT_STYLE_TAXONOMY_PATH
+    profile_path = resolve_style_profile_path(style_profile_path or DEFAULT_STYLE_PROFILE_PATH)
+    # Any load of the public example catalog is a degraded run, even when it
+    # is requested explicitly via --style-profiles.
+    if profile_path.name == "artist_style_profiles.example.json":
+        profile_catalog_mode = "example_fallback"
+    elif profile_path == DEFAULT_STYLE_PROFILE_PATH:
+        profile_catalog_mode = "private"
+    else:
+        profile_catalog_mode = "explicit"
+    taxonomy = load_style_taxonomy(taxonomy_path)
+    style_catalog = load_style_profile_catalog(profile_path, taxonomy)
 
     raw_tracks = snapshot["tracks"]
     resolved_tracks: list[dict[str, Any]] = []
@@ -246,13 +738,16 @@ def analyze_snapshot(
     credited_counter: Counter[str] = Counter()
     for raw_track in raw_tracks:
         raw_artist = normalized_text(raw_track["artist"])
-        resolved_artist = resolve_artist(raw_artist, catalog)
+        resolved_artist = resolve_artist(raw_artist, relation_catalog)
         raw_artists = raw_track.get("artists", [raw_artist])
         if not isinstance(raw_artists, list):
             raw_artists = [raw_artist]
         resolved_artists: list[str] = []
         seen_artists: set[str] = set()
-        for credited in [resolved_artist, *[resolve_artist(str(item), catalog) for item in raw_artists]]:
+        for credited in [
+            resolved_artist,
+            *[resolve_artist(str(item), relation_catalog) for item in raw_artists],
+        ]:
             marker = normalized_name(credited)
             if marker and marker not in seen_artists:
                 seen_artists.add(marker)
@@ -272,7 +767,7 @@ def analyze_snapshot(
             primary_count=primary_counter.get(name, 0),
             credited_count=credited_counter.get(name, 0),
             preferred=normalized_name(name) in preferred_by_marker,
-            catalog=catalog,
+            catalog=relation_catalog,
         )
         entities.append(entity)
         for ref in refs:
@@ -308,7 +803,7 @@ def analyze_snapshot(
 
     preferred = []
     for name in preferred_names:
-        resolved = resolve_artist(name, catalog)
+        resolved = resolve_artist(name, relation_catalog)
         preferred.append(
             {
                 "name": resolved,
@@ -318,6 +813,94 @@ def analyze_snapshot(
         )
         if _artist_ref(resolved) not in analysis_ref_ids:
             analysis_ref_ids.append(_artist_ref(resolved))
+
+    track_style_assignments: list[dict[str, Any]] = []
+    for track in resolved_tracks:
+        profile = _style_profile_for(track["artist"], style_catalog)
+        assignment = _style_assignment(track, profile)
+        track_style_assignments.append(assignment)
+        for style_ref in assignment["style_refs"]:
+            if style_ref not in analysis_ref_ids:
+                analysis_ref_ids.append(style_ref)
+
+    artist_style_profiles = [
+        _style_profile_output(
+            name,
+            _style_profile_for(name, style_catalog),
+            primary_count=primary_counter.get(name, 0),
+            credited_count=credited_counter.get(name, 0),
+        )
+        for name in sorted(
+            entity_names,
+            key=lambda value: (-primary_counter[value], -credited_counter[value], value.casefold()),
+        )
+    ]
+    for profile in artist_style_profiles:
+        for style_item in profile["style_mix"]:
+            if style_item["style_ref"] not in analysis_ref_ids:
+                analysis_ref_ids.append(style_item["style_ref"])
+
+    source_track_count = snapshot["track_count"]
+    classified_count = sum(
+        1 for assignment in track_style_assignments if assignment["classification_status"] == "classified"
+    )
+    unclassified_count = source_track_count - classified_count
+    style_distribution = _style_distribution(
+        track_style_assignments,
+        taxonomy,
+        source_count=source_track_count,
+        classified_count=classified_count,
+    )
+    overlap_style_distribution = build_overlap_style_distribution(
+        track_style_assignments,
+        taxonomy,
+        source_count=source_track_count,
+        classified_count=classified_count,
+        primary_distribution=style_distribution,
+    )
+    active_style_refs: list[str] = []
+    for assignment in track_style_assignments:
+        for style_ref in assignment["style_refs"]:
+            if style_ref not in active_style_refs:
+                active_style_refs.append(style_ref)
+    style_analysis = {
+        "taxonomy_version": taxonomy["taxonomy_version"],
+        "taxonomy_sha256": sha256_path(taxonomy_path),
+        "profile_catalog_sha256": sha256_path(profile_path),
+        "profile_catalog_mode": profile_catalog_mode,
+        "known_style_refs": taxonomy["known_style_refs"],
+        "active_style_refs": active_style_refs,
+        "style_definitions": list(taxonomy["styles"].values()),
+        "axis_definitions": taxonomy["axis_definitions"],
+        "frequency_basis": "primary_artist_track_count_from_current_snapshot",
+        "artist_profile_count": len(artist_style_profiles),
+        "core_artist_profile_count": sum(1 for item in artist_style_profiles if item["is_core_artist"]),
+        "classified_track_count": classified_count,
+        "unclassified_track_count": unclassified_count,
+        "style_distribution": style_distribution,
+        "overlap_style_distribution": overlap_style_distribution,
+        "dominant_style_mix": [
+            {
+                **item,
+                "weight": round(item["count"] / classified_count, 6) if classified_count else 0,
+            }
+            for item in style_distribution
+        ],
+        "style_axes": _aggregate_style_axes(track_style_assignments),
+        "artist_profiles": artist_style_profiles,
+        "profile_coverage": {
+            "required_artist_count": len(artist_style_profiles),
+            "classified_artist_count": sum(
+                1 for item in artist_style_profiles if item["classification_status"] == "classified"
+            ),
+            "unclassified_artist_count": sum(
+                1 for item in artist_style_profiles if item["classification_status"] == "unclassified"
+            ),
+            "degraded": profile_catalog_mode == "example_fallback" or any(
+                item["classification_status"] == "unclassified" for item in artist_style_profiles
+            ),
+        },
+    }
 
     # Hash the meaningful inputs only. Timestamp and output paths do not alter
     # the analysis identity, so an agent can verify that it received one packet.
@@ -330,6 +913,10 @@ def analyze_snapshot(
         "credited_distribution": credited_distribution,
         "entities": entities,
         "favorite_track_keys": [track["track_key"] for track in resolved_tracks],
+        "style_taxonomy_sha256": style_analysis["taxonomy_sha256"],
+        "style_profile_catalog_sha256": style_analysis["profile_catalog_sha256"],
+        "track_style_assignments": track_style_assignments,
+        "style_analysis": style_analysis,
     }
     analysis_id = f"analysis-{stable_hash(identity_payload)[:20]}"
     packet = {
@@ -342,7 +929,7 @@ def analyze_snapshot(
         "source_platform": snapshot["platform"],
         "source_playlist_id": snapshot.get("playlist_id", ""),
         "source_playlist_name": snapshot.get("playlist_name", ""),
-        "source_track_count": len(resolved_tracks),
+        "source_track_count": source_track_count,
         "favorite_track_keys": [track["track_key"] for track in resolved_tracks],
         "favorite_tracks": resolved_tracks,
         "primary_distribution": primary_distribution,
@@ -350,6 +937,8 @@ def analyze_snapshot(
         "preferred_artists": preferred,
         "entities": entities,
         "analysis_ref_ids": analysis_ref_ids,
+        "track_style_assignments": track_style_assignments,
+        "style_analysis": style_analysis,
         "recommendation_policy": DEFAULT_POLICY,
         "input_manifest": {
             "snapshot_file_name": snapshot_path.name,
@@ -358,6 +947,10 @@ def analyze_snapshot(
             "preferred_sha256": sha256_path(preferred_path) if preferred_path.is_file() else "",
             "relationship_file_name": relation_path.name,
             "relationship_sha256": sha256_path(relation_path) if relation_path.is_file() else "",
+            "style_taxonomy_file_name": taxonomy_path.name,
+            "style_taxonomy_sha256": style_analysis["taxonomy_sha256"],
+            "style_profile_file_name": profile_path.name,
+            "style_profile_sha256": style_analysis["profile_catalog_sha256"],
         },
     }
     write_json(output_path, packet)
@@ -372,6 +965,8 @@ def analyze_snapshot(
                 "analysis_id": analysis_id,
                 "source_snapshot_id": snapshot["snapshot_id"],
                 "source_track_count": len(resolved_tracks),
+                "style_taxonomy_sha256": style_analysis["taxonomy_sha256"],
+                "style_profile_catalog_sha256": style_analysis["profile_catalog_sha256"],
                 "input_manifest": packet["input_manifest"],
                 "output_file_name": output_path.name,
                 "generated_at": packet["generated_at"],
@@ -396,6 +991,62 @@ def write_markdown(packet: dict[str, Any], path: Path) -> None:
     ]
     for item in packet["primary_distribution"]:
         lines.append(f"| {item['rank']} | {item['artist']} | {item['count']} | {item['share']:.2%} |")
+    lines.extend(
+        [
+            "",
+            "## 主风格分布（互斥审计）",
+            "",
+            "| 排名 | 细分风格 | 歌曲数 | 占本次清单 |",
+            "| ---: | --- | ---: | ---: |",
+        ]
+    )
+    for item in packet["style_analysis"]["style_distribution"]:
+        lines.append(
+            f"| {item['rank']} | {item['label']} (`{item['style_ref']}`) | "
+            f"{item['count']} | {item['share']:.2%} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 风格标签覆盖（前五，可重叠）",
+            "",
+            "占比为风格命中歌曲数 / 已分类歌曲数，不要求合计 100%。",
+            "",
+            "| 排名 | 细分风格 | 命中歌曲数 | 标签覆盖率 |",
+            "| ---: | --- | ---: | ---: |",
+        ]
+    )
+    classified_count = packet["style_analysis"]["classified_track_count"]
+    for item in packet["style_analysis"].get("overlap_style_distribution", [])[:5]:
+        lines.append(
+            f"| {item['rank']} | {item['label']} (`{item['style_ref']}`) | "
+            f"{item['count']} / {classified_count} | {item['classified_share']:.2%} |"
+        )
+    lines.extend(["", "## 整体听感轴", "", "| 听感轴 | 分数 |", "| --- | ---: |"])
+    for axis, score in packet["style_analysis"]["style_axes"].items():
+        lines.append(f"| {STYLE_AXIS_LABELS.get(axis, axis)} | {score:.2f} |")
+    lines.extend(["", "## 逐艺人风格画像", ""])
+    for profile in packet["style_analysis"]["artist_profiles"]:
+        mix = "、".join(
+            f"{item['style_ref']}（{item['weight']:.0%}）"
+            for item in profile["style_mix"]
+        ) or "未分类"
+        axis_text = "、".join(
+            f"{STYLE_AXIS_LABELS.get(axis, axis)} {score:.0f}"
+            for axis, score in profile["style_axes"].items()
+        )
+        lines.append(f"### {profile['artist']}（主艺人歌曲 {profile['primary_track_count']} 首）")
+        lines.append(
+            f"- 分类：{profile['classification_status']}；置信度：{profile['confidence']}；风格混合：{mix}"
+        )
+        lines.append(f"- 听感轴：{axis_text}")
+        lines.append(f"- 总结：{profile['summary']}")
+        lines.append(f"- 边界：{'；'.join(profile['boundaries'])}")
+        if profile["sources"]:
+            lines.append(f"- 来源：{'；'.join(profile['sources'])}")
+        else:
+            lines.append("- 来源：暂无达到阈值的公开风格来源")
+        lines.append("")
     lines.extend(["", "## 主唱与其他项目", ""])
     for entity in packet["entities"]:
         if entity["relation_status"] == "unmapped":
@@ -423,6 +1074,51 @@ def write_markdown(packet: dict[str, Any], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_coverage_report(packet: dict[str, Any], path: Path) -> dict[str, Any]:
+    """Write an explicit warning/report artifact for degraded style coverage.
+
+    The artifact records the profile catalog mode and every unclassified
+    artist. It is emitted whenever the catalog fell back to the public
+    example catalog or any current artist was left unclassified, so a live
+    run can surface the degradation instead of hiding it.
+    """
+
+    style_analysis = packet["style_analysis"]
+    coverage = style_analysis["profile_coverage"]
+    unclassified = [
+        profile["artist"]
+        for profile in style_analysis["artist_profiles"]
+        if profile["classification_status"] == "unclassified"
+    ]
+    report = {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_type": "coverage_report",
+        "analysis_id": packet["analysis_id"],
+        "source_snapshot_id": packet["source_snapshot_id"],
+        "profile_catalog_mode": style_analysis["profile_catalog_mode"],
+        "degraded": coverage["degraded"],
+        "degraded_reasons": [
+            (
+                "example_fallback"
+                if style_analysis["profile_catalog_mode"] == "example_fallback"
+                else None
+            ),
+            ("unclassified_artists" if unclassified else None),
+        ],
+        "unclassified_artist_count": len(unclassified),
+        "unclassified_artists": sorted(unclassified),
+        "classified_artist_count": coverage["classified_artist_count"],
+        "required_artist_count": coverage["required_artist_count"],
+        "next_action": (
+            "升级私有画像目录并重新归类未分类艺人；示例目录不可用于生产运行"
+            if coverage["degraded"]
+            else "画像覆盖率正常"
+        ),
+    }
+    write_json(path, report)
+    return report
+
+
 def analyze_and_validate(
     snapshot_path: Path,
     *,
@@ -431,6 +1127,8 @@ def analyze_and_validate(
     output_path: Path,
     markdown_path: Path | None = None,
     manifest_path: Path | None = None,
+    style_taxonomy_path: Path | None = None,
+    style_profile_path: Path | None = None,
 ) -> dict[str, Any]:
     packet = analyze_snapshot(
         snapshot_path,
@@ -439,7 +1137,7 @@ def analyze_and_validate(
         output_path=output_path,
         markdown_path=markdown_path,
         manifest_path=manifest_path,
+        style_taxonomy_path=style_taxonomy_path,
+        style_profile_path=style_profile_path,
     )
-    from contracts import validate_analysis_packet
-
     return validate_analysis_packet(packet)
