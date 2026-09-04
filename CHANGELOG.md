@@ -41,6 +41,8 @@
 
 同日补记：新增 `netease_public` 网易云公开歌单匿名读取器（免登录、零新依赖）。网络与解析分离，支持数字 ID 与分享链接，数量取接口 `trackIds`，坏行跳过并在数量不一致时标记 `incomplete`；隐私歌单明确不在能力范围。真实验证：热歌榜 3778678 全链路 snapshot（200 首 complete）→ analyze（172 艺人实体）→ prepare-agent。
 
+同日补记：工作流定位从"每周"改为"按需触发、不绑定时间"，明确对本次输入的整个歌单做全量解析；每次运行固定输出 10 首推荐，与歌单规模无关。仅调整描述性文案（workflow 帮助文本、contracts docstring、README 首段、hermes_weekly.sh 注释），无任何逻辑变更；hermes_weekly.sh 文件名保持不变并在注释中标注为可选调度模板。
+
 同日补记：新增 `qq_public` QQ 音乐公开歌单匿名读取器（免登录、零新依赖）。走 `musicu.fcg` 网关 `music.srfDissInfo.DissInfo/CgiGetDiss` 模块，按接口 `hasmore` 信号分页（每页 100 首），歌曲以 `mid` 作为稳定 platform_track_id，数量取接口 `total_song_num`；接口拒绝（req_1.code 非 0）与坏行跳过均有显式语义。真实验证：30 首公开歌单 snapshot complete；三页小分页探针确认 hasmore/偏移正确；analyze -> prepare-agent 链路通过。
 
 验证：

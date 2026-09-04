@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Shared contracts and validation helpers for the weekly music workflow."""
+"""Shared contracts and validation helpers for the music playlist workflow.
+
+The workflow runs on demand, not on a fixed schedule; it always analyzes the
+whole playlist provided by the current Step 1 snapshot.
+"""
 
 from __future__ import annotations
 

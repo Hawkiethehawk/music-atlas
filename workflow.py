@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local entry point for the three-stage weekly music workflow."""
+"""Local entry point for the three-stage music playlist workflow (on demand)."""
 
 from __future__ import annotations
 
@@ -516,7 +516,7 @@ def _add_style_options(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Apple Music 每周推荐本地三阶段工作流")
+    parser = argparse.ArgumentParser(description="歌单推荐本地三阶段工作流：随时手动触发，不绑定时间")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     snapshot_parser = subparsers.add_parser("snapshot", help="Step 1: 生成统一 PlaylistSnapshot")
