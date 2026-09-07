@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from contracts import ContractError, validate_recommendation_bundle
+from contracts import ContractError
+from evidence import require_usable_evidence
+from recommender import rank_bundle
 
 
 class OutputAdapter(Protocol):
@@ -30,12 +32,15 @@ def render_text(
     title: str = "本周音乐推荐",
     include_audit_links: bool = False,
 ) -> str:
-    validate_recommendation_bundle(bundle, analysis)
+    bundle = rank_bundle(bundle, analysis)
     lines = [title, f"分析包：{analysis['analysis_id']}", f"偏好清单歌曲数：{analysis['source_track_count']}", ""]
     if bundle["status"] == "insufficient_evidence":
         lines.extend(["本周没有足够的公开证据生成推荐。", bundle["message"]])
         return "\n".join(lines)
+    lines[0] = f"{title}（研究草稿）"
+    lines.extend(["公开事实尚未核验，本结果不是正式推荐。", ""])
     for index, recommendation in enumerate(bundle["recommendations"], 1):
+        require_usable_evidence(recommendation)
         album = recommendation.get("album")
         album_suffix = f"《{album}》" if isinstance(album, str) and album.strip() else ""
         lines.append(f"{index}. {recommendation['title']} - {recommendation['artist']} {album_suffix}".rstrip())
@@ -44,8 +49,9 @@ def render_text(
                 f"   综合分：{float(recommendation['ranking_score']):.1f}；"
                 f"召回：{recommendation.get('candidate_type', 'unknown')}"
             )
-        lines.append(f"   风格匹配：{recommendation['explanation']['style_fit']}")
-        lines.append(f"   {recommendation['explanation']['text']}")
+        explanation = recommendation["program_explanation"]
+        lines.append(f"   风格匹配：{explanation['style_fit']}")
+        lines.append(f"   {explanation['text']}")
         if include_audit_links:
             links = _link_lines(recommendation.get("platform_links", {}))
             if links:

@@ -1,6 +1,11 @@
 {
   "name": "tools",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node --test tests/*.browser.mjs"
+  },
   "dependencies": {
+    "csv-parse": "7.0.2",
     "playwright": "^1.62.1"
   },
   "private": true,

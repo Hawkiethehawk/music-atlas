@@ -70,7 +70,8 @@ class EvidenceQualityTests(unittest.TestCase):
         verified = verify_evidence_item(item)
         self.assertEqual(verified["source_class"], "musicbrainz")
         self.assertEqual(verified["source_identifier"], "musicbrainz:11111111-1111-1111-1111-111111111111")
-        self.assertEqual(verified["verification_result"], "verified")
+        self.assertEqual(verified["verification_result"], "unverified")
+        self.assertEqual(verified["identifier_status"], "valid")
 
     def test_duplicated_and_unverifiable_evidence_are_flagged(self) -> None:
         url = "https://example.com/page"
@@ -95,11 +96,12 @@ class EvidenceQualityTests(unittest.TestCase):
         self.assertEqual(verified_contradictory["verification_result"], "contradictory")
         self.assertEqual(verified_inaccessible["verification_result"], "inaccessible")
 
-    def test_explicit_verified_is_kept_and_unknown_result_is_ignored(self) -> None:
+    def test_agent_declared_verified_is_not_trusted(self) -> None:
         item = evidence_item("track_identity", "https://example.com/x")
-        item["verification_result"] = "verified"  # 外部在线适配器已核验
+        item["verification_result"] = "verified"
         verified = verify_evidence_item(item)
-        self.assertEqual(verified["verification_result"], "verified")
+        self.assertEqual(verified["verification_result"], "unverified")
+        self.assertEqual(verified["declared_verification_result"], "verified")
         item["verification_result"] = "made-up"
         verified = verify_evidence_item(item)
         self.assertEqual(verified["verification_result"], "unverified")
@@ -109,10 +111,10 @@ class EvidenceQualityTests(unittest.TestCase):
         item["retrieved_at"] = "2001-01-01T00:00:00Z"
         verified = verify_evidence_item(item)
         self.assertEqual(verified["verification_result"], "stale")
-        # 检索时间新且是稳定标识符 -> verified
+        # 不过期、标识符格式正确，仍不代表事实已核验。
         item["retrieved_at"] = None
         verified = verify_evidence_item(item)
-        self.assertEqual(verified["verification_result"], "verified")
+        self.assertEqual(verified["verification_result"], "unverified")
 
     def test_contradictory_inaccessible_are_valid_contract_statuses(self) -> None:
         from contracts import EVIDENCE_VERIFICATION_STATUSES
@@ -135,7 +137,9 @@ class EvidenceQualityTests(unittest.TestCase):
         self.assertEqual(suggest_evidence_grade([example]), "C")
         # 来源支持 A 时，保守声明 C 可接受；不会虚报
         verdict_conservative = check_evidence_acceptance([musicbrainz], "C")
-        self.assertTrue(verdict_conservative["accepted"])
+        self.assertTrue(verdict_conservative["grade_valid"])
+        self.assertFalse(verdict_conservative["accepted"])
+        self.assertEqual(verdict_conservative["status"], "pending_verification")
         # 来源只支持 C 时，声明 A 属于虚报，被拒绝
         verdict_overclaimed = check_evidence_acceptance([example], "A")
         self.assertFalse(verdict_overclaimed["accepted"])

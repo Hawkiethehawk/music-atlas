@@ -126,7 +126,7 @@ def _declared_count(
     count_file: Path | None,
 ) -> int:
     if explicit is not None:
-        if isinstance(explicit, bool) or explicit < 0:
+        if isinstance(explicit, bool) or not isinstance(explicit, int) or explicit < 0:
             raise ContractError("declared_count 必须是大于等于 0 的整数")
         return explicit
     from_input = _count_from_mapping(raw_metadata)
@@ -141,7 +141,7 @@ def _declared_count(
             raise ContractError(f"找不到 Step 1 数量清单：{count_file}") from exc
         except OSError as exc:
             raise ContractError(f"无法读取 Step 1 数量清单：{count_file}：{exc}") from exc
-        except json.JSONDecodeError as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ContractError(f"Step 1 数量清单不是有效 JSON：{count_file}") from exc
         if isinstance(value, dict):
             count = _count_from_mapping(value)
@@ -295,11 +295,10 @@ class CsvPlaylistReader:
             {_normalize_csv_key(k): v for k, v in row.items() if k is not None}
             for row in raw_rows
         ]
-        raw_metadata = {}
         tracks = [_normalize_track(item, position, platform) for position, item in enumerate(items, 1)]
-        # 导出文件的全部数据行即来源声明；无元数据时以行数为声明数量
+        # 显式声明优先；只有未指定数量清单时才回退到 CSV 行数。
         declared = _declared_count(
-            {"declared_track_count": len(tracks)},
+            {} if declared_count_file is not None else {"declared_track_count": len(tracks)},
             explicit=declared_count,
             count_file=declared_count_file,
         )
@@ -319,7 +318,11 @@ class CsvPlaylistReader:
             "reader": {
                 "type": "csv",
                 "source_file_name": input_path.name,
-                "declared_count_source": "argument" if declared_count is not None else "row_count",
+                "declared_count_source": (
+                    "argument" if declared_count is not None
+                    else "declared_count_file" if declared_count_file is not None
+                    else "row_count"
+                ),
             },
             "tracks": tracks,
         }
@@ -644,16 +647,19 @@ class QQPublicPlaylistReader:
         raw_collected = 0
         total = 0
         api_playlist_name = ""
-        first_page_bytes = b""
+        pages_digest = hashlib.sha256()
+        page_hashes: list[str] = []
         for page_index in range(QQ_MAX_PAGES):
             raw = _fetch_qq_playlist_page(playlist_arg, page_index * QQ_PAGE_SIZE, QQ_PAGE_SIZE)
+            pages_digest.update(len(raw).to_bytes(8, "big"))
+            pages_digest.update(raw)
+            page_hashes.append(hashlib.sha256(raw).hexdigest())
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise ContractError(f"QQ 音乐接口响应不是有效 UTF-8 JSON：{exc}") from exc
             page = _parse_qq_diss_page(payload)
             if page_index == 0:
-                first_page_bytes = raw
                 api_playlist_name = page["playlist_name"]
             collected.extend(page["tracks"])
             raw_collected += page["raw_count"]
@@ -679,7 +685,7 @@ class QQPublicPlaylistReader:
             track["position"] = position
         return {
             "schema_version": SCHEMA_VERSION,
-            "snapshot_id": f"{platform}-{hashlib.sha256(first_page_bytes).hexdigest()[:16]}",
+            "snapshot_id": f"{platform}-{pages_digest.hexdigest()[:16]}",
             "platform": platform,
             "playlist_id": playlist_arg,
             "playlist_name": api_playlist_name or normalized_text(playlist_name),
@@ -687,11 +693,13 @@ class QQPublicPlaylistReader:
             "track_count": actual,
             "reader_status": "complete" if declared == actual else "incomplete",
             "captured_at": utc_now(),
-            "input_sha256": hashlib.sha256(first_page_bytes).hexdigest(),
+            "input_sha256": pages_digest.hexdigest(),
             "reader": {
                 "type": "qq_public",
                 "source_playlist_id": playlist_arg,
-                "fetched_pages": (actual + QQ_PAGE_SIZE - 1) // QQ_PAGE_SIZE or 1,
+                "fetched_pages": len(page_hashes),
+                "page_sha256": page_hashes,
+                "input_hash_scope": "ordered_length_prefixed_page_responses",
                 "declared_count_source": (
                     "argument" if declared_count is not None else "api_total_song_num"
                 ),

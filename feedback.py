@@ -9,6 +9,7 @@ through a human-approved tuning loop.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +18,27 @@ from contracts import (
     SCHEMA_VERSION,
     FEEDBACK_OUTCOMES,
     read_json,
+    stable_hash,
     utc_now,
     validate_feedback_log,
     validate_feedback_log_refs,
     write_json,
 )
+
+
+ACCEPTED_OUTCOMES = {"saved", "replayed"}
+REJECTED_OUTCOMES = {"skipped", "hidden"}
+
+
+def _timestamp_order_key(value: str) -> tuple[int, float, str]:
+    """Keep legacy invalid timestamps below valid ones; naive times use UTC."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (1, parsed.timestamp(), "")
+    except (ValueError, OverflowError, OSError):
+        return (0, 0.0, value)
 
 
 def new_feedback_record(
@@ -102,5 +119,16 @@ def match_feedback_to_bundle(
         "unmatched_count": len(unmatched),
         "unmatched": unmatched,
         "by_recommendation": by_recommendation,
+        "latest_outcomes": {
+            key: max(records, key=lambda record: (
+                _timestamp_order_key(record["timestamp"]), stable_hash(record),
+            ))["outcome"]
+            for key, records in by_recommendation.items()
+        },
         "outcome_counts": feedback_outcome_counts(matched),
     }
+
+
+def latest_feedback_outcomes(bundle: dict[str, Any], log: list[dict[str, Any]]) -> dict[str, str]:
+    """Resolve only current-analysis, ranked-track feedback in time order."""
+    return match_feedback_to_bundle(log, bundle, {"analysis_id": bundle["analysis_id"]})["latest_outcomes"]

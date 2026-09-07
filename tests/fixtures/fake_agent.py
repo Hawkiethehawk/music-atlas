@@ -18,7 +18,7 @@ def main() -> int:
     packet = json.loads(prompt[start:end])
     policy = packet["recommendation_policy"]
     refs = packet["analysis_ref_ids"]
-    style_refs = packet["style_analysis"]["known_style_refs"]
+    style_refs = packet["style_analysis"]["active_style_refs"]
     if not style_refs:
         raise SystemExit("active style refs missing")
     candidate_types = (
@@ -28,10 +28,21 @@ def main() -> int:
         "exploration",
     )
     candidate_pool = []
+    anchors = [item["artist"] for item in packet["primary_distribution"]]
+    projects = sorted({item["name"] for entity in packet["entities"] for item in entity.get("related_projects", [])
+                       if item.get("sources") and item.get("confidence") in {"high", "medium"}})
+    if not projects:
+        raise SystemExit("fixture needs catalog relation targets")
     for index in range(int(policy["candidate_pool_min"])):
-        number = index + 1
-        source_url = f"https://musicbrainz.org/recording/candidate-fixture-{number}"
+        number = index + 1 + (packet.get("research_request", {}).get("round", 1) - 1) * int(policy["candidate_pool_min"])
+        source_url = f"https://musicbrainz.org/recording/00000000-0000-4000-8000-{number:012d}"
         candidate_type = candidate_types[index % len(candidate_types)]
+        artist = (anchors[(index // 4) % len(anchors)] if candidate_type == "artist_continuation"
+                  else projects[(index // 4) % len(projects)] if candidate_type == "musician_relation"
+                  else f"Candidate Artist {number}")
+        axes = packet["style_analysis"]["style_axes"]
+        if candidate_type == "exploration":
+            axes = dict.fromkeys(axes, 0 if sum(axes.values()) / len(axes) >= 50 else 100)
         evidence_items = [
             {"claim_type": "track_identity", "claim": "测试歌曲身份", "url": source_url},
             {"claim_type": "style", "claim": "测试细分风格", "url": source_url},
@@ -44,27 +55,19 @@ def main() -> int:
             {
                 "canonical_track_id": f"musicbrainz:candidate-fixture-{number}",
                 "title": f"Candidate Fixture {number}",
-                "artist": f"Candidate Artist {number}",
+                "artist": artist,
                 "project": f"Candidate Project {number}",
                 "release_date": "2026-01-01",
                 "candidate_type": candidate_type,
                 "analysis_refs": [refs[0]],
                 "style_refs": [style_refs[0]],
                 "style_mix": [{"style_ref": style_refs[0], "role": "primary", "weight": 1.0}],
-                "style_axes": packet["style_analysis"]["style_axes"],
+                "style_axes": axes,
                 "style_confidence": "high",
                 "relation_path": ["当前偏好分布", "关系证据", f"Candidate Project {number}"],
                 "evidence_grade": "A",
                 "evidence_items": evidence_items,
                 "discovery_source": "MusicBrainz",
-                "explanation": {
-                    "preference_basis": "该样本只引用分析包中的当前偏好分布",
-                    "artist_relation": "该样本只用于验证候选关系字段",
-                    "music_fit": "该样本只用于验证候选匹配说明字段",
-                    "style_fit": "该样本只用于验证具体细分风格引用和匹配说明字段",
-                    "novelty": "该样本标题不在当前喜欢歌曲清单中",
-                    "text": "这是一条用于本地候选池和排序验收的完整逐首说明，不代表真实音乐推荐。",
-                },
                 "sources": [source_url],
                 "platform_links": {"youtube": f"https://www.youtube.com/watch?v=candidate{number}"},
             }
