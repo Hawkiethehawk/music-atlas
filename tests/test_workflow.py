@@ -43,6 +43,7 @@ def minimal_analysis_packet() -> dict:
         "schema_version": "2.0",
         "packet_type": "musician_analysis",
         "analysis_id": "analysis-test",
+        "as_of_date": "2026-01-01",
         "source_snapshot_id": "snapshot-test",
         "source_track_count": 1,
         "favorite_track_keys": [favorite_key],
@@ -183,8 +184,32 @@ def minimal_analysis_packet() -> dict:
 
 
 def candidate_fixture(packet: dict, index: int, candidate_type: str) -> dict:
-    style_ref = packet["style_analysis"]["known_style_refs"][0]
-    source_url = f"https://musicbrainz.org/recording/test-{index}"
+    from contracts import artist_key
+    style_ref = (packet["style_analysis"]["active_style_refs"] or packet["style_analysis"]["known_style_refs"])[0]
+    name = f"Candidate Artist {index}"
+    if candidate_type == "artist_continuation":
+        ref = f"artist:{artist_key(name)}"
+        if ref not in packet["analysis_ref_ids"]:
+            packet["analysis_ref_ids"].append(ref)
+            packet["entities"].append({"entity_ref": ref, "name": name, "entity_type": "band", "primary_track_count": 0,
+                                     "credited_track_count": 0, "is_preferred": True, "relation_status": "unmapped",
+                                     "lead_vocalists": [], "related_projects": [], "sources": [], "analysis_refs": [ref]})
+            packet["preferred_artists"].append({"name": name, "entity_ref": ref, "source": "synthetic_fixture"})
+    elif candidate_type == "musician_relation":
+        entity = packet["entities"][0]
+        ref = f"project:{artist_key(name)}"
+        if ref not in packet["analysis_ref_ids"]:
+            packet["analysis_ref_ids"].append(ref)
+            entity["analysis_refs"].append(ref)
+            entity["relation_status"] = "confirmed"
+            entity["sources"] = ["https://example.com/fixture-relations"]
+            entity["related_projects"].append({"name": name, "confidence": "high", "person": "Fixture musician",
+                                                "sources": ["https://example.com/fixture-relations"]})
+    axes = deepcopy(packet["style_analysis"]["style_axes"])
+    if candidate_type == "exploration":
+        endpoint = 0 if sum(axes.values()) / len(axes) >= 50 else 100
+        axes = dict.fromkeys(axes, endpoint)
+    source_url = f"https://musicbrainz.org/recording/00000000-0000-4000-8000-{index:012d}"
     evidence_items = [
         {"claim_type": "track_identity", "claim": "测试歌曲身份", "url": source_url},
         {"claim_type": "style", "claim": "测试风格归属", "url": source_url},
@@ -200,10 +225,10 @@ def candidate_fixture(packet: dict, index: int, candidate_type: str) -> dict:
         "project": f"Candidate Project {index}",
         "release_date": "2026-01-01",
         "candidate_type": candidate_type,
-        "analysis_refs": ["artist:band"],
+        "analysis_refs": [packet["analysis_ref_ids"][0]],
         "style_refs": [style_ref],
         "style_mix": [{"style_ref": style_ref, "role": "primary", "weight": 1.0}],
-        "style_axes": packet["style_analysis"]["style_axes"],
+        "style_axes": axes,
         "style_confidence": "high",
         "relation_path": ["Band", "测试关系", f"Candidate {index}"],
         "evidence_grade": "A",
@@ -293,12 +318,11 @@ class WorkflowContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "analysis.json"
             snapshot = build_snapshot(
-                ROOT / "input" / "web_favorites.json",
+                self.fixture,
                 reader_name="local_json",
                 platform="apple_music",
                 playlist_id="favorite-songs-web",
                 playlist_name="喜爱歌曲",
-                declared_count_file=ROOT / "input" / "artist_distribution.json",
             )
             snapshot_path = Path(directory) / "snapshot.json"
             snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
@@ -307,6 +331,7 @@ class WorkflowContractTests(unittest.TestCase):
                 preferred_path=self.preferred,
                 relation_path=self.relations,
                 output_path=output,
+                style_profile_path=ROOT / "styles" / "artist_style_profiles.example.json",
             )
             validate_analysis_packet(packet)
             profiles = {item["artist"]: item for item in packet["style_analysis"]["artist_profiles"]}
@@ -323,21 +348,20 @@ class WorkflowContractTests(unittest.TestCase):
                     if item["classification_status"] == "classified"
                 )
             )
-            bad_omens = profiles["Bad Omens"]
-            self.assertIn("style:metalcore.modern_alternative", [item["style_ref"] for item in bad_omens["style_mix"]])
-            self.assertNotEqual(bad_omens["primary_style_ref"], "style:metalcore.traditional")
+            imminence = profiles["Imminence"]
+            self.assertIn("style:metalcore.atmospheric_post", [item["style_ref"] for item in imminence["style_mix"]])
+            self.assertNotEqual(imminence["primary_style_ref"], "style:metalcore.traditional")
             self.assertTrue(packet["style_analysis"]["active_style_refs"])
 
     def test_collaborators_are_profiled_without_entering_primary_style_frequency(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "analysis.json"
             snapshot = build_snapshot(
-                ROOT / "input" / "web_favorites.json",
+                self.fixture,
                 reader_name="local_json",
                 platform="apple_music",
                 playlist_id="favorite-songs-web",
                 playlist_name="喜爱歌曲",
-                declared_count_file=ROOT / "input" / "artist_distribution.json",
             )
             snapshot_path = Path(directory) / "snapshot.json"
             snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
@@ -346,13 +370,14 @@ class WorkflowContractTests(unittest.TestCase):
                 preferred_path=self.preferred,
                 relation_path=self.relations,
                 output_path=output,
+                style_profile_path=ROOT / "styles" / "artist_style_profiles.example.json",
             )
             validate_analysis_packet(packet)
             primary_names = {item["artist"] for item in packet["primary_distribution"]}
             profile_by_name = {item["artist"]: item for item in packet["style_analysis"]["artist_profiles"]}
-            self.assertNotIn("BEAUTY SCHOOL DROPOUT", primary_names)
-            self.assertFalse(profile_by_name["BEAUTY SCHOOL DROPOUT"]["is_core_artist"])
-            self.assertFalse(profile_by_name["Travis Barker"]["is_core_artist"])
+            self.assertNotIn("Mike Shinoda", primary_names)
+            self.assertFalse(profile_by_name["Mike Shinoda"]["is_core_artist"])
+            self.assertEqual(profile_by_name["Mike Shinoda"]["classification_status"], "classified")
             self.assertEqual(
                 sum(item["count"] for item in packet["style_analysis"]["style_distribution"]),
                 packet["style_analysis"]["classified_track_count"],
@@ -555,13 +580,14 @@ class WorkflowContractTests(unittest.TestCase):
                 {"name": "Vocalist", "sources": ["https://example.com/vocalist"]}
             ],
             related_projects=[
-                {"name": "Side", "sources": ["https://example.com/side"]}
+                {"name": "Side", "confidence": "high", "sources": ["https://example.com/side"]}
             ],
             sources=["https://example.com/vocalist", "https://example.com/side"],
         )
         validate_analysis_packet(packet)
         candidate = candidate_fixture(packet, 1, "musician_relation")
         candidate["analysis_refs"] = ["project:side"]
+        candidate["artist"] = "Side"
         score = score_candidate(candidate, packet)
         self.assertGreater(score["features"]["frequency_fit"], 0)
         self.assertGreater(score["features"]["relation_fit"], 80)

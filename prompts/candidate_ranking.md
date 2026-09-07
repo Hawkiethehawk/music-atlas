@@ -2,6 +2,8 @@
 
 不要填写 score_features。为每个候选填写可审计的 style_mix、八维 style_axes、analysis_refs、evidence_grade 和 evidence_items；程序会从这些结构化事实计算全部七项分数。
 
+不要填写 resolved_route、matched_interest_id 或 program_explanation，它们由程序生成。风格与听感匹配同一兴趣组；规则分数不是喜欢概率。analysis_refs 仅作引用索引，不作为关系或频率加分证据。
+
 排序时同时考虑：
 
 - 细分风格匹配

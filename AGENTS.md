@@ -29,12 +29,13 @@
 
 以下边界来自 README「设计边界」，修改代码时不得破坏：
 
-1. Step 1/2/3 通过 JSON 契约连接；Step 2 只读本次 `PlaylistSnapshot`，Step 3 只读本次 `MusicianAnalysisPacket`。
+1. Step 1/2/3 通过 JSON 契约连接；Step 2 仅以本次 `PlaylistSnapshot` 为偏好输入，可由分析 Agent 研究公开资料；Step 3 只读本次 `MusicianAnalysisPacket`。默认 Agent 分析不读取本地画像、关系目录或偏好名单，目录兼容须显式选择。
 2. 七维评分、召回配额、去重、MMR 多样性与能量弧排序全部由 `recommender.py` 确定性计算；Agent 不得提交评分字段（契约层强制）。
 3. Apple Music 平台个性化推荐、登录态、历史运行结果不参与候选发现、排序或说明生成；个性化音乐页面不能作为证据来源（`_source_is_forbidden_personalization` 强制）。
 4. 反馈只用于只读离线评估与人工批准的调优建议（`approval_required: true`），绝不自动调整排序策略。
 5. 数量契约 `declared_track_count == track_count == len(tracks)` 由 `contracts.py` 强制。
 6. Schema 1.0 历史产物不可复用，只允许经 `archive-schema1` 归档。
+7. 分析 Agent 只能提交逐曲描述性画像与带来源的关系事实，不得提交计数、兴趣分组、评分或策略。研究包必须精确绑定当前完整快照和词表；全部批次校验后才能聚合，未知值保留 null，事实保持待独立核验。
 
 ## 验证方式
 
@@ -49,13 +50,16 @@ python -m compileall -q .
 
 ```bash
 python workflow.py run --input tests/fixtures/playlist_sample.json --reader local_json \
-  --platform apple_music --playlist-id sample --playlist-name '示例歌单' --runtime-dir runtime/local-run
+  --platform apple_music --playlist-id sample --playlist-name '示例歌单' --runtime-dir runtime/local-run \
+  --analysis-command 'python tests/fixtures/fake_analysis_agent.py' --analysis-batch-size 2
 python workflow.py agent --analysis runtime/local-run/musician_analysis.json \
   --prompt runtime/local-run/agent_prompt.md --output runtime/local-run/recommendation_bundle.json \
   --channel-output runtime/local-run/channel_text.txt --command 'python tests/fixtures/fake_agent.py'
 ```
 
 不得把未运行的测试写成已通过。
+
+两个 fake Agent 仅用于合成夹具，不得拿来填充真实歌单研究。每次新验收使用新运行目录；已有研究任务用 `analyze --snapshot` 续跑，不能重抓或覆盖绑定的快照。未配置真实命令时的 `analysis_agent_required` 只是研究准备成功，不是偏好分析完成。
 
 ## 其他约定
 

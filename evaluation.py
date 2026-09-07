@@ -11,30 +11,14 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Any
 
-from contracts import SCHEMA_VERSION, normalized_name, utc_now, validate_feedback_log_refs
+from contracts import SCHEMA_VERSION, normalized_name, utc_now
+from feedback import ACCEPTED_OUTCOMES, latest_feedback_outcomes, match_feedback_to_bundle
+from recommender import rank_bundle
 
 
-ACCEPTED_OUTCOMES = {"saved", "replayed"}
 CALIBRATION_BINS = ((0.0, 70.0), (70.0, 80.0), (80.0, 90.0), (90.0, 100.0))
-
-
-def _timestamp_order_key(value: str) -> tuple[int, float, str]:
-    """Ordering key for an ISO-8601 timestamp; fall back to string compare.
-
-    Parsed timestamps order after unparsable ones; naive timestamps are
-    treated as UTC so mixed ``Z`` and offset forms compare correctly.
-    """
-
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return (0, 0.0, value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return (1, parsed.timestamp(), "")
 
 
 def _outcome_by_track(
@@ -43,15 +27,7 @@ def _outcome_by_track(
 ) -> dict[str, str]:
     """Latest feedback outcome per ranked canonical track id."""
 
-    outcome_by_track: dict[str, tuple[str, str]] = {}
-    for record in feedback_log:
-        key = str(record["recommendation_id"]).casefold()
-        outcome = record["outcome"]
-        timestamp = str(record.get("timestamp") or "")
-        previous = outcome_by_track.get(key)
-        if previous is None or _timestamp_order_key(timestamp) >= _timestamp_order_key(previous[1]):
-            outcome_by_track[key] = (outcome, timestamp)
-    return {key: value[0] for key, value in outcome_by_track.items()}
+    return latest_feedback_outcomes(bundle, feedback_log)
 
 
 def _mean(values: list[float]) -> float:
@@ -76,6 +52,8 @@ def _precision_metrics(
         "accepted_count": accepted,
         "precision": round(accepted / total, 4) if total else 0.0,
         "acceptance_rate": round(accepted / covered, 4) if covered else 0.0,
+        "precision_semantics": "confirmed_accepts_over_all_recommendations_lower_bound",
+        "acceptance_status": "observed" if covered else "unmeasured",
     }
 
 
@@ -146,14 +124,17 @@ def _calibration_metrics(
     recommendations: list[dict[str, Any]],
     outcome_by_track: dict[str, str],
 ) -> dict[str, Any]:
+    recommendations = [
+        item for item in recommendations
+        if str(item["canonical_track_id"]).casefold() in outcome_by_track
+    ]
     bins: list[dict[str, Any]] = []
-    total = len(recommendations)
-    total_ece = 0.0
     for low, high in CALIBRATION_BINS:
         items = [
             item
             for item in recommendations
             if low <= float(item.get("ranking_score") or 0.0) < high
+            or high == 100.0 and float(item.get("ranking_score") or 0.0) == high
         ]
         count = len(items)
         if not count:
@@ -163,7 +144,7 @@ def _calibration_metrics(
                     "count": 0,
                     "mean_score": 0.0,
                     "acceptance_rate": 0.0,
-                    "calibration_error": 0.0,
+                    "calibration_error": None,
                 }
             )
             continue
@@ -174,18 +155,18 @@ def _calibration_metrics(
             if outcome_by_track.get(str(item["canonical_track_id"]).casefold()) in ACCEPTED_OUTCOMES
         )
         acceptance_rate = accepted / count
-        error = abs(acceptance_rate - mean_score / 100.0)
-        total_ece += (count / total) * error
         bins.append(
             {
                 "score_range": [low, high],
                 "count": count,
                 "mean_score": round(mean_score, 4),
                 "acceptance_rate": round(acceptance_rate, 4),
-                "calibration_error": round(error, 4),
+                "calibration_error": None,
             }
         )
-    return {"bins": bins, "expected_calibration_error": round(total_ece, 4)}
+    return {"bins": bins, "expected_calibration_error": None, "status": "not_calibrated",
+            "score_semantics": "heuristic_not_probability",
+            "note": "规则分数不是喜欢概率；分箱仅展示已反馈样本，不计算概率校准误差。"}
 
 
 def _repetition_metrics(recommendations: list[dict[str, Any]]) -> dict[str, float]:
@@ -255,13 +236,10 @@ def evaluate_offline(
 ) -> dict[str, Any]:
     """Evaluate a ranked bundle against feedback. Never mutates ranking policy."""
 
-    from contracts import validate_recommendation_bundle
-
-    validate_recommendation_bundle(bundle, packet)
-    rectify = validate_feedback_log_refs(feedback_log, bundle, packet)
-    matched = rectify["matched"]
+    bundle = rank_bundle(bundle, packet)
+    rectify = match_feedback_to_bundle(feedback_log, bundle, packet)
     recommendations = bundle.get("recommendations", [])
-    outcome_by_track = _outcome_by_track(bundle, matched)
+    outcome_by_track = rectify["latest_outcomes"]
     ranking = bundle.get("ranking", {})
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -271,7 +249,7 @@ def evaluate_offline(
         "generated_at": utc_now(),
         "feedback": {
             "record_count": len(feedback_log),
-            "matched_count": len(matched),
+            "matched_count": rectify["matched_count"],
             "unmatched_count": len(rectify["unmatched"]),
             "unmatched_reasons": Counter(
                 str(item.get("reason")) for item in rectify["unmatched"]

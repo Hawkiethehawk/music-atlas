@@ -16,6 +16,7 @@ from agent_prompt import (
     build_agent_prompt,
     prompt_size_telemetry,
 )
+from contracts import ContractError
 import contextlib
 import io
 import json
@@ -51,15 +52,21 @@ class PromptBudgetTests(unittest.TestCase):
     def test_budget_over_limit_truncates_slots_deterministically(self) -> None:
         packet = minimal_analysis_packet()
         prompt = build_agent_prompt(packet)
-        budget = len(AGENT_INSTRUCTIONS) + 400
+        budget = len(prompt) - 500
         result, report = apply_context_budget(prompt, budget)
-        self.assertTrue(report["budget_exceeded"])
+        self.assertFalse(report["budget_exceeded"])
+        self.assertTrue(report["original_budget_exceeded"])
+        self.assertLessEqual(len(result), budget)
         self.assertLess(len(result), len(prompt))
         self.assertTrue(report["truncated_slots"])
         # JSON 载荷与固定指令绝不被截断
         self.assertIn("```json", result)
         self.assertTrue(result.startswith(AGENT_INSTRUCTIONS))
         self.assertEqual(report["original_characters"], len(prompt))
+
+    def test_budget_below_fixed_payload_is_rejected(self) -> None:
+        with self.assertRaises(ContractError):
+            apply_context_budget(build_agent_prompt(minimal_analysis_packet()), 100)
 
     def test_unbounded_budget_is_a_noop(self) -> None:
         packet = minimal_analysis_packet()

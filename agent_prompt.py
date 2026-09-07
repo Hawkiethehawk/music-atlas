@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-from contracts import ContractError, SCHEMA_VERSION, sha256_path, validate_analysis_packet, write_json
+from contracts import ContractError, SCHEMA_VERSION, read_json, require_analysis_coverage, sha256_path, stable_hash, validate_analysis_packet, write_json
 
 
 DEFAULT_PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
@@ -32,8 +33,11 @@ AGENT_INSTRUCTIONS = """你是 Music Atlas 候选研究 Agent。唯一偏好输�
 4. 每个候选必须同时具备歌曲身份和风格证据；音乐人关系候选还必须具备关系证据。证据不足时返回 insufficient_evidence。
 5. 风格必须使用 known_style_refs；允许使用不在 active_style_refs 中的新风格，由程序计算其与当前画像的距离。
 6. 每位艺人独立判断，不能使用宽泛“摇滚”兜底，也不能为 Bad Omens 设置特殊逻辑。
+7. 只研究结构化候选，不为全部候选撰写最终推荐说明；程序选出 10 首后根据兴趣组、关系与实际评分生成说明。
+8. candidate_type 由程序复核：艺人延伸必须匹配当前艺人，音乐人关系必须匹配当前分析包中的项目艺人；其余候选按与最近兴趣组的风格/听感距离分类。researched 关系来自分析 Agent，仍待独立核验；不可用随意引用冒充关系。
+9. 按 interest_profiles 分组分别研究，避免只选整体平均听感。若有 research_request，只补其指定的缺额/约束，遵守剩余数量预算和去重清单；这不是历史偏好输入。
 
-候选池必须达到 recommendation_policy.candidate_pool_min，并覆盖 recall_mix 的四种 candidate_type。候选不得命中 favorite_track_keys 或相同 platform_track_id。style_mix 权重合计为 1；style_axes 必须填写八个 0 到 100 的听感轴。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
+首轮候选池必须达到 recommendation_policy.candidate_pool_min，并覆盖 recall_mix 的四种 candidate_type。补充轮以 research_request 为准，不必重复首轮的最低数量或全部类型。候选不得命中 favorite_track_keys 或相同 platform_track_id。style_mix 权重合计为 1；style_axes 必须填写八个 0 到 100 的听感轴。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
 
 每条 evidence_items 包含 claim_type、claim、url；claim_type 只能是 track_identity、style、relation、release。evidence_items 中的 URL 也必须列入 sources。evidence_grade 只能是 A、B、C，style_confidence 只能是 high、medium、low。
 
@@ -62,7 +66,6 @@ AGENT_INSTRUCTIONS = """你是 Music Atlas 候选研究 Agent。唯一偏好输�
     "evidence_grade": "A | B | C",
     "evidence_items": [{"claim_type": "track_identity", "claim": "事实", "url": "https://..."}, {"claim_type": "style", "claim": "事实", "url": "https://..."}],
     "discovery_source": "公开来源类型",
-    "explanation": {"preference_basis": "具体偏好依据", "artist_relation": "关系或风格路径", "music_fit": "可核验音乐特征", "style_fit": "细分风格与听感匹配", "novelty": "相对当前清单的新鲜点", "text": "不少于 24 字的完整中文说明"},
     "sources": ["https://..."],
     "platform_links": {"apple_music": "https://..."}
   }],
@@ -140,6 +143,10 @@ def apply_context_budget(
     resulting prompt plus a budget report.
     """
 
+    if context_budget is not None and (
+        isinstance(context_budget, bool) or not isinstance(context_budget, int) or context_budget <= 0
+    ):
+        raise ContractError("context_budget 必须是正整数字符数")
     telemetry = prompt_size_telemetry(prompt)
     if context_budget is None or telemetry["prompt_characters"] <= context_budget:
         return prompt, {
@@ -151,18 +158,15 @@ def apply_context_budget(
     marker = "\n```json\n"
     json_index = prompt.rfind(marker)
     if json_index < 0 or not prompt.startswith(AGENT_INSTRUCTIONS):
-        return prompt, {
-            **telemetry,
-            "context_budget": context_budget,
-            "budget_exceeded": True,
-            "truncated_slots": [],
-            "note": "无法确定性截断未知的提示词结构；未做修改。",
-        }
+        raise ContractError("提示词超预算且无法识别其结构；未调用 Agent")
     body, payload = prompt[:json_index], prompt[json_index:]
     slot_section = body[len(AGENT_INSTRUCTIONS):]
-    available = max(0, context_budget - len(AGENT_INSTRUCTIONS) - len(payload))
+    minimum = len(AGENT_INSTRUCTIONS) + len(payload)
+    if minimum > context_budget:
+        raise ContractError(f"提示词固定指令和分析载荷至少需要 {minimum} 字符，超过预算 {context_budget}；未调用 Agent")
+    available = context_budget - minimum
     parts = slot_section.split("\n## Prompt Slot: ")
-    preamble = parts[0]
+    preamble = parts[0] if len(parts[0]) <= available else ""
     slots_kept: list[str] = []
     truncated_slots: list[str] = []
     kept_size = len(preamble)
@@ -177,7 +181,8 @@ def apply_context_budget(
     return rebuilt, {
         **prompt_size_telemetry(rebuilt),
         "context_budget": context_budget,
-        "budget_exceeded": telemetry["prompt_characters"] > context_budget,
+        "budget_exceeded": len(rebuilt) > context_budget,
+        "original_budget_exceeded": True,
         "truncated_slots": truncated_slots,
         "original_characters": telemetry["prompt_characters"],
     }
@@ -192,6 +197,7 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
     """
 
     validate_analysis_packet(packet)
+    require_analysis_coverage(packet)
     track_style_exceptions = [
         {
             key: assignment[key]
@@ -206,11 +212,17 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
                 "primary_style_ref",
                 "style_refs",
                 "applied_scope",
+                "style_mix",
+                "style_axes",
+                "rationale",
+                "sources",
+                "evidence_items",
+                "field_provenance",
             )
             if key in assignment
         }
         for assignment in packet["track_style_assignments"]
-        if assignment.get("applied_scope") == "release_override"
+        if assignment.get("applied_scope") in {"release_override", "agent_release", "agent_track"}
         or assignment.get("classification_status") == "unclassified"
     ]
     style_analysis = packet["style_analysis"]
@@ -228,6 +240,7 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
                 "style_axes",
                 "summary",
                 "boundaries",
+                "sources",
             )
             if key in profile
         }
@@ -237,6 +250,7 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
         key: style_analysis[key]
         for key in (
             "taxonomy_version",
+            "profile_catalog_mode",
             "known_style_refs",
             "active_style_refs",
             "style_definitions",
@@ -247,17 +261,20 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
             "overlap_style_distribution",
             "style_axes",
             "profile_coverage",
+            "interest_model",
+            "interest_profiles",
         )
         if key in style_analysis
     }
     compact_style_analysis["artist_profiles"] = compact_profiles
     confirmed_entities = [
-        entity for entity in packet["entities"] if entity.get("relation_status") == "confirmed"
+        entity for entity in packet["entities"] if entity.get("relation_status") in {"confirmed", "researched"}
     ]
     return {
         "schema_version": packet["schema_version"],
         "packet_type": packet["packet_type"],
         "analysis_id": packet["analysis_id"],
+        "as_of_date": packet["as_of_date"],
         "source_snapshot_id": packet["source_snapshot_id"],
         "source_platform": packet.get("source_platform", ""),
         "source_playlist_name": packet.get("source_playlist_name", ""),
@@ -275,6 +292,7 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
         "track_style_exceptions": track_style_exceptions,
         "style_analysis": compact_style_analysis,
         "recommendation_policy": packet["recommendation_policy"],
+        "analysis_research": packet.get("analysis_research"),
     }
 
 
@@ -324,6 +342,12 @@ def write_agent_context_manifest(
         "analysis_id": packet["analysis_id"],
         "source_snapshot_id": packet["source_snapshot_id"],
         "source_track_count": packet["source_track_count"],
+        "prompt_input_sha256": stable_hash(build_agent_input(packet)),
+        "instruction_sha256": hashlib.sha256(AGENT_INSTRUCTIONS.encode("utf-8")).hexdigest(),
+        "run_config": {
+            "context_budget": context_budget,
+            "prompt_dir": str((prompt_dir or DEFAULT_PROMPT_DIR).resolve()),
+        },
         "allowed_input": "MusicianAnalysisPacket only",
         "prompt_slots": prompt_slot_manifest(prompt_dir),
         "forbidden_inputs": [
@@ -336,8 +360,70 @@ def write_agent_context_manifest(
     }
     if prompt is not None:
         manifest["prompt_size"] = prompt_size_telemetry(prompt)
+        manifest["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     if context_budget is not None:
         manifest["context_budget"] = context_budget
     if budget_report is not None:
         manifest["budget_report"] = budget_report
     write_json(output_path, manifest)
+
+
+def prepare_agent_context(
+    packet: dict[str, Any], prompt_path: Path, *, manifest_path: Path | None = None,
+    prompt_dir: Path | None = None, context_budget: int | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Write a context only after its complete payload fits the requested budget."""
+
+    prompt, report = apply_context_budget(build_agent_prompt(packet, prompt_dir), context_budget)
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(prompt, encoding="utf-8")
+    write_agent_context_manifest(
+        packet, manifest_path or prompt_path.with_name("agent_context_manifest.json"), prompt_dir,
+        prompt=prompt, context_budget=context_budget, budget_report=report,
+    )
+    return prompt, report
+
+
+def load_or_prepare_agent_context(
+    packet: dict[str, Any], prompt_path: Path, *, manifest_path: Path | None = None,
+    prompt_dir: Path | None = None, context_budget: int | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Reuse the exact prepared context; configuration changes require preparation."""
+
+    manifest_path = manifest_path or prompt_path.with_name("agent_context_manifest.json")
+    if not prompt_path.exists() and not manifest_path.exists():
+        prepare_agent_context(packet, prompt_path, manifest_path=manifest_path,
+                              prompt_dir=prompt_dir, context_budget=context_budget)
+    if not prompt_path.is_file() or not manifest_path.is_file():
+        raise ContractError("Agent 上下文或 manifest 缺失；请重新执行 prepare-agent")
+    manifest = read_json(manifest_path)
+    if not isinstance(manifest, dict) or manifest.get("manifest_type") != "agent_context_manifest":
+        raise ContractError("Agent context manifest 无效；请重新执行 prepare-agent")
+    expected = {
+        "schema_version": SCHEMA_VERSION,
+        "analysis_id": packet["analysis_id"],
+        "prompt_input_sha256": stable_hash(build_agent_input(packet)),
+        "instruction_sha256": hashlib.sha256(AGENT_INSTRUCTIONS.encode("utf-8")).hexdigest(),
+    }
+    if any(manifest.get(key) != value for key, value in expected.items()):
+        raise ContractError("准备的上下文不属于当前分析或缺少有效摘要；请重新执行 prepare-agent")
+    config = manifest.get("run_config")
+    if not isinstance(config, dict) or set(config) != {"context_budget", "prompt_dir"}:
+        raise ContractError("准备的上下文缺少运行配置；请重新执行 prepare-agent")
+    if not isinstance(config["prompt_dir"], str) or not config["prompt_dir"]:
+        raise ContractError("准备的 prompt_dir 无效；请重新执行 prepare-agent")
+    if context_budget is not None and context_budget != config["context_budget"]:
+        raise ContractError("context_budget 与准备阶段不同；请重新执行 prepare-agent")
+    if prompt_dir is not None and prompt_dir.resolve() != Path(config["prompt_dir"]).resolve():
+        raise ContractError("prompt_dir 与准备阶段不同；请重新执行 prepare-agent")
+    prompt = prompt_path.read_text(encoding="utf-8")
+    if hashlib.sha256(prompt.encode("utf-8")).hexdigest() != manifest.get("prompt_sha256"):
+        raise ContractError("准备的提示词已被修改；请重新执行 prepare-agent")
+    # Reuse must not silently truncate or regenerate the prepared artifact.
+    checked, _ = apply_context_budget(prompt, config["context_budget"])
+    if checked != prompt:
+        raise ContractError("准备的提示词超过记录预算；请重新执行 prepare-agent")
+    report = manifest.get("budget_report")
+    if not isinstance(report, dict) or report.get("context_budget") != config["context_budget"]:
+        raise ContractError("准备的预算报告与运行配置不一致；请重新执行 prepare-agent")
+    return prompt, manifest

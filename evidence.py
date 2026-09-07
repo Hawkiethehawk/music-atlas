@@ -2,22 +2,21 @@
 """Source-specific evidence verification and grade acceptance rules.
 
 ``verify_evidence_item`` classifies an evidence URL into a source class and,
-when the host provides a stable public identifier (MusicBrainz UUID, Wikidata
-QID, YouTube video id, Spotify track id), verifies the identifier pattern
-offline. Network calls are never performed here; live checks are a reserved
-extension behind an explicit flag. Provenance fields (retrieval time, source
-identifier, verification result) are attached to each evidence item. The
-A/B/C acceptance rules map claim type x source class to a required grade.
+when the host provides a stable public identifier, checks its format offline.
+Neither a valid identifier nor an Agent-declared verdict verifies a claim.
+Network calls are never performed here; live verification requires a trusted
+adapter which is not implemented. Grades, identifier checks and claim
+verification are reported separately.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
-from contracts import EVIDENCE_CLAIM_TYPES, EVIDENCE_VERIFICATION_STATUSES
+from contracts import ContractError, parse_timestamp
 
 
 SOURCE_CLASSES = (
@@ -43,7 +42,7 @@ _SPOTIFY_ID = re.compile(r"^[A-Za-z0-9]{22}$")
 def classify_source(url: str) -> str:
     """Return the source class for a URL, or ``other``."""
 
-    host = (urlparse(url).netloc or "").casefold()
+    host = (urlparse(url).hostname or "").casefold()
     suffix = host[4:] if host.startswith("www.") else host
     if suffix == "musicbrainz.org":
         return "musicbrainz"
@@ -53,7 +52,7 @@ def classify_source(url: str) -> str:
         return "lastfm"
     if suffix == "listenbrainz.org":
         return "listenbrainz"
-    if suffix.endswith("bandcamp.com"):
+    if suffix == "bandcamp.com" or suffix.endswith(".bandcamp.com"):
         return "bandcamp"
     if suffix in {"youtube.com", "youtu.be", "m.youtube.com"}:
         return "youtube"
@@ -103,12 +102,9 @@ def _first_query(query: str, key: str) -> str:
 
 
 def _is_stale(retrieved_at: str | None, *, max_age_days: int = 730) -> bool:
-    if not retrieved_at:
+    if retrieved_at is None:
         return False
-    try:
-        parsed = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
-    except ValueError:
-        return False
+    parsed = parse_timestamp(retrieved_at, "retrieved_at")
     now = datetime.now(timezone.utc)
     delta = now - parsed
     if delta.total_seconds() < 0:
@@ -123,12 +119,9 @@ def verify_evidence_item(
 ) -> dict[str, Any]:
     """Attach provenance fields and an offline verification result.
 
-    An explicit ``verification_result`` supplied by a source-specific adapter
-    (for example a live check reporting ``contradictory`` or
-    ``inaccessible``) is preserved. Offline rules only fill the gap when no
-    explicit result is present: duplicated URLs are flagged, stale retrieval
-    times are flagged, otherwise a stable public identifier means verified
-    and unknown pages stay unverified.
+    Negative declared verdicts are conservative failure signals. Positive
+    declarations are untrusted, and format checks never verify claim content.
+    Repeated sources are flagged without masking stale or contradictory data.
     """
 
     url = str(item.get("url") or "")
@@ -138,28 +131,34 @@ def verify_evidence_item(
     if seen_urls is not None:
         seen_urls.add(url)
     explicit = item.get("verification_result")
-    if duplicated:
-        result = "duplicated"
-    elif isinstance(explicit, str) and explicit in EVIDENCE_VERIFICATION_STATUSES and explicit != "unverified":
+    stale = _is_stale(item.get("retrieved_at"))
+    if explicit in ("contradictory", "inaccessible", "stale"):
         result = explicit
-    elif _is_stale(item.get("retrieved_at")):
+    elif stale:
         result = "stale"
-    elif source_identifier is not None:
-        result = "verified"
+    elif duplicated or explicit == "duplicated":
+        result = "duplicated"
     else:
         result = "unverified"
     verified_item = dict(item)
     verified_item["source_class"] = source_class
+    verified_item["declared_verification_result"] = explicit
+    verified_item["declared_source_identifier"] = item.get("source_identifier")
+    verified_item.pop("source_identifier", None)
     if source_identifier is not None:
         verified_item["source_identifier"] = source_identifier
+    verified_item["identifier_status"] = (
+        "valid" if source_identifier is not None
+        else "invalid" if source_class in {"musicbrainz", "wikidata", "youtube", "spotify"}
+        else "unsupported"
+    )
+    verified_item["duplicate_source"] = duplicated
+    verified_item["verification_scope"] = "offline_format_only"
     verified_item["verification_result"] = result
     return verified_item
 
 
-# Acceptance rules: claim_type -> source_class -> required grade. A claim is
-# acceptable when every evidence item for that claim type reaches the required
-# grade of at least one verified source class; the suggested bundle grade is
-# the strictest claim-level requirement present.
+# Source-grade ceilings, independent of whether the factual claim is verified.
 GRADE_RULES: dict[str, dict[str, str]] = {
     "track_identity": {
         "musicbrainz": "A",
@@ -231,10 +230,31 @@ def suggest_evidence_grade(evidence_items: list[dict[str, Any]]) -> str:
 
     if not evidence_items:
         return "C"
-    return min(
+    return max(
         (_allowed_grade(item) for item in evidence_items),
         key=lambda grade: _GRADE_ORDER[grade],
     )
+
+
+def source_evidence_grade(candidate: dict[str, Any]) -> str:
+    """Derive a source-grade ceiling without trusting Agent provenance fields."""
+
+    return suggest_evidence_grade([
+        {"claim_type": item.get("claim_type"), "source_class": classify_source(str(item.get("url") or ""))}
+        for item in candidate.get("evidence_items", []) if isinstance(item, dict)
+    ])
+
+
+def require_usable_evidence(candidate: dict[str, Any]) -> None:
+    """Allow unverified research, but reject known-negative evidence."""
+
+    for item in candidate.get("evidence_items", []):
+        checked = verify_evidence_item(item)
+        status = checked["verification_result"]
+        if status in {"contradictory", "inaccessible", "stale"}:
+            raise ContractError(f"候选 {candidate.get('canonical_track_id')} 的证据不可用：{status}")
+        if checked["identifier_status"] == "invalid":
+            raise ContractError(f"候选 {candidate.get('canonical_track_id')} 的证据标识符格式无效")
 
 
 def check_evidence_acceptance(
@@ -252,14 +272,32 @@ def check_evidence_acceptance(
     keeps the declared grade as the Agent's own statement.
     """
 
-    submitted_order = _GRADE_ORDER.get(str(submitted_grade), 9)
+    submitted_order = _GRADE_ORDER.get(str(submitted_grade), -1)
     violations = [
         item
         for item in evidence_items
         if submitted_order < _GRADE_ORDER[_allowed_grade(item)]
     ]
+    grade_valid = bool(evidence_items) and submitted_grade in _GRADE_ORDER and not violations
+    unverified = [item for item in evidence_items if item.get("verification_result") != "verified"]
+    failures = [
+        item for item in evidence_items
+        if item.get("verification_result") in {"contradictory", "inaccessible", "stale"}
+        or item.get("identifier_status") == "invalid"
+    ]
+    accepted = grade_valid and not unverified and not failures
+    status = "accepted" if accepted else "rejected" if failures or not grade_valid else "pending_verification"
     return {
-        "accepted": not violations,
+        "accepted": accepted,
+        "status": status,
+        "grade_valid": grade_valid,
+        "claims_verified": bool(evidence_items) and not unverified,
+        "verification_issues": [
+            {"claim_type": item.get("claim_type"), "url": item.get("url"),
+             "verification_result": item.get("verification_result"),
+             "identifier_status": item.get("identifier_status")}
+            for item in evidence_items if item in unverified or item in failures
+        ],
         "submitted_grade": submitted_grade,
         "suggested_grade": suggest_evidence_grade(evidence_items),
         "violating_items": [
@@ -271,7 +309,7 @@ def check_evidence_acceptance(
             for item in violations
         ],
         "rule": "声明等级不得超过每条已验证来源按 claim_type × source_class 支持的最高等级",
-        "note": "接受规则用于离线审计；契约仍保留 A/B/C 三档由 Agent 声明。",
+        "note": "来源等级、标识符格式与事实核验分开报告；离线审计不接受 Agent 自报 verified。",
     }
 
 
@@ -298,8 +336,8 @@ def audit_bundle_evidence(bundle: dict[str, Any]) -> dict[str, Any]:
     """
 
     entries: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
     for index, candidate in enumerate(bundle.get("recommendations", [])):
+        seen_urls: set[str] = set()
         items = candidate.get("evidence_items", [])
         verified_items: list[dict[str, Any]] = []
         for item in items:
@@ -316,12 +354,19 @@ def audit_bundle_evidence(bundle: dict[str, Any]) -> dict[str, Any]:
                 "evidence_items": verified_items,
             }
         )
+    accepted_count = sum(entry["acceptance"]["accepted"] for entry in entries)
+    rejected_count = sum(entry["acceptance"]["status"] == "rejected" for entry in entries)
+    pending_count = len(entries) - accepted_count - rejected_count
     return {
         "schema_version": "2.0",
         "artifact_type": "evidence_audit",
         "recommendation_count": len(entries),
-        "accepted_count": sum(1 for entry in entries if entry["acceptance"]["accepted"]),
-        "rejected_count": sum(1 for entry in entries if not entry["acceptance"]["accepted"]),
+        "status": "rejected" if rejected_count else "pending_verification" if pending_count else "accepted" if entries else "not_applicable",
+        "accepted_count": accepted_count,
+        "rejected_count": rejected_count,
+        "pending_count": pending_count,
+        "grade_valid_count": sum(entry["acceptance"]["grade_valid"] for entry in entries),
+        "verification_scope": "offline_format_only",
         "entries": entries,
         "note": "离线确定性验证，不发网络请求；stale/duplicated/inaccessible 按证据出处字段判定。",
     }

@@ -13,7 +13,7 @@ import os
 import re
 import unicodedata
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -50,6 +50,14 @@ RANKING_FEATURE_KEYS = (
     "evidence_quality",
     "public_association",
 )
+
+PROGRAM_RANKING_FIELDS = frozenset({
+    "ranking_score", "score_features", "score_breakdown", "selection_rank",
+    "selection_adjusted_score", "sequence_position", "sequence_energy", "_source_index",
+    "resolved_route",
+    "matched_interest_id",
+    "program_explanation",
+})
 
 EVIDENCE_GRADES = {"A", "B", "C"}
 STYLE_CONFIDENCE_LEVELS = {"high", "medium", "low"}
@@ -110,6 +118,28 @@ def target_counts(total: int, packet: dict[str, Any]) -> dict[str, int]:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_timestamp(value: Any, label: str) -> datetime:
+    text = _require_text(value, label)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError) as exc:
+        raise ContractError(f"{label} 必须是有效的 ISO-8601 时间") from exc
+
+
+def parse_as_of_date(value: Any) -> date:
+    text = _require_text(value, "as_of_date（缺失时请重新运行 analyze）")
+    try:
+        parsed = date.fromisoformat(text)
+        if parsed.isoformat() != text:
+            raise ValueError("non-canonical date")
+        return parsed
+    except ValueError as exc:
+        raise ContractError("as_of_date 必须是有效的 YYYY-MM-DD 日期") from exc
 
 
 def read_json(path: Path) -> Any:
@@ -217,12 +247,12 @@ def _validate_style_mix(value: Any, label: str, known_style_refs: set[str]) -> l
     return result
 
 
-def _validate_style_axes(value: Any, label: str) -> dict[str, float]:
+def _validate_style_axes(value: Any, label: str, *, allow_unknown: bool = False) -> dict[str, float | None]:
     axes = _require_dict(value, label)
     missing = [axis for axis in STYLE_AXIS_IDS if axis not in axes]
     if missing:
         raise ContractError(f"{label} 缺少听感轴：{missing}")
-    return {axis: _require_score(axes[axis], f"{label}.{axis}") for axis in STYLE_AXIS_IDS}
+    return {axis: None if allow_unknown and axes[axis] is None else _require_score(axes[axis], f"{label}.{axis}") for axis in STYLE_AXIS_IDS}
 
 
 def _validate_weight_map(value: Any, label: str) -> None:
@@ -258,7 +288,7 @@ def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
         style_analysis.get("profile_catalog_mode"),
         "style_analysis.profile_catalog_mode",
     )
-    if catalog_mode not in {"private", "explicit", "example_fallback"}:
+    if catalog_mode not in {"private", "explicit", "example_fallback", "agent_research"}:
         raise ContractError("style_analysis.profile_catalog_mode 无效")
     coverage = _require_dict(
         style_analysis.get("profile_coverage"),
@@ -355,6 +385,7 @@ def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
         _validate_style_axes(
             profile.get("style_axes"),
             f"style_analysis.artist_profiles[{index}].style_axes",
+            allow_unknown=status == "unclassified",
         )
         _require_text(profile.get("summary"), f"style_analysis.artist_profiles[{index}].summary")
         boundaries = profile.get("boundaries")
@@ -435,12 +466,33 @@ def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
         _validate_style_axes(
             assignment.get("style_axes"),
             f"track_style_assignments[{index}].style_axes",
+            allow_unknown=status == "unclassified",
         )
         _require_text(assignment.get("rationale"), f"track_style_assignments[{index}].rationale")
     if assignment_keys != favorite_keys:
         raise ContractError("track_style_assignments 必须按顺序对应 favorite_track_keys")
     if counted_classified != classified_count or counted_unclassified != unclassified_count:
         raise ContractError("track_style_assignments 分类计数与 style_analysis 不一致")
+    if catalog_mode == "agent_research":
+        from analysis_contracts import validate_research_evidence
+        research = _require_dict(packet.get("analysis_research"), "analysis_research")
+        if (research.get("track_count") != source_count or research.get("publication_status") != "draft"
+                or research.get("evidence_verification") != "pending_independent_verification"):
+            raise ContractError("Agent 画像研究数量或待核验状态无效")
+        for key in ("bundle_sha256", "snapshot_sha256"):
+            _require_text(research.get(key), f"analysis_research.{key}")
+        _require_int(research.get("batch_count"), "analysis_research.batch_count", 1)
+        for assignment in assignments:
+            if assignment["classification_status"] == "classified":
+                if assignment.get("applied_scope") not in ("agent_artist", "agent_release", "agent_track"):
+                    raise ContractError("Agent 画像缺少明确的研究范围")
+                evidence = validate_research_evidence(assignment.get("evidence_items"), "style")
+                if any(item.get("verification_result") != "unverified" for item in evidence):
+                    raise ContractError("Agent 画像证据必须保持待独立核验")
+                if set(assignment.get("sources", [])) != {item["url"] for item in evidence}:
+                    raise ContractError("Agent 画像来源与研究证据不一致")
+            elif assignment.get("applied_scope") != "agent_unknown" or assignment.get("evidence_items") != []:
+                raise ContractError("Agent 未知画像不得附带已分类范围或证据")
 
     for field in ("style_distribution", "dominant_style_mix"):
         items = style_analysis.get(field)
@@ -508,7 +560,11 @@ def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
                 raise ContractError(
                     f"style_analysis.overlap_style_distribution[{index}].overlap 必须为 true"
                 )
-    _validate_style_axes(style_analysis.get("style_axes"), "style_analysis.style_axes")
+    _validate_style_axes(style_analysis.get("style_axes"), "style_analysis.style_axes", allow_unknown=classified_count == 0)
+    if "interest_profiles" in style_analysis:
+        from preference_model import MODEL_CONFIG, build_interest_profiles
+        if style_analysis.get("interest_model") != MODEL_CONFIG or style_analysis["interest_profiles"] != build_interest_profiles(assignments):
+            raise ContractError("兴趣分组与本次逐曲画像的确定性计算不一致；请重新 analyze")
 
 
 def _validate_http_url(value: Any, label: str, allow_empty: bool = False) -> str:
@@ -603,8 +659,12 @@ def _validate_entities(packet: dict[str, Any]) -> None:
         if not isinstance(entity.get("is_preferred"), bool):
             raise ContractError(f"entities[{index}].is_preferred 必须是布尔值")
         relation_status = _require_text(entity.get("relation_status"), f"entities[{index}].relation_status")
-        if relation_status not in {"confirmed", "unmapped"}:
+        if relation_status not in {"confirmed", "researched", "unmapped"}:
             raise ContractError(f"entities[{index}].relation_status 无效")
+        if packet.get("style_analysis", {}).get("profile_catalog_mode") == "agent_research":
+            if (entity.get("research_origin") != "agent" or relation_status == "confirmed"
+                    or entity.get("verification_scope") != "pending_independent_verification"):
+                raise ContractError("Agent 关系必须保留研究来源且不得冒充目录核验")
         entity_refs = entity.get("analysis_refs")
         if not isinstance(entity_refs, list) or entity_ref not in entity_refs:
             raise ContractError(f"entities[{index}].analysis_refs 必须包含自身 entity_ref")
@@ -625,8 +685,17 @@ def _validate_entities(packet: dict[str, Any]) -> None:
                     raise ContractError(f"entities[{index}].{field}[{fact_index}].sources 必须是数组")
                 for source_index, source in enumerate(sources):
                     _validate_http_url(source, f"entities[{index}].{field}[{fact_index}].sources[{source_index}]")
-        if relation_status == "confirmed" and relation_count == 0:
+                if relation_status == "researched":
+                    from analysis_contracts import validate_research_evidence
+                    evidence = validate_research_evidence(fact.get("evidence_items"), "relation")
+                    if any(item.get("verification_result") != "unverified" for item in evidence):
+                        raise ContractError("Agent 关系证据必须保持待独立核验")
+                    if set(sources) != {item["url"] for item in evidence}:
+                        raise ContractError("Agent 关系来源与研究证据不一致")
+        if relation_status in {"confirmed", "researched"} and relation_count == 0:
             raise ContractError(f"entities[{index}] 标记 confirmed 但没有关系事实")
+        if relation_status == "researched" and entity.get("verification_scope") != "pending_independent_verification":
+            raise ContractError("Agent 关系不得冒充已独立核验")
         if relation_status == "unmapped" and relation_count:
             raise ContractError(f"entities[{index}] 有关系事实却标记为 unmapped")
         sources = entity.get("sources")
@@ -646,6 +715,7 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
     if packet.get("packet_type") != "musician_analysis":
         raise ContractError("packet_type 必须是 musician_analysis")
     _require_text(packet.get("analysis_id"), "analysis_id")
+    parse_as_of_date(packet.get("as_of_date"))
     _require_text(packet.get("source_snapshot_id"), "source_snapshot_id")
     source_count = _require_int(packet.get("source_track_count"), "source_track_count")
     favorite_tracks = packet.get("favorite_tracks")
@@ -680,7 +750,34 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
                 "primary_distribution 总数与 source_track_count 不一致："
                 f"{total} != {source_count}"
             )
-    policy = _require_dict(packet.get("recommendation_policy"), "recommendation_policy")
+    validate_recommendation_policy(packet.get("recommendation_policy"))
+    ref_ids = packet.get("analysis_ref_ids")
+    if not isinstance(ref_ids, list) or any(not isinstance(ref, str) or not ref for ref in ref_ids):
+        raise ContractError("analysis_ref_ids 必须是非空字符串数组")
+    if len(ref_ids) != len(set(ref_ids)):
+        raise ContractError("analysis_ref_ids 不得重复")
+    _validate_entities(packet)
+    _validate_style_analysis(packet, source_count)
+    return packet
+
+
+def require_analysis_coverage(packet: dict[str, Any]) -> None:
+    """Missing preference evidence is not a quiet/low-energy taste."""
+    total = int(packet["source_track_count"])
+    classified = sum(item.get("classification_status") == "classified" for item in packet["track_style_assignments"])
+    minimum = packet["recommendation_policy"].get("analysis_quality", {}).get("min_classified_share", 0.5)
+    if not classified or not total or classified / total < minimum:
+        raise ContractError(f"画像覆盖不足：{classified}/{total} 首已分类，要求至少 {minimum:.0%}；请补齐画像并重新 analyze，未调用 Agent")
+
+
+def validate_recommendation_policy(value: Any) -> dict[str, Any]:
+    policy = _require_dict(value, "recommendation_policy")
+    quality = policy.get("analysis_quality", {"min_classified_share": 0.5})
+    if not isinstance(quality, dict) or set(quality) != {"min_classified_share"}:
+        raise ContractError("analysis_quality 仅允许 min_classified_share")
+    floor = quality["min_classified_share"]
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)) or not 0 < floor <= 1:
+        raise ContractError("min_classified_share 必须大于 0 且不超过 1")
     minimum = _require_int(policy.get("min_recommendations"), "min_recommendations", 1)
     maximum = _require_int(policy.get("max_recommendations"), "max_recommendations", minimum)
     if maximum < minimum:
@@ -705,6 +802,8 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
         ratios: dict[str, float] = {}
         for index, item in enumerate(recall_mix):
             entry = _require_dict(item, f"recommendation_policy.recall_mix[{index}]")
+            if set(entry) != {"candidate_type", "target_ratio"}:
+                raise ContractError("recommendation_policy.recall_mix 仅允许 candidate_type 与 target_ratio")
             candidate_type = _require_text(
                 entry.get("candidate_type"),
                 f"recommendation_policy.recall_mix[{index}].candidate_type",
@@ -730,6 +829,9 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
         if set(ranking_weights) != set(RANKING_FEATURE_KEYS):
             raise ContractError("recommendation_policy.ranking_weights 必须完整且仅包含七项评分维度")
     diversity = _require_dict(policy.get("diversity_policy"), "recommendation_policy.diversity_policy")
+    _require_score(diversity.get("new_interest_bonus", 4.0), "diversity_policy.new_interest_bonus")
+    if _require_int(diversity.get("min_interest_groups", 1), "diversity_policy.min_interest_groups", 1) > target:
+        raise ContractError("min_interest_groups 不能超过推荐数量")
     for field in ("mmr_penalty", "candidate_type_bonus", "new_project_bonus"):
         _require_score(diversity.get(field), f"recommendation_policy.diversity_policy.{field}")
     similarity_weights = diversity.get("similarity_weights")
@@ -739,21 +841,22 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
     sequence_policy = _require_dict(policy.get("sequence_policy"), "recommendation_policy.sequence_policy")
     if sequence_policy.get("mode") != "energy_arc":
         raise ContractError("recommendation_policy.sequence_policy.mode 必须是 energy_arc")
-    for field in ("transition_weight", "arc_weight", "ranking_weight"):
-        _require_score(sequence_policy.get(field), f"recommendation_policy.sequence_policy.{field}")
+    _validate_weight_map(
+        {field: sequence_policy.get(field) for field in ("transition_weight", "arc_weight", "ranking_weight")},
+        "recommendation_policy.sequence_policy.weights",
+    )
+    for field in ("prefer_adjacent_transitions", "allow_familiar_anchor"):
+        if not isinstance(sequence_policy.get(field), bool):
+            raise ContractError(f"recommendation_policy.sequence_policy.{field} 必须是布尔值")
+    for field in ("exclude_current_favorites", "cross_platform_links_allowed"):
+        if not isinstance(policy.get(field), bool):
+            raise ContractError(f"recommendation_policy.{field} 必须是布尔值")
     display_limits = policy.get("display_limits")
     if display_limits is not None:
         display_limits = _require_dict(display_limits, "recommendation_policy.display_limits")
         for field in ("artists", "styles"):
             _require_int(display_limits.get(field), f"recommendation_policy.display_limits.{field}", 1)
-    ref_ids = packet.get("analysis_ref_ids")
-    if not isinstance(ref_ids, list) or any(not isinstance(ref, str) or not ref for ref in ref_ids):
-        raise ContractError("analysis_ref_ids 必须是非空字符串数组")
-    if len(ref_ids) != len(set(ref_ids)):
-        raise ContractError("analysis_ref_ids 不得重复")
-    _validate_entities(packet)
-    _validate_style_analysis(packet, source_count)
-    return packet
+    return policy
 
 
 def _source_is_forbidden_personalization(value: str) -> bool:
@@ -823,7 +926,7 @@ def _validate_candidate_evidence(candidate: dict[str, Any], label: str) -> None:
             raise ContractError("个性化音乐页面不能作为候选证据来源")
         retrieved_at = item.get("retrieved_at")
         if retrieved_at is not None:
-            _require_text(retrieved_at, f"{label}.evidence_items[{index}].retrieved_at")
+            parse_timestamp(retrieved_at, f"{label}.evidence_items[{index}].retrieved_at")
         source_identifier = item.get("source_identifier")
         if source_identifier is not None:
             _require_text(
@@ -866,6 +969,7 @@ def _validate_candidate_pool(
     known_refs: set[str],
     known_style_refs: set[str],
     label: str = "candidate_pool",
+    require_all_types: bool = True,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ContractError(f"{label} 必须是数组")
@@ -949,11 +1053,17 @@ def _validate_candidate_pool(
             or re.fullmatch(r"\d{4}-\d{2}-\d{2}", release_date.strip()) is None
         ):
             raise ContractError(f"{label}[{index}].release_date 必须是 YYYY-MM-DD")
-        _validate_explanation(candidate.get("explanation"), f"{label}[{index}].explanation")
-        forbidden_scores = {"ranking_score", "score_features", "score_breakdown"} & set(candidate)
+        if "explanation" in candidate:
+            _validate_explanation(candidate["explanation"], f"{label}[{index}].explanation")
+        if release_date is not None:
+            try:
+                date.fromisoformat(release_date)
+            except ValueError as exc:
+                raise ContractError(f"{label}[{index}].release_date 必须是有效日期") from exc
+        forbidden_scores = PROGRAM_RANKING_FIELDS & set(candidate)
         if forbidden_scores:
             raise ContractError(f"{label}[{index}] 不得提交程序评分字段：{sorted(forbidden_scores)}")
-    if value and set(type_counts) != CANDIDATE_TYPES:
+    if require_all_types and value and set(type_counts) != CANDIDATE_TYPES:
         missing = sorted(CANDIDATE_TYPES - set(type_counts))
         raise ContractError(f"{label} 必须覆盖四类召回，缺少：{missing}")
     return value
@@ -1000,15 +1110,24 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
         known_refs=known_refs,
         known_style_refs=known_style_refs,
     )
+    from candidate_routes import resolve_candidate_route
+    for candidate in candidate_pool:
+        resolved_type = resolve_candidate_route(candidate, analysis)["candidate_type"]
+        if candidate["candidate_type"] != resolved_type:
+            raise ContractError(f"候选 {candidate['canonical_track_id']} 的召回类型与当前画像/关系目录不一致：应为 {resolved_type}")
     minimum_pool = int(policy["candidate_pool_min"])
     if len(candidate_pool) < minimum_pool:
         raise ContractError(f"candidate_pool 至少需要 {minimum_pool} 首候选，实际为 {len(candidate_pool)} 首")
     if stage == "candidate_pool":
+        if "publication_status" in bundle:
+            raise ContractError("candidate_pool 不得提交程序拥有的 publication_status")
         if recommendations:
             raise ContractError("candidate_pool 阶段不能预先指定 recommendations")
         if bundle.get("ranking") is not None:
             raise ContractError("candidate_pool 阶段不能携带 ranking")
         return bundle
+    if bundle.get("publication_status") != "draft":
+        raise ContractError("当前离线排序结果只能是 publication_status=draft；请重新生成候选排序结果")
     if len(recommendations) != target:
         raise ContractError(f"ranked 阶段必须包含 {target} 首推荐，实际为 {len(recommendations)}")
     ranking = _require_dict(bundle.get("ranking"), "ranking")
@@ -1018,7 +1137,7 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
     selected_ids = ranking.get("selected_canonical_track_ids")
     if not isinstance(selected_ids, list) or len(selected_ids) != target:
         raise ContractError("ranking.selected_canonical_track_ids 必须完整记录入选歌曲")
-    candidate_ids = {str(item["canonical_track_id"]).casefold() for item in candidate_pool}
+    candidates_by_id = {str(item["canonical_track_id"]).casefold(): item for item in candidate_pool}
     favorite_keys = set(str(key) for key in analysis["favorite_track_keys"])
     favorite_platform_ids = {
         normalized_text(item.get("platform_track_id")).casefold()
@@ -1039,8 +1158,11 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
             recommendation.get("canonical_track_id"),
             f"recommendations[{index}].canonical_track_id",
         ).casefold()
-        if canonical_id not in candidate_ids:
+        if canonical_id not in candidates_by_id:
             raise ContractError(f"recommendations[{index}] 不在 candidate_pool 中")
+        facts = {key: value for key, value in recommendation.items() if key not in PROGRAM_RANKING_FIELDS}
+        if facts != candidates_by_id[canonical_id]:
+            raise ContractError(f"recommendations[{index}] 曲目信息与 candidate_pool 不一致")
         if canonical_id in seen_canonical_ids:
             raise ContractError(f"recommendations[{index}] canonical_track_id 重复")
         seen_canonical_ids.add(canonical_id)
@@ -1097,7 +1219,7 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
         ]
         if unknown_style_refs:
             raise ContractError(f"recommendations[{index}] 包含未知 style_refs：{unknown_style_refs}")
-        _validate_explanation(recommendation.get("explanation"), f"recommendations[{index}].explanation")
+        _validate_explanation(recommendation.get("program_explanation"), f"recommendations[{index}].program_explanation")
         _validate_candidate_evidence(recommendation, f"recommendations[{index}]")
         discovery_source = _require_text(
             recommendation.get("discovery_source"),
@@ -1116,7 +1238,7 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
             f"需要至少 {policy['min_projects']} 个，实际为 {len(project_counts)} 个"
         )
     expected_types = target_counts(target, analysis)
-    if dict(type_counts) != expected_types:
+    if type_counts != Counter(expected_types):
         raise ContractError(
             f"recommendations 候选类型配额不一致：实际 {dict(type_counts)}，要求 {expected_types}"
         )

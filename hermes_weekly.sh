@@ -10,4 +10,5 @@ exec "$PYTHON_BIN" "$ROOT/workflow.py" run \
   --declared-count-file "$ROOT/input/artist_distribution.json" \
   --platform apple_music \
   --playlist-id favorite-songs-web \
-  --playlist-name '喜爱歌曲'
+  --playlist-name '喜爱歌曲' \
+  "$@"

@@ -9,16 +9,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agent_prompt import apply_context_budget, build_agent_prompt_from_file, prompt_slot_manifest, prompt_size_telemetry, write_agent_context_manifest
+from agent_prompt import prepare_agent_context, prompt_slot_manifest, prompt_size_telemetry
 from agent_runner import run_agent
+from analysis_agent import execute_analysis_research, prepare_analysis_research
 from channels import render_for_channel
+from benchmark import compare_listening_benchmark, prepare_listening_benchmark
 from contracts import (
     ContractError,
+    parse_as_of_date,
     read_json,
     utc_now,
     validate_analysis_packet,
     validate_feedback_log,
-    validate_feedback_log_refs,
     validate_playlist_snapshot,
     validate_recommendation_bundle,
     validate_recommendation_file,
@@ -26,7 +28,8 @@ from contracts import (
 )
 from evidence import audit_bundle_evidence
 from evaluation import evaluate_offline
-from musician_analyzer import analyze_and_validate, write_coverage_report
+from feedback import latest_feedback_outcomes
+from musician_analyzer import analyze_and_validate, load_recommendation_policy, write_coverage_report
 from recommender import rank_bundle
 from source_adapters import build_snapshot, save_snapshot
 from tune import propose_tuning
@@ -92,11 +95,58 @@ def command_snapshot(args: argparse.Namespace) -> int:
     return 0 if snapshot["reader_status"] == "complete" else 2
 
 
+def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, output_path: Path) -> tuple[Path | None, dict | None]:
+    # Reject configuration errors before making any external Agent call.
+    load_recommendation_policy(_path(args.policy_file, None))
+    if args.as_of_date is not None:
+        parse_as_of_date(args.as_of_date)
+    taxonomy_path = _path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json")
+    research_path = _path(args.research_bundle, None)
+    inputs = [snapshot_path, taxonomy_path, *([research_path] if research_path else [])]
+    outputs = [output_path, _path(getattr(args, "markdown", None), output_path.with_name("musician_analysis.md")),
+               _path(getattr(args, "manifest", None), output_path.with_name("analysis_manifest.json")),
+               output_path.with_name("coverage_report.json")]
+    inputs.extend(_path(value, None) for value in (args.policy_file, args.preferred, args.style_profiles, args.relations) if value)
+    if len({target.resolve() for target in outputs}) != len(outputs):
+        raise ContractError("分析输出路径不能相互覆盖")
+    if any(target.resolve() == source.resolve() for target in outputs for source in inputs):
+        raise ContractError("分析输出不能覆盖快照、词表、策略或研究包等输入")
+    if args.analysis_mode == "catalog":
+        if args.analysis_command or args.research_bundle or args.import_analysis_results:
+            raise ContractError("catalog 模式不能同时使用 Agent 研究参数")
+        return None, None
+    if args.style_profiles or args.relations or args.preferred:
+        raise ContractError("Agent 分析不读取预置画像、关系目录或偏好名单；离线兼容请显式指定 --analysis-mode catalog")
+    if research_path is not None:
+        return research_path, None
+    directory = _path(args.analysis_research_dir, output_path.parent / "analysis_research")
+    if any(path.resolve().is_relative_to(directory.resolve()) for path in (*inputs, *outputs)):
+        raise ContractError("分析研究目录不能包含分析输入或输出文件")
+    if args.analysis_command or args.import_analysis_results:
+        result = execute_analysis_research(snapshot_path, taxonomy_path, directory, command=args.analysis_command,
+                                           batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget,
+                                           timeout=args.analysis_timeout)
+        return result, None
+    manifest = prepare_analysis_research(snapshot_path, taxonomy_path, directory,
+                                         batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget)
+    return None, {
+        "status": "analysis_agent_required", "analysis_mode": "agent", "source_snapshot_id": manifest["source_snapshot_id"],
+        "source_track_count": manifest["source_track_count"], "research_batch_count": len(manifest["batches"]),
+        "analysis_research_dir": str(directory), "research_manifest_path": str(directory / "manifest.json"),
+        "analysis_written": False, "recommendation_count": 0, "send_performed": False,
+        "next_action": "提供 --analysis-command 执行研究，或完成各批 result 文件后用 --import-analysis-results 汇总；不要重新抓取快照。",
+    }
+
+
 def command_analyze(args: argparse.Namespace) -> int:
     snapshot_path = _path(args.snapshot, ROOT / "runtime" / "snapshot.json")
     output_path = _path(args.output, ROOT / "runtime" / "musician_analysis.json")
-    markdown_path = _path(args.markdown, ROOT / "runtime" / "musician_analysis.md")
-    manifest_path = _path(args.manifest, ROOT / "runtime" / "analysis_manifest.json")
+    markdown_path = _path(args.markdown, output_path.with_name("musician_analysis.md"))
+    manifest_path = _path(args.manifest, output_path.with_name("analysis_manifest.json"))
+    research_path, pending = _analysis_research_input(args, snapshot_path, output_path)
+    if pending is not None:
+        _print_summary(pending)
+        return 0
     packet = analyze_and_validate(
         snapshot_path,
         preferred_path=_path(args.preferred, ROOT / "preferred_artists.txt"),
@@ -106,6 +156,9 @@ def command_analyze(args: argparse.Namespace) -> int:
         manifest_path=manifest_path,
         style_taxonomy_path=_path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json"),
         style_profile_path=_path(args.style_profiles, ROOT / "styles" / "artist_style_profiles.json"),
+        policy_path=_path(args.policy_file, None),
+        as_of_date=args.as_of_date,
+        research_bundle_path=research_path,
     )
     coverage_report = None
     if packet["style_analysis"]["profile_coverage"]["degraded"]:
@@ -115,16 +168,19 @@ def command_analyze(args: argparse.Namespace) -> int:
             "status": "analysis_written",
             "analysis_path": str(output_path),
             "analysis_id": packet["analysis_id"],
+            "as_of_date": packet["as_of_date"],
             "source_snapshot_id": packet["source_snapshot_id"],
             "source_track_count": packet["source_track_count"],
             "entity_count": len(packet["entities"]),
             "mapped_entity_count": sum(
-                1 for entity in packet["entities"] if entity["relation_status"] == "confirmed"
+                1 for entity in packet["entities"] if entity["relation_status"] in {"confirmed", "researched"}
             ),
             "classified_track_count": packet["style_analysis"]["classified_track_count"],
             "unclassified_track_count": packet["style_analysis"]["unclassified_track_count"],
             "artist_profile_count": packet["style_analysis"]["artist_profile_count"],
             "profile_catalog_mode": packet["style_analysis"]["profile_catalog_mode"],
+            "analysis_mode": args.analysis_mode,
+            "research_bundle_path": str(research_path) if research_path else None,
             "profile_coverage_degraded": packet["style_analysis"]["profile_coverage"]["degraded"],
             "coverage_report_path": coverage_report
             and str(output_path.with_name("coverage_report.json")),
@@ -138,20 +194,13 @@ def command_prepare_agent(args: argparse.Namespace) -> int:
     prompt_path = _path(args.output, ROOT / "runtime" / "agent_prompt.md")
     context_manifest_path = _path(
         args.manifest,
-        ROOT / "runtime" / "agent_context_manifest.json",
+        prompt_path.with_name("agent_context_manifest.json"),
     )
     prompt_dir = _path(args.prompt_dir, ROOT / "prompts")
-    prompt = build_agent_prompt_from_file(analysis_path, prompt_path, prompt_dir=prompt_dir)
-    prompt, budget_report = apply_context_budget(prompt, args.context_budget)
-    prompt_path.write_text(prompt, encoding="utf-8")
     packet = validate_analysis_packet(read_json(analysis_path))
-    write_agent_context_manifest(
-        packet,
-        context_manifest_path,
-        prompt_dir=prompt_dir,
-        prompt=prompt,
-        context_budget=args.context_budget,
-        budget_report=budget_report,
+    prompt, budget_report = prepare_agent_context(
+        packet, prompt_path, manifest_path=context_manifest_path,
+        prompt_dir=prompt_dir, context_budget=args.context_budget,
     )
     _print_summary(
         {
@@ -168,6 +217,28 @@ def command_prepare_agent(args: argparse.Namespace) -> int:
             "context_manifest_path": str(context_manifest_path),
         }
     )
+    return 0
+
+
+def command_benchmark(args: argparse.Namespace) -> int:
+    packet_a = validate_analysis_packet(read_json(_path(args.analysis_a, None)))
+    packet_b = validate_analysis_packet(read_json(_path(args.analysis_b or args.analysis_a, None)))
+    bundle_a, bundle_b = read_json(_path(args.bundle_a, None)), read_json(_path(args.bundle_b, None))
+    if args.command == "prepare-benchmark":
+        report = prepare_listening_benchmark(packet_a, bundle_a, packet_b, bundle_b)
+    else:
+        report = compare_listening_benchmark(packet_a, bundle_a, packet_b, bundle_b, read_json(_path(args.judgments, None)),
+                                            report_a=read_json(_path(args.research_report_a, None)) if args.research_report_a else None,
+                                            report_b=read_json(_path(args.research_report_b, None)) if args.research_report_b else None)
+    output = _path(args.output, None)
+    inputs = [args.analysis_a, args.analysis_b or args.analysis_a, args.bundle_a, args.bundle_b]
+    inputs += [getattr(args, name, None) for name in ("judgments", "research_report_a", "research_report_b")]
+    if any(output.resolve() == _path(value, None).resolve() for value in inputs if value):
+        raise ContractError("对照输出路径不得覆盖分析包、推荐、研究报告或人工标注")
+    if args.command == "prepare-benchmark" and output.exists():
+        raise ContractError("试听标注文件已存在；请使用新路径，避免覆盖人工标注")
+    write_json(output, report)
+    _print_summary({"status": report.get("status", "listening_template_written"), "output": str(output), "policy_changed": False})
     return 0
 
 
@@ -212,12 +283,10 @@ def command_tune(args: argparse.Namespace) -> int:
     bundle_path = _path(args.bundle, ROOT / "runtime" / "recommendation_bundle.ranked.json")
     feedback_path = _path(args.feedback, ROOT / "runtime" / "feedback_log.json")
     packet = validate_analysis_packet(read_json(analysis_path))
-    bundle = validate_recommendation_file(bundle_path, analysis_path)
+    bundle = rank_bundle(read_json(bundle_path), packet)
     feedback_log = validate_feedback_log(read_json(feedback_path))
     report = evaluate_offline(bundle, packet, feedback_log)
-    feedback_by_track = {}
-    for record in feedback_log:
-        feedback_by_track[str(record.get("recommendation_id") or "").casefold()] = record["outcome"]
+    feedback_by_track = latest_feedback_outcomes(bundle, feedback_log)
     proposal = propose_tuning(report, packet, bundle=bundle, feedback_by_track=feedback_by_track)
     output_path = _path(args.output, bundle_path.with_name("tuning_proposal.json"))
     write_json(output_path, proposal)
@@ -228,6 +297,8 @@ def command_tune(args: argparse.Namespace) -> int:
             "proposal_path": str(output_path),
             "approval_required": proposal["approval_required"],
             "auto_applied": proposal["auto_applied"],
+            "proposal_status": proposal["status"],
+            "feedback_sample": proposal["feedback_sample"],
             "suggested_weight_deltas": proposal["suggested_deltas"]["ranking_weights"],
             "suggested_caps": proposal["suggested_caps"],
         }
@@ -238,35 +309,51 @@ def command_tune(args: argparse.Namespace) -> int:
 def command_validate(args: argparse.Namespace) -> int:
     analysis_path = _path(args.analysis, ROOT / "runtime" / "musician_analysis.json")
     bundle_path = _path(args.bundle, ROOT / "runtime" / "recommendation_bundle.json")
-    packet = validate_analysis_packet(read_json(analysis_path))
-    bundle = validate_recommendation_file(bundle_path, analysis_path)
-    bundle = rank_bundle(bundle, packet)
-    validate_recommendation_bundle(bundle, packet)
+    audit_path = _path(args.evidence_audit, None)
+    try:
+        packet = validate_analysis_packet(read_json(analysis_path))
+        bundle = rank_bundle(read_json(bundle_path), packet)
+        validate_recommendation_bundle(bundle, packet)
+        evidence_audit = audit_bundle_evidence(bundle) if audit_path is not None else None
+    except ContractError as exc:
+        if audit_path is not None:
+            write_json(audit_path, {
+                "schema_version": "2.0", "artifact_type": "evidence_audit",
+                "status": "invalid_contract", "error": str(exc), "outputs_written": False,
+            })
+        raise
+    if evidence_audit is not None:
+        write_json(audit_path, evidence_audit)
+        if evidence_audit["status"] not in {"accepted", "not_applicable"}:
+            _print_summary({
+                "status": "evidence_audit_failed", "analysis_id": packet["analysis_id"],
+                "evidence_audit_path": str(audit_path), "audit_status": evidence_audit["status"],
+                "evidence_accepted_count": evidence_audit["accepted_count"],
+                "evidence_rejected_count": evidence_audit["rejected_count"],
+                "evidence_pending_count": evidence_audit["pending_count"], "outputs_written": False,
+            })
+            return 2
     ranked_output_path = _path(
         args.ranked_output,
         bundle_path.with_name("recommendation_bundle.ranked.json"),
     )
-    write_json(ranked_output_path, bundle)
     text = render_for_channel(args.channel, bundle, packet)
     output_path = _path(args.output, ROOT / "runtime" / "channel_text.txt")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(text, encoding="utf-8")
-    evidence_audit = None
-    if args.evidence_audit is not None:
-        audit_path = _path(args.evidence_audit, bundle_path.with_name("evidence_audit.json"))
-        evidence_audit = audit_bundle_evidence(bundle)
-        write_json(audit_path, evidence_audit)
     image_summary = None
     if args.image_output is not None:
         image_path = _path(args.image_output, output_path.parent / "recommendation_card.png")
         if image_path is None:
             raise ContractError("可视化输出路径不能为空")
         image_summary = render_recommendation_card(bundle, packet, image_path)
+    write_json(ranked_output_path, bundle)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(text, encoding="utf-8")
     _print_summary(
         {
             "status": "recommendation_validated",
             "analysis_id": packet["analysis_id"],
             "recommendation_status": bundle["status"],
+            "publication_status": bundle.get("publication_status", "not_applicable"),
             "recommendation_count": len(bundle["recommendations"]),
             "ranked_bundle_path": str(ranked_output_path),
             "channel": args.channel,
@@ -299,12 +386,16 @@ def command_agent(args: argparse.Namespace) -> int:
             root / "runtime" / "current-run" / "channel_text.txt",
         ),
         channel_image_path=_path(args.image_output, None),
-        prompt_dir=_path(args.prompt_dir, root / "prompts"),
+        prompt_dir=_path(args.prompt_dir, None),
         channel=args.channel,
         command=args.command,
         mock=args.mock,
         timeout=max(1, args.timeout),
         context_budget=args.context_budget,
+        context_manifest_path=_path(args.manifest, None),
+        max_research_rounds=args.max_research_rounds,
+        candidate_target=args.candidate_target,
+        max_candidates=args.max_candidates,
     )
     _print_summary(summary)
     return 0
@@ -396,6 +487,9 @@ def command_archive_schema1(args: argparse.Namespace) -> int:
 def command_run(args: argparse.Namespace) -> int:
     runtime_dir = _path(args.runtime_dir, ROOT / "runtime")
     paths = _runtime_paths(runtime_dir)
+    research_dir = _path(args.analysis_research_dir, runtime_dir / "analysis_research")
+    if args.analysis_mode == "agent" and paths["snapshot"].exists() and (research_dir / "manifest.json").exists():
+        raise ContractError("当前快照已绑定分析研究任务；请用 analyze --snapshot 继续，或用新的 runtime-dir 开始新任务")
     snapshot = build_snapshot(
         _path(args.input, ROOT / "input" / "web_favorites.json"),
         reader_name=args.reader,
@@ -410,6 +504,14 @@ def command_run(args: argparse.Namespace) -> int:
     save_snapshot(snapshot, paths["snapshot"])
     validate_playlist_snapshot(snapshot, require_complete=True)
 
+    research_path, pending = _analysis_research_input(args, paths["snapshot"], paths["analysis"])
+    if pending is not None:
+        write_json(paths["pipeline_manifest"], {
+            "schema_version": "2.0", "manifest_type": "local_pipeline_manifest", **pending,
+            "snapshot_path": str(paths["snapshot"]), "policy": {"file": args.policy_file},
+        })
+        _print_summary({**pending, "runtime_dir": str(runtime_dir)})
+        return 0
     packet = analyze_and_validate(
         paths["snapshot"],
         preferred_path=_path(args.preferred, ROOT / "preferred_artists.txt"),
@@ -419,22 +521,17 @@ def command_run(args: argparse.Namespace) -> int:
         manifest_path=paths["analysis_manifest"],
         style_taxonomy_path=_path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json"),
         style_profile_path=_path(args.style_profiles, ROOT / "styles" / "artist_style_profiles.json"),
+        policy_path=_path(args.policy_file, None),
+        as_of_date=args.as_of_date,
+        research_bundle_path=research_path,
     )
     coverage_report = None
     if packet["style_analysis"]["profile_coverage"]["degraded"]:
         coverage_report = write_coverage_report(packet, runtime_dir / "coverage_report.json")
     prompt_dir = _path(args.prompt_dir, ROOT / "prompts")
-    prompt = build_agent_prompt_from_file(paths["analysis"], paths["agent_prompt"], prompt_dir=prompt_dir)
-    prompt, budget_report = apply_context_budget(prompt, args.context_budget)
-    prompt_path = paths["agent_prompt"]
-    prompt_path.write_text(prompt, encoding="utf-8")
-    write_agent_context_manifest(
-        packet,
-        paths["agent_context_manifest"],
-        prompt_dir=prompt_dir,
-        prompt=prompt,
-        context_budget=args.context_budget,
-        budget_report=budget_report,
+    prompt, budget_report = prepare_agent_context(
+        packet, paths["agent_prompt"], manifest_path=paths["agent_context_manifest"],
+        prompt_dir=prompt_dir, context_budget=args.context_budget,
     )
     write_json(
         paths["pipeline_manifest"],
@@ -442,6 +539,9 @@ def command_run(args: argparse.Namespace) -> int:
             "schema_version": "2.0",
             "manifest_type": "local_pipeline_manifest",
             "status": "agent_context_ready",
+            "analysis_mode": args.analysis_mode,
+            "research_bundle_path": str(research_path) if research_path else None,
+            "as_of_date": packet["as_of_date"],
             "source_snapshot_id": snapshot["snapshot_id"],
             "source_track_count": snapshot["track_count"],
             "analysis_id": packet["analysis_id"],
@@ -449,6 +549,7 @@ def command_run(args: argparse.Namespace) -> int:
             "prompt_size": prompt_size_telemetry(prompt),
             "context_budget": args.context_budget,
             "budget_report": budget_report,
+            "policy": packet["input_manifest"]["policy"],
             "step3": {
                 "mode": "agent_required",
                 "input": "MusicianAnalysisPacket only",
@@ -460,6 +561,8 @@ def command_run(args: argparse.Namespace) -> int:
     _print_summary(
         {
             "status": "agent_context_ready",
+            "analysis_mode": args.analysis_mode,
+            "research_bundle_path": str(research_path) if research_path else None,
             "source_snapshot_id": snapshot["snapshot_id"],
             "source_track_count": snapshot["track_count"],
             "declared_track_count": snapshot["declared_track_count"],
@@ -499,8 +602,15 @@ def command_export_apple_playlist(args: argparse.Namespace) -> int:
             "`npm install playwright`（见 tools/README.md）"
         )
     output_path = _path(args.output, ROOT / "input" / "apple_favorite_songs.csv")
+    if args.expected_count is not None and not 0 < args.expected_count <= 9007199254740991:
+        raise ContractError("expected-count 必须是正整数且不超过 JavaScript 安全整数范围")
     command = [node_executable, str(tool_path), args.url, str(output_path)]
-    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=600)
+    if args.expected_count is not None:
+        command.append(str(args.expected_count))
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=600)
+    except subprocess.TimeoutExpired as exc:
+        raise ContractError("Apple 歌单导出超时：600 秒") from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")[:500]
         raise ContractError(f"Apple 歌单导出失败：{detail}")
@@ -543,8 +653,21 @@ def _add_style_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--style-profiles",
         default=None,
-        help="逐艺人风格画像 JSON；默认使用本地私有目录",
+        help="仅 catalog 模式使用的逐艺人风格画像 JSON；该模式默认使用本地私有目录",
     )
+
+
+def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--analysis-mode", choices=("agent", "catalog"), default="agent",
+                        help="默认由 Agent 研究画像；catalog 为显式本地目录兼容模式")
+    research = parser.add_mutually_exclusive_group()
+    research.add_argument("--analysis-command", help="分析 Agent 命令，stdin 接收研究请求，stdout 返回研究 JSON")
+    research.add_argument("--research-bundle", help="导入绑定当前快照的完整 MusicianResearchBundle")
+    research.add_argument("--import-analysis-results", action="store_true", help="校验并汇总当前研究目录中已完成的各批 result 文件")
+    parser.add_argument("--analysis-research-dir", help="本次分析研究目录，默认在分析输出目录下的 analysis_research")
+    parser.add_argument("--analysis-batch-size", type=int, default=None, help="每批最多曲目数，1 到 50；继承准备配置，新任务默认 20")
+    parser.add_argument("--analysis-context-budget", type=int, default=None, help="分析 Agent 单批字符硬预算；继承准备配置，新任务默认 100000")
+    parser.add_argument("--analysis-timeout", type=int, default=600, help="所有分析研究批次共用的秒数预算，默认 600")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -556,14 +679,17 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_parser.add_argument("--output", default=None)
     snapshot_parser.set_defaults(func=command_snapshot)
 
-    analyze_parser = subparsers.add_parser("analyze", help="Step 2: 生成确定性音乐人分析包")
+    analyze_parser = subparsers.add_parser("analyze", help="Step 2: Agent 研究音乐事实，程序聚合分析包")
     analyze_parser.add_argument("--snapshot", default=None)
     analyze_parser.add_argument("--preferred", default=None)
     analyze_parser.add_argument("--relations", default=None)
     analyze_parser.add_argument("--output", default=None)
     analyze_parser.add_argument("--markdown", default=None)
     analyze_parser.add_argument("--manifest", default=None)
+    analyze_parser.add_argument("--policy-file", default=None, help="显式加载人工审阅的策略 JSON 部分覆盖")
+    analyze_parser.add_argument("--as-of-date", default=None, help="评分基准 YYYY-MM-DD；默认快照的 UTC 日期")
     _add_style_options(analyze_parser)
+    _add_analysis_options(analyze_parser)
     analyze_parser.set_defaults(func=command_analyze)
 
     prompt_parser = subparsers.add_parser("prepare-agent", help="Step 3: 生成隔离 Agent 上下文")
@@ -596,6 +722,19 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--output", default=None)
     evaluate_parser.set_defaults(func=command_evaluate)
 
+    for name in ("prepare-benchmark", "benchmark"):
+        comparison_parser = subparsers.add_parser(name, help="生成盲测标注清单" if name == "prepare-benchmark" else "同输入的只读试听方案对照")
+        comparison_parser.add_argument("--analysis-a", required=True)
+        comparison_parser.add_argument("--analysis-b", default=None)
+        comparison_parser.add_argument("--bundle-a", required=True)
+        comparison_parser.add_argument("--bundle-b", required=True)
+        comparison_parser.add_argument("--output", required=True)
+        if name == "benchmark":
+            comparison_parser.add_argument("--judgments", required=True)
+            comparison_parser.add_argument("--research-report-a", default=None)
+            comparison_parser.add_argument("--research-report-b", default=None)
+        comparison_parser.set_defaults(func=command_benchmark)
+
     tune_parser = subparsers.add_parser("tune", help="生成需人工批准的策略调优建议，绝不自动应用")
     tune_parser.add_argument("--analysis", default=None)
     tune_parser.add_argument("--bundle", required=True)
@@ -606,6 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser = subparsers.add_parser("agent", help="Step 3: 执行 Agent 并校验 RecommendationBundle")
     agent_parser.add_argument("--analysis", default=None)
     agent_parser.add_argument("--prompt", default=None)
+    agent_parser.add_argument("--manifest", default=None, help="准备阶段的 context manifest 路径")
     agent_parser.add_argument("--output", default=None)
     agent_parser.add_argument("--channel-output", default=None)
     agent_parser.add_argument(
@@ -619,16 +759,22 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--timeout", type=int, default=600)
     agent_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
     agent_parser.add_argument("--context-budget", type=int, default=None, help="Agent 提示词字符预算")
+    agent_parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；timeout 为研究总预算")
+    agent_parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
+    agent_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
     agent_parser.set_defaults(func=command_agent)
 
-    run_parser = subparsers.add_parser("run", help="本地执行 Step 1 + Step 2 + Step 3 上下文准备")
+    run_parser = subparsers.add_parser("run", help="快照 + 分析 Agent 研究 + 程序聚合 + 推荐上下文准备；未配置 Agent 时停在研究准备")
     _add_source_options(run_parser)
     run_parser.add_argument("--preferred", default=None)
     run_parser.add_argument("--relations", default=None)
     run_parser.add_argument("--runtime-dir", default=None)
+    run_parser.add_argument("--policy-file", default=None, help="显式加载人工审阅的策略 JSON 部分覆盖")
+    run_parser.add_argument("--as-of-date", default=None, help="评分基准 YYYY-MM-DD；默认快照的 UTC 日期")
     run_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
     run_parser.add_argument("--context-budget", type=int, default=None, help="Agent 提示词字符预算")
     _add_style_options(run_parser)
+    _add_analysis_options(run_parser)
     run_parser.set_defaults(func=command_run)
 
     archive_parser = subparsers.add_parser("archive-schema1", help="将历史 Schema 1 运行时产物迁移到 runtime/archive")
@@ -641,6 +787,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_parser.add_argument("--url", required=True, help="Apple Music 歌单分享链接")
     export_parser.add_argument("--output", default=None, help="CSV 输出路径（默认 input/apple_favorite_songs.csv）")
+    export_parser.add_argument("--expected-count", type=int, default=None, help="从源歌单独立确认的歌曲总数；缺失时完整性未确认")
     export_parser.set_defaults(func=command_export_apple_playlist)
     return parser
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from copy import deepcopy
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Any
 from urllib.parse import urlparse
 
@@ -15,10 +15,17 @@ from contracts import (
     RANKING_FEATURE_KEYS,
     normalized_name,
     normalized_text,
+    parse_as_of_date,
     recall_mix_ratios,
     target_counts,
     track_key,
+    validate_recommendation_bundle,
+    require_analysis_coverage,
 )
+from evidence import classify_source, require_usable_evidence, source_evidence_grade
+from candidate_routes import resolve_candidate_route
+from preference_model import interest_profiles, match_interest, style_vector
+from explanations import explain_selected
 
 
 FEATURE_KEYS = RANKING_FEATURE_KEYS
@@ -33,6 +40,10 @@ DEFAULT_WEIGHTS = {
 }
 CONFIDENCE_FACTORS = {"high": 1.0, "medium": 0.78, "low": 0.55}
 EVIDENCE_BASE = {"A": 88.0, "B": 73.0, "C": 58.0}
+
+
+class SelectionSearchBudgetExceeded(ContractError):
+    """The bounded search could not establish feasibility or infeasibility."""
 
 
 def _clamp(value: Any) -> float:
@@ -57,7 +68,7 @@ def _ranking_weights(packet: dict[str, Any]) -> dict[str, float]:
 
 
 def _cosine(left: dict[str, float], right: dict[str, float]) -> float:
-    keys = set(left) | set(right)
+    keys = sorted(set(left) | set(right))
     numerator = sum(left.get(key, 0.0) * right.get(key, 0.0) for key in keys)
     left_norm = math.sqrt(sum(value * value for value in left.values()))
     right_norm = math.sqrt(sum(value * value for value in right.values()))
@@ -108,7 +119,8 @@ def _parent_vector(vector: dict[str, float], parents: dict[str, str]) -> dict[st
 
 
 def _style_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
-    user = _user_style_vector(packet)
+    interest = match_interest(candidate, packet)
+    user = style_vector(interest) if interest else _user_style_vector(packet)
     item = _candidate_style_vector(candidate)
     if not user or not item:
         return 0.0
@@ -120,9 +132,10 @@ def _style_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
 
 
 def _axis_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
-    user_axes = packet.get("style_analysis", {}).get("style_axes", {})
+    interest = match_interest(candidate, packet)
+    user_axes = interest["style_axes"] if interest else packet.get("style_analysis", {}).get("style_axes", {})
     candidate_axes = candidate.get("style_axes", {})
-    common = [key for key in user_axes if key in candidate_axes]
+    common = [key for key in user_axes if key in candidate_axes and user_axes[key] is not None and candidate_axes[key] is not None]
     if not common:
         return 0.0
     mean_distance = sum(abs(float(user_axes[key]) - float(candidate_axes[key])) for key in common) / len(common)
@@ -130,44 +143,9 @@ def _axis_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
     return _clamp((100.0 - mean_distance) * (0.88 + 0.12 * confidence))
 
 
-def _entity_affinities(packet: dict[str, Any]) -> list[tuple[dict[str, Any], float]]:
-    counts = {
-        str(item.get("entity_ref")): int(item.get("count") or 0)
-        for item in packet.get("primary_distribution", [])
-        if isinstance(item, dict) and item.get("entity_ref")
-    }
-    peak = max(counts.values(), default=1)
-    preferred_refs = {
-        str(item.get("entity_ref"))
-        for item in packet.get("preferred_artists", [])
-        if isinstance(item, dict) and item.get("entity_ref")
-    }
-    result: list[tuple[dict[str, Any], float]] = []
-    for entity in packet.get("entities", []):
-        if not isinstance(entity, dict):
-            continue
-        ref = str(entity.get("entity_ref") or "")
-        affinity = counts.get(ref, 0) / peak
-        if ref in preferred_refs:
-            affinity = max(affinity, 1.0)
-        result.append((entity, affinity))
-    return result
-
-
 def _candidate_ref_strength(candidate: dict[str, Any], packet: dict[str, Any]) -> tuple[float, float]:
-    refs = {str(ref) for ref in candidate.get("analysis_refs", []) if isinstance(ref, str)}
-    relation_strength = 0.0
-    frequency_strength = 0.0
-    for entity, affinity in _entity_affinities(packet):
-        entity_ref = str(entity.get("entity_ref") or "")
-        analysis_refs = {str(ref) for ref in entity.get("analysis_refs", []) if isinstance(ref, str)}
-        if entity_ref in refs:
-            relation_strength = max(relation_strength, 1.0)
-            frequency_strength = max(frequency_strength, affinity)
-        if refs & (analysis_refs - {entity_ref}):
-            relation_strength = max(relation_strength, 0.90)
-            frequency_strength = max(frequency_strength, affinity * 0.85)
-    return relation_strength, frequency_strength
+    route = resolve_candidate_route(candidate, packet)
+    return route["strength"], route["frequency_strength"]
 
 
 def _relation_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
@@ -177,7 +155,7 @@ def _relation_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
         "musician_relation": 0.88,
         "style_neighbor": 0.50,
         "exploration": 0.32,
-    }.get(str(candidate.get("candidate_type") or ""), 0.0)
+    }.get(resolve_candidate_route(candidate, packet)["candidate_type"], 0.0)
     return _clamp((base * 0.45 + graph_strength * 0.55) * 100.0)
 
 
@@ -187,14 +165,11 @@ def _frequency_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
 
 
 def _reference_date(packet: dict[str, Any]) -> date:
-    raw = str(packet.get("generated_at") or "")[:10]
-    try:
-        return date.fromisoformat(raw)
-    except ValueError:
-        return datetime.now(UTC).date()
+    return parse_as_of_date(packet.get("as_of_date"))
 
 
 def _novelty(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
+    reference_date = _reference_date(packet)
     favorite_artists = {
         normalized_name(item.get("artist"))
         for item in packet.get("primary_distribution", [])
@@ -208,11 +183,11 @@ def _novelty(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
             "musician_relation": 64.0,
             "style_neighbor": 78.0,
             "exploration": 92.0,
-        }.get(str(candidate.get("candidate_type") or ""), 55.0)
+        }.get(resolve_candidate_route(candidate, packet)["candidate_type"], 55.0)
     raw_date = candidate.get("release_date")
     if isinstance(raw_date, str):
         try:
-            age_days = max(0, (_reference_date(packet) - date.fromisoformat(raw_date)).days)
+            age_days = max(0, (reference_date - date.fromisoformat(raw_date)).days)
             if age_days <= 90:
                 base += 6.0
             elif age_days <= 365:
@@ -223,7 +198,7 @@ def _novelty(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
 
 
 def _evidence_quality(candidate: dict[str, Any]) -> float:
-    grade = str(candidate.get("evidence_grade") or "C").upper()
+    grade = source_evidence_grade(candidate)
     items = [item for item in candidate.get("evidence_items", []) if isinstance(item, dict)]
     claim_types = {str(item.get("claim_type")) for item in items}
     domains = {
@@ -238,9 +213,9 @@ def _evidence_quality(candidate: dict[str, Any]) -> float:
 
 def _public_association(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
     relation_strength, _ = _candidate_ref_strength(candidate, packet)
-    discovery = str(candidate.get("discovery_source") or "").casefold()
-    trusted = 1.0 if any(marker in discovery for marker in ("official", "musicbrainz", "wikidata", "bandcamp")) else 0.72
-    source_count = len({str(value) for value in candidate.get("sources", [])})
+    source_classes = {classify_source(str(item.get("url") or "")) for item in candidate.get("evidence_items", [])}
+    trusted = 1.0 if source_classes & {"official", "musicbrainz", "wikidata", "bandcamp"} else 0.72
+    source_count = len({urlparse(str(item.get("url") or "")).netloc.casefold() for item in candidate.get("evidence_items", [])})
     source_factor = min(1.0, 0.55 + source_count * 0.15)
     return _clamp((relation_strength * 0.55 + trusted * 0.25 + source_factor * 0.20) * 100.0)
 
@@ -325,7 +300,7 @@ def _sequence_candidates(selected: list[dict[str, Any]], packet: dict[str, Any])
             best_index = 0
             best_cost = float("inf")
             for index, candidate in enumerate(remaining):
-                transition = _axis_distance(ordered[-1], candidate) if ordered else 0.0
+                transition = _axis_distance(ordered[-1], candidate) if ordered and policy.get("prefer_adjacent_transitions") else 0.0
                 arc_error = abs(_energy(candidate) - target(position))
                 rank_cost = 100.0 - float(candidate["ranking_score"])
                 familiar_penalty = 0.0
@@ -353,7 +328,10 @@ def _sequence_candidates(selected: list[dict[str, Any]], packet: dict[str, Any])
     }
 
 
-def rank_candidates(candidates: list[dict[str, Any]], packet: dict[str, Any], *, limit: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def rank_candidates(
+    candidates: list[dict[str, Any]], packet: dict[str, Any], *, limit: int,
+    search_budget: int = 50000,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Apply exact recall quotas, hard caps, MMR diversity and sequencing."""
 
     if limit <= 0:
@@ -375,6 +353,7 @@ def rank_candidates(candidates: list[dict[str, Any]], packet: dict[str, Any], *,
     for source_index, original in enumerate(candidates):
         if not isinstance(original, dict):
             continue
+        require_usable_evidence(original)
         candidate = deepcopy(original)
         candidate_key = track_key(candidate.get("title"), candidate.get("artist"))
         canonical_id = normalized_text(candidate.get("canonical_track_id")).casefold()
@@ -389,6 +368,9 @@ def rank_candidates(candidates: list[dict[str, Any]], packet: dict[str, Any], *,
         candidate["ranking_score"] = score["score"]
         candidate["score_breakdown"] = score["breakdown"]
         candidate["score_features"] = score["features"]
+        candidate["resolved_route"] = resolve_candidate_route(candidate, packet)
+        interest = match_interest(candidate, packet)
+        candidate["matched_interest_id"] = interest["interest_id"] if interest else None
         candidate["_source_index"] = source_index
         prepared.append(candidate)
     if not prepared:
@@ -404,47 +386,103 @@ def rank_candidates(candidates: list[dict[str, Any]], packet: dict[str, Any], *,
     artist_counts: Counter[str] = Counter()
     project_counts: Counter[str] = Counter()
     type_counts: Counter[str] = Counter()
-    remaining = list(prepared)
-    while remaining and len(selected) < limit:
+    interest_counts: Counter[str] = Counter()
+    min_interests = min(int(diversity.get("min_interest_groups", 1)), len(interest_profiles(packet)))
+    failed_states: set[frozenset[int]] = set()
+    visited = 0
+
+    def search(remaining: list[dict[str, Any]]) -> list[tuple[dict[str, Any], float]] | None:
+        nonlocal visited
+        visited += 1
+        if visited > search_budget:
+            raise SelectionSearchBudgetExceeded(f"选曲搜索预算耗尽（{search_budget} 个状态），尚不能判定约束是否有解")
+        state = frozenset(item["_source_index"] for item in selected)
+        if state in failed_states:
+            return None
         slots_left = limit - len(selected)
         projects_needed = max(0, min_projects - len(project_counts))
-        best_index = -1
-        best_value = float("-inf")
-        for index, candidate in enumerate(remaining):
-            type_name = str(candidate.get("candidate_type"))
-            if type_counts[type_name] >= quotas.get(type_name, 0):
-                continue
-            artist_marker = normalized_name(candidate.get("artist"))
+        if slots_left == 0:
+            return [] if projects_needed == 0 and len(interest_counts) >= min_interests else None
+        eligible = [
+            item for item in remaining
+            if type_counts[str(item["candidate_type"])] < quotas.get(str(item["candidate_type"]), 0)
+            and artist_counts[normalized_name(item["artist"])] < max_per_artist
+            and project_counts[normalized_name(item["project"])] < max_per_project
+        ]
+
+        def capacity(items: list[dict[str, Any]], field: str, counts: Counter[str], cap: int) -> int:
+            available = Counter(normalized_name(item[field]) for item in items)
+            return sum(min(count, cap - counts[key]) for key, count in available.items())
+
+        # Necessary capacity bounds prune dead ends without changing greedy preference.
+        feasible = (
+            len(eligible) >= slots_left
+            and projects_needed <= slots_left
+            and len({normalized_name(item["project"]) for item in eligible} - set(project_counts)) >= projects_needed
+            and capacity(eligible, "artist", artist_counts, max_per_artist) >= slots_left
+            and capacity(eligible, "project", project_counts, max_per_project) >= slots_left
+            and len(set(interest_counts) | {item["matched_interest_id"] for item in eligible if item["matched_interest_id"]}) >= min_interests
+        )
+        for kind, quota in quotas.items():
+            items = [item for item in eligible if item["candidate_type"] == kind]
+            needed = quota - type_counts[kind]
+            if min(
+                len(items), capacity(items, "artist", artist_counts, max_per_artist),
+                capacity(items, "project", project_counts, max_per_project),
+            ) < needed:
+                feasible = False
+        if not feasible:
+            failed_states.add(state)
+            return None
+        options = []
+        for candidate in eligible:
             project_marker = normalized_name(candidate.get("project"))
-            if artist_counts[artist_marker] >= max_per_artist or project_counts[project_marker] >= max_per_project:
-                continue
             if projects_needed >= slots_left and project_marker in project_counts:
                 continue
             similarity = max((_candidate_similarity(candidate, chosen, packet) for chosen in selected), default=0.0)
             type_bonus = float(diversity["candidate_type_bonus"])
             project_bonus = float(diversity["new_project_bonus"]) if project_marker not in project_counts and len(project_counts) < min_projects else 0.0
             adjusted = float(candidate["ranking_score"]) + type_bonus + project_bonus - similarity * float(diversity["mmr_penalty"])
-            if adjusted > best_value:
-                best_value = adjusted
-                best_index = index
-        if best_index < 0:
-            break
-        chosen = remaining.pop(best_index)
-        chosen["selection_rank"] = len(selected) + 1
-        chosen["selection_adjusted_score"] = round(best_value, 4)
-        selected.append(chosen)
-        artist_counts[normalized_name(chosen.get("artist"))] += 1
-        project_counts[normalized_name(chosen.get("project"))] += 1
-        type_counts[str(chosen.get("candidate_type"))] += 1
-    if len(selected) != limit:
-        raise ContractError(f"candidate_pool 经硬约束后只能选出 {len(selected)} 首，要求 {limit} 首")
-    if dict(type_counts) != quotas:
+            if candidate["matched_interest_id"] and candidate["matched_interest_id"] not in interest_counts:
+                adjusted += float(diversity.get("new_interest_bonus", 4.0))
+            options.append((candidate, adjusted))
+        options.sort(key=lambda option: -option[1])
+        for chosen, adjusted in options:
+            selected.append(chosen)
+            keys = (
+                (artist_counts, normalized_name(chosen["artist"])),
+                (project_counts, normalized_name(chosen["project"])),
+                (type_counts, str(chosen["candidate_type"])),
+                (interest_counts, chosen["matched_interest_id"]),
+            )
+            for counts, key in keys:
+                counts[key] += 1
+            tail = search([item for item in eligible if item is not chosen])
+            if tail is not None:
+                return [(chosen, adjusted), *tail]
+            selected.pop()
+            for counts, key in keys:
+                counts[key] -= 1
+                if counts[key] == 0:
+                    del counts[key]
+        failed_states.add(state)
+        return None
+
+    solution = search(prepared)
+    if solution is None:
+        raise ContractError(f"candidate_pool 约束无解：无法同时满足 {limit} 首、召回配额、艺人/项目上限与项目覆盖")
+    for index, (candidate, adjusted) in enumerate(solution, 1):
+        candidate["selection_rank"] = index
+        candidate["selection_adjusted_score"] = round(adjusted, 4)
+    if type_counts != Counter(quotas):
         raise ContractError(f"候选类型配额未满足：实际 {dict(type_counts)}，要求 {quotas}")
     if len(project_counts) < min_projects:
         raise ContractError(f"候选项目覆盖不足：实际 {len(project_counts)}，要求 {min_projects}")
     for candidate in selected:
         candidate.pop("_source_index", None)
     sequenced, sequence_manifest = _sequence_candidates(selected, packet)
+    for candidate in sequenced:
+        candidate["program_explanation"] = explain_selected(candidate, packet)
     manifest = {
         "algorithm_version": str(policy.get("algorithm_version") or "hybrid_music_discovery_v2"),
         "weights": _ranking_weights(packet),
@@ -456,6 +494,8 @@ def rank_candidates(candidates: list[dict[str, Any]], packet: dict[str, Any], *,
         "diversity_policy": deepcopy(diversity),
         "selected_count": len(sequenced),
         "selected_project_count": len(project_counts),
+        "selected_interest_counts": dict(interest_counts),
+        "interest_group_count": len(interest_profiles(packet)),
         "selected_candidate_types": dict(type_counts),
         "selected_canonical_track_ids": [item["canonical_track_id"] for item in sequenced],
         "sequence": sequence_manifest,
@@ -466,19 +506,24 @@ def rank_candidates(candidates: list[dict[str, Any]], packet: dict[str, Any], *,
 def rank_bundle(bundle: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
     """Turn a validated candidate-pool bundle into a ranked bundle."""
 
+    validate_recommendation_bundle(bundle, packet)
     if bundle.get("status") != "ready":
         return bundle
-    if bundle.get("bundle_stage") == "ranked":
-        return bundle
-    if bundle.get("bundle_stage") != "candidate_pool":
+    require_analysis_coverage(packet)
+    if bundle.get("bundle_stage") not in {"candidate_pool", "ranked"}:
         raise ContractError("ready RecommendationBundle 必须从 candidate_pool 阶段开始")
     candidate_pool = bundle.get("candidate_pool")
     if not isinstance(candidate_pool, list) or not candidate_pool:
         raise ContractError("ready RecommendationBundle 必须包含候选池")
     limit = int(packet["recommendation_policy"]["target_recommendations"])
     recommendations, manifest = rank_candidates(candidate_pool, packet, limit=limit)
+    if bundle["bundle_stage"] == "ranked":
+        if bundle["recommendations"] != recommendations or bundle["ranking"] != manifest:
+            raise ContractError("ranked 结果与确定性重算不一致：评分、选曲或顺序已变化，请从 candidate_pool 重新生成")
+        return bundle
     ranked = deepcopy(bundle)
     ranked["bundle_stage"] = "ranked"
+    ranked["publication_status"] = "draft"
     ranked["recommendations"] = recommendations
     ranked["ranking"] = manifest
     return ranked
