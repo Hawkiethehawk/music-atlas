@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-07（同步 Gitee 最新提交，维护标签 patch-20260907-163229）
+
+- 合并 Gitee origin/master 提交 9701810，纳入 research-agent 工作流重构；按确认保留本地 AGENTS.md 版本。
+- 保留本地文档提交 276d524，并完成合并提交 4fd7de7。
+
+实际验证：
+
+- python -X utf8 -m unittest discover -s tests -v：179 项通过。
+- python -X utf8 -m compileall -q .：通过。
+- npm ci：通过。
+- node --check export_apple_playlist.mjs、node --check apple_export_helpers.mjs：通过。
+- npm test：11 项通过；npm run test:browser：1 项通过。
+- git diff --check：通过。
+
 ## 2026-09-07（推送 Gitee，维护标签 patch-20260907-161134）
 
 将前述本地未发布的工作流重构与优先优化统一提交到 `master`，保持个人输入、运行产物、凭据和设计草稿不进入仓库。
