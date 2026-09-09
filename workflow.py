@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,12 @@ from agent_prompt import prepare_agent_context, prompt_slot_manifest, prompt_siz
 from agent_runner import run_agent
 from analysis_agent import execute_analysis_research, prepare_analysis_research
 from channels import render_for_channel
+from channel_delivery import (
+    resolve_weixin_target,
+    run_local_weixin_sender,
+    run_remote_openclaw_sender,
+    run_remote_pi_wechatbot_sender,
+)
 from benchmark import compare_listening_benchmark, prepare_listening_benchmark
 from contracts import (
     ContractError,
@@ -32,6 +40,7 @@ from feedback import latest_feedback_outcomes
 from musician_analyzer import analyze_and_validate, load_recommendation_policy, write_coverage_report
 from recommender import rank_bundle
 from source_adapters import build_snapshot, save_snapshot
+from skill_runner import run_skill
 from tune import propose_tuning
 from visualization_interface import render_recommendation_card
 
@@ -68,6 +77,15 @@ def _print_summary(summary: dict[str, Any]) -> None:
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
+def _uses_analysis_skill(mode: str) -> bool:
+    """Return whether a mode uses the provider-neutral research Skill.
+
+    ``agent`` remains an accepted legacy spelling during migration.
+    """
+
+    return mode in {"skill", "agent"}
+
+
 def command_snapshot(args: argparse.Namespace) -> int:
     output_path = _path(args.output, ROOT / "runtime" / "snapshot.json")
     snapshot = build_snapshot(
@@ -96,7 +114,7 @@ def command_snapshot(args: argparse.Namespace) -> int:
 
 
 def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, output_path: Path) -> tuple[Path | None, dict | None]:
-    # Reject configuration errors before making any external Agent call.
+    # Reject configuration errors before making any external Skill call.
     load_recommendation_policy(_path(args.policy_file, None))
     if args.as_of_date is not None:
         parse_as_of_date(args.as_of_date)
@@ -113,10 +131,10 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
         raise ContractError("分析输出不能覆盖快照、词表、策略或研究包等输入")
     if args.analysis_mode == "catalog":
         if args.analysis_command or args.research_bundle or args.import_analysis_results:
-            raise ContractError("catalog 模式不能同时使用 Agent 研究参数")
+            raise ContractError("catalog 模式不能同时使用 Skill 研究参数")
         return None, None
     if args.style_profiles or args.relations or args.preferred:
-        raise ContractError("Agent 分析不读取预置画像、关系目录或偏好名单；离线兼容请显式指定 --analysis-mode catalog")
+        raise ContractError("Skill 分析不读取预置画像、关系目录或偏好名单；离线兼容请显式指定 --analysis-mode catalog")
     if research_path is not None:
         return research_path, None
     directory = _path(args.analysis_research_dir, output_path.parent / "analysis_research")
@@ -130,11 +148,12 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
     manifest = prepare_analysis_research(snapshot_path, taxonomy_path, directory,
                                          batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget)
     return None, {
-        "status": "analysis_agent_required", "analysis_mode": "agent", "source_snapshot_id": manifest["source_snapshot_id"],
+        "status": "analysis_agent_required", "analysis_mode": args.analysis_mode, "skill_name": "music-atlas-analysis",
+        "executor_kind": "generic_external_executor", "source_snapshot_id": manifest["source_snapshot_id"],
         "source_track_count": manifest["source_track_count"], "research_batch_count": len(manifest["batches"]),
         "analysis_research_dir": str(directory), "research_manifest_path": str(directory / "manifest.json"),
         "analysis_written": False, "recommendation_count": 0, "send_performed": False,
-        "next_action": "提供 --analysis-command 执行研究，或完成各批 result 文件后用 --import-analysis-results 汇总；不要重新抓取快照。",
+        "next_action": "使用任意模型或工具执行 Skill：提供 --analysis-command，或完成各批 result 文件后用 --import-analysis-results 汇总；不要重新抓取快照。",
     }
 
 
@@ -375,9 +394,9 @@ def command_validate(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_agent(args: argparse.Namespace) -> int:
+def _run_step3(args: argparse.Namespace, runner: Any) -> dict[str, Any]:
     root = ROOT
-    summary = run_agent(
+    return runner(
         _path(args.analysis, root / "runtime" / "current-run" / "musician_analysis.json"),
         prompt_path=_path(args.prompt, root / "runtime" / "current-run" / "agent_prompt.md"),
         output_path=_path(args.output, root / "runtime" / "current-run" / "recommendation_bundle.json"),
@@ -397,6 +416,182 @@ def command_agent(args: argparse.Namespace) -> int:
         candidate_target=args.candidate_target,
         max_candidates=args.max_candidates,
     )
+
+
+def command_agent(args: argparse.Namespace) -> int:
+    summary = _run_step3(args, run_agent)
+    _print_summary(summary)
+    return 0
+
+
+def _prepare_weixin_delivery(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any], dict[str, Any], str, str]:
+    bundle_path = _path(args.bundle, None)
+    if bundle_path is None:
+        raise ContractError("bundle 路径不能为空")
+    analysis_path = _path(args.analysis, bundle_path.parent / "musician_analysis.json")
+    if analysis_path is None:
+        raise ContractError("analysis 路径不能为空")
+    packet = validate_analysis_packet(read_json(analysis_path))
+    bundle = rank_bundle(read_json(bundle_path), packet)
+    validate_recommendation_bundle(bundle, packet)
+    if bundle["status"] != "ready":
+        raise ContractError("证据不足的 bundle 不能发送到微信")
+    if bundle.get("publication_status") == "draft" and args.send and not args.allow_draft:
+        raise ContractError("当前推荐仍是研究草稿；真实发送必须显式指定 --allow-draft")
+
+    target = resolve_weixin_target(args.target)
+    message = render_for_channel("weixin", bundle, packet)
+    return bundle_path, analysis_path, packet, bundle, target, message
+
+
+def command_send_weixin(args: argparse.Namespace) -> int:
+    """Validate, render and optionally deliver a bundle through OpenClaw."""
+
+    bundle_path, analysis_path, packet, bundle, target, message = _prepare_weixin_delivery(args)
+    remote_host = args.remote_host or os.environ.get("OPENCLAW_SSH_HOST")
+    remote_user = args.remote_user or os.environ.get("OPENCLAW_SSH_USER", "ubuntu")
+    account_id = args.account_id or os.environ.get("OPENCLAW_WEIXIN_ACCOUNT_ID")
+    sender_command = args.sender_command or os.environ.get("OPENCLAW_WEIXIN_SENDER_COMMAND")
+    if remote_host and sender_command:
+        raise ContractError("--remote-host 与 --sender-command 不能同时使用")
+    transport = "ssh_openclaw" if remote_host else "local_sender_command" if sender_command else "unconfigured"
+    summary: dict[str, Any] = {
+        "status": "delivery_plan",
+        "channel": "weixin",
+        "transport": transport,
+        "analysis_id": packet["analysis_id"],
+        "bundle_path": str(bundle_path),
+        "analysis_path": str(analysis_path),
+        "publication_status": bundle.get("publication_status"),
+        "recommendation_count": len(bundle["recommendations"]),
+        "message_characters": len(message),
+        "message_sha256": hashlib.sha256(message.encode("utf-8")).hexdigest(),
+        "target_configured": True,
+        "account_configured": bool(account_id),
+        "send_performed": False,
+    }
+    if args.send or args.dry_run:
+        if not remote_host and not sender_command:
+            raise ContractError("请指定 --remote-host，或指定 --sender-command/OPENCLAW_WEIXIN_SENDER_COMMAND")
+        if remote_host:
+            result = run_remote_openclaw_sender(
+                message,
+                target=target,
+                remote_host=remote_host,
+                remote_user=remote_user,
+                openclaw_command=args.openclaw_command or os.environ.get("OPENCLAW_COMMAND", "openclaw"),
+                ssh_command=args.ssh_command or os.environ.get("OPENCLAW_SSH_COMMAND", "ssh"),
+                ssh_identity=args.ssh_identity,
+                account_id=account_id,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+            )
+        else:
+            result = run_local_weixin_sender(
+                sender_command,
+                message,
+                target=target,
+                account_id=account_id,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+            )
+        summary.update(
+            status="delivery_dry_run" if args.dry_run else "delivered",
+            send_performed=bool(args.send),
+            sender_result=result,
+        )
+    output_path = _path(args.output, None)
+    if output_path is not None:
+        write_json(output_path, summary)
+        summary["report_path"] = str(output_path)
+    _print_summary(summary)
+    return 0
+
+
+def command_send_weixin_pi(args: argparse.Namespace) -> int:
+    """Validate, render and optionally deliver through Pi's WeChatBot SDK."""
+
+    bundle_path, analysis_path, packet, bundle, target, message = _prepare_weixin_delivery(args)
+    remote_host = (
+        args.remote_host
+        or os.environ.get("PI_WECHATBOT_SSH_HOST")
+        or os.environ.get("OPENCLAW_SSH_HOST")
+    )
+    remote_user = (
+        args.remote_user
+        or os.environ.get("PI_WECHATBOT_SSH_USER")
+        or os.environ.get("OPENCLAW_SSH_USER")
+        or "ubuntu"
+    )
+    account_id = (
+        args.account_id
+        or os.environ.get("PI_WECHATBOT_ACCOUNT_ID")
+        or os.environ.get("OPENCLAW_WEIXIN_ACCOUNT_ID")
+    )
+    node_command = args.node_command or os.environ.get("PI_WECHATBOT_NODE_COMMAND", "node")
+    wechatbot_module = args.wechatbot_module or os.environ.get("PI_WECHATBOT_MODULE")
+    storage_dir = args.wechatbot_storage_dir or os.environ.get("PI_WECHATBOT_STORAGE_DIR")
+    ssh_command = (
+        args.ssh_command
+        or os.environ.get("PI_WECHATBOT_SSH_COMMAND")
+        or os.environ.get("OPENCLAW_SSH_COMMAND")
+        or "ssh"
+    )
+    ssh_identity = (
+        args.ssh_identity
+        or os.environ.get("PI_WECHATBOT_SSH_IDENTITY")
+        or os.environ.get("OPENCLAW_SSH_IDENTITY")
+    )
+    transport = "ssh_pi_wechatbot" if remote_host else "unconfigured"
+    summary: dict[str, Any] = {
+        "status": "delivery_plan",
+        "channel": "weixin",
+        "transport": transport,
+        "analysis_id": packet["analysis_id"],
+        "bundle_path": str(bundle_path),
+        "analysis_path": str(analysis_path),
+        "publication_status": bundle.get("publication_status"),
+        "recommendation_count": len(bundle["recommendations"]),
+        "message_characters": len(message),
+        "message_sha256": hashlib.sha256(message.encode("utf-8")).hexdigest(),
+        "target_configured": True,
+        "account_configured": bool(account_id),
+        "wechatbot_module_configured": bool(wechatbot_module),
+        "storage_dir_configured": bool(storage_dir),
+        "send_performed": False,
+    }
+    if args.send or args.dry_run:
+        if not remote_host:
+            raise ContractError("请指定 --remote-host/PI_WECHATBOT_SSH_HOST")
+        result = run_remote_pi_wechatbot_sender(
+            message,
+            target=target,
+            remote_host=remote_host,
+            remote_user=remote_user,
+            node_command=node_command,
+            wechatbot_module=wechatbot_module,
+            storage_dir=storage_dir,
+            ssh_command=ssh_command,
+            ssh_identity=ssh_identity,
+            account_id=account_id,
+            timeout=args.timeout,
+            dry_run=args.dry_run,
+        )
+        summary.update(
+            status="delivery_dry_run" if args.dry_run else "delivered",
+            send_performed=bool(args.send),
+            sender_result=result,
+        )
+    output_path = _path(args.output, None)
+    if output_path is not None:
+        write_json(output_path, summary)
+        summary["report_path"] = str(output_path)
+    _print_summary(summary)
+    return 0
+
+
+def command_skill(args: argparse.Namespace) -> int:
+    summary = _run_step3(args, run_skill)
     _print_summary(summary)
     return 0
 
@@ -488,7 +683,7 @@ def command_run(args: argparse.Namespace) -> int:
     runtime_dir = _path(args.runtime_dir, ROOT / "runtime")
     paths = _runtime_paths(runtime_dir)
     research_dir = _path(args.analysis_research_dir, runtime_dir / "analysis_research")
-    if args.analysis_mode == "agent" and paths["snapshot"].exists() and (research_dir / "manifest.json").exists():
+    if _uses_analysis_skill(args.analysis_mode) and paths["snapshot"].exists() and (research_dir / "manifest.json").exists():
         raise ContractError("当前快照已绑定分析研究任务；请用 analyze --snapshot 继续，或用新的 runtime-dir 开始新任务")
     snapshot = build_snapshot(
         _path(args.input, ROOT / "input" / "web_favorites.json"),
@@ -539,6 +734,8 @@ def command_run(args: argparse.Namespace) -> int:
             "schema_version": "2.0",
             "manifest_type": "local_pipeline_manifest",
             "status": "agent_context_ready",
+            "skill_name": "music-atlas-recommendation",
+            "executor_kind": "generic_external_executor",
             "analysis_mode": args.analysis_mode,
             "research_bundle_path": str(research_path) if research_path else None,
             "as_of_date": packet["as_of_date"],
@@ -551,7 +748,9 @@ def command_run(args: argparse.Namespace) -> int:
             "budget_report": budget_report,
             "policy": packet["input_manifest"]["policy"],
             "step3": {
-                "mode": "agent_required",
+                "mode": "skill_required",
+                "skill_name": "music-atlas-recommendation",
+                "executor_kind": "generic_external_executor",
                 "input": "MusicianAnalysisPacket only",
                 "algorithm": packet["recommendation_policy"].get("algorithm_version", "hybrid_music_discovery_v2"),
                 "send_performed": False,
@@ -561,6 +760,8 @@ def command_run(args: argparse.Namespace) -> int:
     _print_summary(
         {
             "status": "agent_context_ready",
+            "skill_name": "music-atlas-recommendation",
+            "executor_kind": "generic_external_executor",
             "analysis_mode": args.analysis_mode,
             "research_bundle_path": str(research_path) if research_path else None,
             "source_snapshot_id": snapshot["snapshot_id"],
@@ -658,15 +859,16 @@ def _add_style_options(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--analysis-mode", choices=("agent", "catalog"), default="agent",
-                        help="默认由 Agent 研究画像；catalog 为显式本地目录兼容模式")
+    parser.add_argument("--analysis-mode", choices=("skill", "agent", "catalog"), default="skill",
+                        help="默认由通用 Skill 研究画像；agent 为兼容别名，catalog 为显式本地目录兼容模式")
     research = parser.add_mutually_exclusive_group()
-    research.add_argument("--analysis-command", help="分析 Agent 命令，stdin 接收研究请求，stdout 返回研究 JSON")
+    research.add_argument("--analysis-command", "--analysis-skill-command", dest="analysis_command",
+                          help="分析 Skill 执行器命令，stdin 接收研究请求，stdout 返回研究 JSON；不绑定模型")
     research.add_argument("--research-bundle", help="导入绑定当前快照的完整 MusicianResearchBundle")
     research.add_argument("--import-analysis-results", action="store_true", help="校验并汇总当前研究目录中已完成的各批 result 文件")
     parser.add_argument("--analysis-research-dir", help="本次分析研究目录，默认在分析输出目录下的 analysis_research")
     parser.add_argument("--analysis-batch-size", type=int, default=None, help="每批最多曲目数，1 到 50；继承准备配置，新任务默认 20")
-    parser.add_argument("--analysis-context-budget", type=int, default=None, help="分析 Agent 单批字符硬预算；继承准备配置，新任务默认 100000")
+    parser.add_argument("--analysis-context-budget", type=int, default=None, help="分析 Skill 单批字符硬预算；继承准备配置，新任务默认 100000")
     parser.add_argument("--analysis-timeout", type=int, default=600, help="所有分析研究批次共用的秒数预算，默认 600")
 
 
@@ -679,7 +881,7 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_parser.add_argument("--output", default=None)
     snapshot_parser.set_defaults(func=command_snapshot)
 
-    analyze_parser = subparsers.add_parser("analyze", help="Step 2: Agent 研究音乐事实，程序聚合分析包")
+    analyze_parser = subparsers.add_parser("analyze", help="Step 2: Skill 研究音乐事实，程序聚合分析包")
     analyze_parser.add_argument("--snapshot", default=None)
     analyze_parser.add_argument("--preferred", default=None)
     analyze_parser.add_argument("--relations", default=None)
@@ -692,15 +894,23 @@ def build_parser() -> argparse.ArgumentParser:
     _add_analysis_options(analyze_parser)
     analyze_parser.set_defaults(func=command_analyze)
 
-    prompt_parser = subparsers.add_parser("prepare-agent", help="Step 3: 生成隔离 Agent 上下文")
+    prompt_parser = subparsers.add_parser("prepare-agent", help="Step 3: 生成隔离 Skill 上下文（兼容命令名）")
     prompt_parser.add_argument("--analysis", default=None)
     prompt_parser.add_argument("--output", default=None)
     prompt_parser.add_argument("--manifest", default=None)
     prompt_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
-    prompt_parser.add_argument("--context-budget", type=int, default=None, help="Agent 提示词字符预算")
+    prompt_parser.add_argument("--context-budget", type=int, default=None, help="Skill 提示词字符预算")
     prompt_parser.set_defaults(func=command_prepare_agent)
 
-    validate_parser = subparsers.add_parser("validate", help="校验 Agent RecommendationBundle 并渲染渠道文本")
+    skill_prompt_parser = subparsers.add_parser("prepare-skill", help="Step 3: 生成隔离 Skill 上下文")
+    skill_prompt_parser.add_argument("--analysis", default=None)
+    skill_prompt_parser.add_argument("--output", default=None)
+    skill_prompt_parser.add_argument("--manifest", default=None)
+    skill_prompt_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
+    skill_prompt_parser.add_argument("--context-budget", type=int, default=None, help="Skill 提示词字符预算")
+    skill_prompt_parser.set_defaults(func=command_prepare_agent)
+
+    validate_parser = subparsers.add_parser("validate", help="校验 Skill RecommendationBundle 并渲染渠道文本")
     validate_parser.add_argument("--analysis", default=None)
     validate_parser.add_argument("--bundle", required=True)
     validate_parser.add_argument("--channel", default="weixin", choices=("weixin", "feishu", "telegram"))
@@ -714,6 +924,60 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--print-text", action="store_true")
     validate_parser.add_argument("--evidence-audit", default=None, help="输出证据离线审计报告路径")
     validate_parser.set_defaults(func=command_validate)
+
+    send_weixin_parser = subparsers.add_parser(
+        "send-weixin",
+        help="校验并通过云服务器 OpenClaw 发送微信文本；默认只输出发送计划",
+    )
+    send_weixin_parser.add_argument("--analysis", default=None, help="MusicianAnalysisPacket；默认取 bundle 同目录 musician_analysis.json")
+    send_weixin_parser.add_argument("--bundle", required=True, help="已排序的 RecommendationBundle")
+    send_weixin_parser.add_argument("--target", default=None, help="微信直接用户 ID；也可用 OPENCLAW_WEIXIN_TARGET")
+    send_weixin_parser.add_argument("--account-id", default=None, help="OpenClaw 微信账号 ID；也可用 OPENCLAW_WEIXIN_ACCOUNT_ID")
+    send_weixin_parser.add_argument("--remote-host", default=None, help="云服务器 SSH 地址；也可用 OPENCLAW_SSH_HOST")
+    send_weixin_parser.add_argument("--remote-user", default=None, help="云服务器 SSH 用户；默认 ubuntu，也可用 OPENCLAW_SSH_USER")
+    send_weixin_parser.add_argument("--openclaw-command", default=None, help="远端 OpenClaw 命令；默认 openclaw")
+    send_weixin_parser.add_argument("--ssh-command", default=None, help="本地 SSH 命令；默认 ssh")
+    send_weixin_parser.add_argument("--ssh-identity", default=None, help="可选 SSH 身份文件")
+    send_weixin_parser.add_argument("--sender-command", default=None, help="服务器本地发送包装器；也可用 OPENCLAW_WEIXIN_SENDER_COMMAND")
+    send_weixin_parser.add_argument("--timeout", type=int, default=60, help="发送命令超时秒数，默认 60")
+    send_weixin_parser.add_argument("--allow-draft", action="store_true", help="允许发送当前 publication_status=draft 的研究草稿")
+    send_action = send_weixin_parser.add_mutually_exclusive_group()
+    send_action.add_argument("--send", action="store_true", help="实际发送到微信；不指定时只生成计划")
+    send_action.add_argument("--dry-run", action="store_true", help="调用 OpenClaw 的 dry-run，不发送消息")
+    send_weixin_parser.add_argument("--output", default=None, help="可选的发送结果/计划 JSON 路径")
+    send_weixin_parser.set_defaults(func=command_send_weixin)
+
+    send_weixin_pi_parser = subparsers.add_parser(
+        "send-weixin-pi",
+        aliases=("send-weixin-pi-agent",),
+        help="校验并通过云服务器 Pi agent 的 wechatbot 发送微信文本；默认只输出发送计划",
+    )
+    send_weixin_pi_parser.add_argument("--analysis", default=None, help="MusicianAnalysisPacket；默认取 bundle 同目录 musician_analysis.json")
+    send_weixin_pi_parser.add_argument("--bundle", required=True, help="已排序的 RecommendationBundle")
+    send_weixin_pi_parser.add_argument("--target", default=None, help="微信直接用户 ID；也可用 OPENCLAW_WEIXIN_TARGET 或 PI_WECHATBOT_TARGET")
+    send_weixin_pi_parser.add_argument("--account-id", default=None, help="可选的 Pi wechatbot 账号 ID；也可用 PI_WECHATBOT_ACCOUNT_ID")
+    send_weixin_pi_parser.add_argument("--remote-host", default=None, help="云服务器 SSH 地址；也可用 PI_WECHATBOT_SSH_HOST")
+    send_weixin_pi_parser.add_argument("--remote-user", default=None, help="云服务器 SSH 用户；默认 ubuntu，也可用 PI_WECHATBOT_SSH_USER")
+    send_weixin_pi_parser.add_argument("--node-command", default=None, help="远端 Node.js 命令；默认 node，也可用 PI_WECHATBOT_NODE_COMMAND")
+    send_weixin_pi_parser.add_argument(
+        "--wechatbot-module",
+        default=None,
+        help="远端 @wechatbot/wechatbot 包路径或模块名；也可用 PI_WECHATBOT_MODULE",
+    )
+    send_weixin_pi_parser.add_argument(
+        "--wechatbot-storage-dir",
+        default=None,
+        help="远端 wechatbot 凭据目录；默认 ~/.wechatbot，也可用 PI_WECHATBOT_STORAGE_DIR",
+    )
+    send_weixin_pi_parser.add_argument("--ssh-command", default=None, help="本地 SSH 命令；默认 ssh")
+    send_weixin_pi_parser.add_argument("--ssh-identity", default=None, help="可选 SSH 身份文件")
+    send_weixin_pi_parser.add_argument("--timeout", type=int, default=60, help="发送命令超时秒数，默认 60")
+    send_weixin_pi_parser.add_argument("--allow-draft", action="store_true", help="允许发送当前 publication_status=draft 的研究草稿")
+    pi_send_action = send_weixin_pi_parser.add_mutually_exclusive_group()
+    pi_send_action.add_argument("--send", action="store_true", help="实际发送到微信；不指定时只生成计划")
+    pi_send_action.add_argument("--dry-run", action="store_true", help="只校验远端凭据与目标 context_token，不发送消息")
+    send_weixin_pi_parser.add_argument("--output", default=None, help="可选的发送结果/计划 JSON 路径")
+    send_weixin_pi_parser.set_defaults(func=command_send_weixin_pi)
 
     evaluate_parser = subparsers.add_parser("evaluate", help="将已排序 bundle 与记录的反馈进行只读离线评估")
     evaluate_parser.add_argument("--analysis", default=None)
@@ -742,7 +1006,7 @@ def build_parser() -> argparse.ArgumentParser:
     tune_parser.add_argument("--output", default=None)
     tune_parser.set_defaults(func=command_tune)
 
-    agent_parser = subparsers.add_parser("agent", help="Step 3: 执行 Agent 并校验 RecommendationBundle")
+    agent_parser = subparsers.add_parser("agent", help="Step 3: 执行旧 Agent 兼容入口并校验 RecommendationBundle")
     agent_parser.add_argument("--analysis", default=None)
     agent_parser.add_argument("--prompt", default=None)
     agent_parser.add_argument("--manifest", default=None, help="准备阶段的 context manifest 路径")
@@ -754,7 +1018,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="预留可视化输出接口；当前未配置渲染后端",
     )
     agent_parser.add_argument("--channel", default="weixin", choices=("weixin", "feishu", "telegram"))
-    agent_parser.add_argument("--command", help="读取 stdin 中 prompt 并向 stdout 输出 JSON 的 Agent 命令")
+    agent_parser.add_argument("--command", "--skill-command", dest="command",
+                              help="读取 stdin 中任务并向 stdout 输出 JSON 的通用执行器命令；不绑定模型")
     agent_parser.add_argument("--mock", action="store_true")
     agent_parser.add_argument("--timeout", type=int, default=600)
     agent_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
@@ -764,7 +1029,30 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
     agent_parser.set_defaults(func=command_agent)
 
-    run_parser = subparsers.add_parser("run", help="快照 + 分析 Agent 研究 + 程序聚合 + 推荐上下文准备；未配置 Agent 时停在研究准备")
+    skill_parser = subparsers.add_parser("skill", help="Step 3: 执行通用 Recommendation Skill 并校验结果")
+    skill_parser.add_argument("--analysis", default=None)
+    skill_parser.add_argument("--prompt", default=None)
+    skill_parser.add_argument("--manifest", default=None, help="准备阶段的 context manifest 路径")
+    skill_parser.add_argument("--output", default=None)
+    skill_parser.add_argument("--channel-output", default=None)
+    skill_parser.add_argument(
+        "--image-output",
+        default=None,
+        help="预留可视化输出接口；当前未配置渲染后端",
+    )
+    skill_parser.add_argument("--channel", default="weixin", choices=("weixin", "feishu", "telegram"))
+    skill_parser.add_argument("--command", "--skill-command", dest="command",
+                              help="读取 stdin 中任务并向 stdout 输出 JSON 的通用执行器命令；不绑定模型")
+    skill_parser.add_argument("--mock", action="store_true")
+    skill_parser.add_argument("--timeout", type=int, default=600)
+    skill_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
+    skill_parser.add_argument("--context-budget", type=int, default=None, help="Skill 提示词字符预算")
+    skill_parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；timeout 为研究总预算")
+    skill_parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
+    skill_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
+    skill_parser.set_defaults(func=command_skill)
+
+    run_parser = subparsers.add_parser("run", help="快照 + 分析 Skill 研究 + 程序聚合 + 推荐上下文准备；未配置 Skill 时停在研究准备")
     _add_source_options(run_parser)
     run_parser.add_argument("--preferred", default=None)
     run_parser.add_argument("--relations", default=None)

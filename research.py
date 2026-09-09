@@ -33,7 +33,10 @@ def supplemental_prompt(prepared: str, request: dict[str, Any], budget: int | No
     payload = json.loads(prepared[start + len(marker):].rsplit("\n```", 1)[0])
     payload["research_request"] = request
     complete = prepared[:start] + marker + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n```\n"
-    return apply_context_budget(complete, budget)[0]
+    # A supplemental request extends an already prepared context. Do not
+    # rewrite its fixed analysis payload merely to make room for the request;
+    # if the hard budget is full, fail closed and stop the research loop.
+    return apply_context_budget(complete, budget, allow_payload_compaction=False)[0]
 
 
 def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,

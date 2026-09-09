@@ -68,6 +68,21 @@ class PromptBudgetTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             apply_context_budget(build_agent_prompt(minimal_analysis_packet()), 100)
 
+    def test_budget_compacts_duplicate_research_detail_before_rejecting(self) -> None:
+        prompt = build_agent_prompt(minimal_analysis_packet())
+        marker = "\n```json\n"
+        json_index = prompt.rfind(marker)
+        payload = json.loads(prompt[json_index + len(marker):].rsplit("\n```", 1)[0])
+        payload["analysis_research"] = {"duplicated_evidence": "x" * 20000}
+        expanded = prompt[:json_index] + marker + json.dumps(payload, ensure_ascii=False) + "\n```\n"
+
+        result, report = apply_context_budget(expanded, len(prompt) + 100)
+
+        self.assertLessEqual(len(result), len(prompt) + 100)
+        self.assertTrue(report["payload_compacted"])
+        compact_payload = json.loads(result[result.rfind(marker) + len(marker):].rsplit("\n```", 1)[0])
+        self.assertNotIn("analysis_research", compact_payload)
+
     def test_unbounded_budget_is_a_noop(self) -> None:
         packet = minimal_analysis_packet()
         prompt = build_agent_prompt(packet)

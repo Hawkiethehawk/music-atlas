@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Execute or test the isolated Step 3 Agent boundary.
+"""Execute or test the isolated Step 3 Skill boundary.
 
-The runner accepts prompt text on stdin for an external agent command. It does
-not know how to access a platform account and never sends a channel message.
+The runner accepts task text on stdin for a provider-neutral external Skill
+executor. It does not know how to access a platform account and never sends a
+channel message. The old Agent names remain as compatibility aliases.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ def mock_bundle(packet: dict[str, Any]) -> dict[str, Any]:
         "analysis_id": packet["analysis_id"],
         "generated_at": utc_now(),
         "recommendations": [],
-        "message": "本地 mock Agent 未执行公开资料研究；本次只验证 Step 3 契约，不生成真实推荐。",
+        "message": "本地 mock Skill 未执行公开资料研究；本次只验证 Step 3 契约，不生成真实推荐。",
     }
 
 
@@ -131,7 +132,7 @@ def run_agent(
     else:
         try:
             bundle, research_report = research_candidates(
-                packet, prompt, command or "", execute=run_external_agent, timeout=timeout,
+                packet, prompt, command or "", execute=run_external_skill, timeout=timeout,
                 context_budget=context_budget, max_rounds=max_research_rounds,
                 candidate_target=candidate_target, max_candidates=max_candidates,
             )
@@ -182,6 +183,38 @@ def run_agent(
         else None,
         "send_performed": False,
     }
+
+
+def parse_skill_json(output: str) -> dict[str, Any]:
+    """Parse one JSON object returned by any Skill executor.
+
+    This is intentionally model- and provider-neutral. The legacy parser name
+    remains available because existing integrations import it directly.
+    """
+
+    return parse_agent_json(output)
+
+
+def run_external_skill(command: str, prompt: str, *, timeout: int) -> dict[str, Any]:
+    """Run a generic Skill executor without selecting an AI model.
+
+    The executable, model, tools, retrieval provider and credentials all stay
+    outside Music Atlas. The only runtime contract is stdin prompt -> stdout
+    JSON object.
+    """
+
+    return run_external_agent(command, prompt, timeout=timeout)
+
+
+def run_skill(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Run the Step 3 Skill boundary while preserving the old API."""
+
+    summary = dict(run_agent(*args, **kwargs))
+    summary["status"] = "skill_bundle_validated"
+    summary["skill_mode"] = "mock" if kwargs.get("mock") else "external_command"
+    summary["skill_name"] = "music-atlas-recommendation"
+    summary["executor_kind"] = "mock" if kwargs.get("mock") else "generic_external_executor"
+    return summary
 
 
 def build_parser() -> argparse.ArgumentParser:

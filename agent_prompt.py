@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Render the isolated Step 3 Agent context."""
+"""Render the isolated Step 3 Skill context.
+
+The legacy module and function names are retained for compatibility; the
+prompt itself is model- and provider-neutral.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +29,7 @@ PROMPT_SLOT_FILES = (
 )
 
 
-AGENT_INSTRUCTIONS = """你是 Music Atlas 候选研究 Agent。唯一偏好输入是下方 MusicianAnalysisPacket。
+RECOMMENDATION_SKILL_INSTRUCTIONS = """你是 Music Atlas 候选研究 Skill。唯一偏好输入是下方 MusicianAnalysisPacket。
 
 硬性边界：
 1. 不读取平台登录态、原始歌单、历史推荐、上一轮结果或个性化推荐页面。
@@ -34,7 +39,7 @@ AGENT_INSTRUCTIONS = """你是 Music Atlas 候选研究 Agent。唯一偏好输�
 5. 风格必须使用 known_style_refs；允许使用不在 active_style_refs 中的新风格，由程序计算其与当前画像的距离。
 6. 每位艺人独立判断，不能使用宽泛“摇滚”兜底，也不能为 Bad Omens 设置特殊逻辑。
 7. 只研究结构化候选，不为全部候选撰写最终推荐说明；程序选出 10 首后根据兴趣组、关系与实际评分生成说明。
-8. candidate_type 由程序复核：艺人延伸必须匹配当前艺人，音乐人关系必须匹配当前分析包中的项目艺人；其余候选按与最近兴趣组的风格/听感距离分类。researched 关系来自分析 Agent，仍待独立核验；不可用随意引用冒充关系。
+8. candidate_type 由程序复核：艺人延伸必须匹配当前艺人，音乐人关系必须匹配当前分析包中的项目艺人；其余候选按与最近兴趣组的风格/听感距离分类。researched 关系来自 Step 2 研究 Skill，仍待独立核验；不可用随意引用冒充关系。
 9. 按 interest_profiles 分组分别研究，避免只选整体平均听感。若有 research_request，只补其指定的缺额/约束，遵守剩余数量预算和去重清单；这不是历史偏好输入。
 
 首轮候选池必须达到 recommendation_policy.candidate_pool_min，并覆盖 recall_mix 的四种 candidate_type。补充轮以 research_request 为准，不必重复首轮的最低数量或全部类型。候选不得命中 favorite_track_keys 或相同 platform_track_id。style_mix 权重合计为 1；style_axes 必须填写八个 0 到 100 的听感轴。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
@@ -74,8 +79,11 @@ AGENT_INSTRUCTIONS = """你是 Music Atlas 候选研究 Agent。唯一偏好输�
 
 insufficient_evidence 时 bundle_stage 使用 final，candidate_pool 和 recommendations 均为空，并提供 message。
 
-下面是唯一允许使用的分析包：
+模型、供应商、SDK 和工具由外部执行环境决定；不要在结果中声明或要求特定模型。下面是唯一允许使用的分析包：
 """
+
+# Compatibility name used by existing prompt manifests and tests.
+AGENT_INSTRUCTIONS = RECOMMENDATION_SKILL_INSTRUCTIONS
 
 
 def load_prompt_slots(prompt_dir: Path | None = None) -> list[dict[str, str]]:
@@ -131,16 +139,104 @@ def prompt_size_telemetry(prompt: str) -> dict[str, int]:
     }
 
 
+_COMPACT_PAYLOAD_FIELDS = {
+    "sources",
+    "evidence_items",
+    "field_provenance",
+    "rationale",
+    "boundaries",
+    "verification_scope",
+    "research_origin",
+}
+
+
+def _strip_research_detail(value: Any) -> Any:
+    """Keep preference conclusions while removing duplicated Step 2 evidence."""
+
+    if isinstance(value, list):
+        return [_strip_research_detail(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _strip_research_detail(item)
+            for key, item in value.items()
+            if key not in _COMPACT_PAYLOAD_FIELDS
+        }
+    return value
+
+
+def _compact_agent_payload(payload: dict[str, Any], *, aggressive: bool = False) -> dict[str, Any]:
+    """Return a bounded Step 3 projection without altering its decision inputs."""
+
+    compact = _strip_research_detail(deepcopy(payload))
+    compact.pop("analysis_research", None)
+    style_analysis = compact.get("style_analysis")
+    if isinstance(style_analysis, dict):
+        # interest_profiles already expose the grouped preference model used by
+        # candidate research; the raw assignment expansion is redundant here.
+        style_analysis.pop("interest_model", None)
+    if not aggressive:
+        return compact
+
+    compact.pop("track_style_exceptions", None)
+    if isinstance(style_analysis, dict):
+        style_analysis.pop("artist_profiles", None)
+        style_analysis.pop("style_definitions", None)
+        style_analysis.pop("overlap_style_distribution", None)
+    entities = compact.get("entities")
+    if isinstance(entities, list):
+        compact_entities = []
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            compact_entity = {
+                key: entity[key]
+                for key in (
+                    "entity_ref",
+                    "name",
+                    "entity_type",
+                    "primary_track_count",
+                    "credited_track_count",
+                    "is_preferred",
+                    "relation_status",
+                )
+                if key in entity
+            }
+            for field, keys in (
+                ("lead_vocalists", ("name", "role", "status")),
+                ("related_projects", ("name", "person", "relation")),
+            ):
+                facts = entity.get(field)
+                if isinstance(facts, list):
+                    compact_entity[field] = [
+                        {key: fact[key] for key in keys if isinstance(fact, dict) and key in fact}
+                        for fact in facts
+                    ]
+            compact_entities.append(compact_entity)
+        compact["entities"] = sorted(
+            compact_entities,
+            key=lambda entity: (
+                not bool(entity.get("is_preferred")),
+                -int(entity.get("primary_track_count", 0)),
+                -int(entity.get("credited_track_count", 0)),
+                str(entity.get("name", "")).casefold(),
+            ),
+        )[:24]
+    return compact
+
+
 def apply_context_budget(
     prompt: str,
     context_budget: int | None,
+    *,
+    allow_payload_compaction: bool = True,
 ) -> tuple[str, dict[str, Any]]:
-    """Deterministically truncate prompt slots to fit a character budget.
+    """Deterministically fit a prompt into a character budget.
 
-    The instruction block and the JSON payload are never truncated because
-    doing so would break the Agent contract. Only trailing editable prompt
-    slots are dropped, in slot order, and the drop is recorded. Returns the
-    resulting prompt plus a budget report.
+    The instruction block is never truncated. The JSON payload may be
+    deterministically compacted for initial context preparation, while callers
+    extending an already prepared prompt can disable that behavior. Optional
+    editable prompt slots are dropped in slot order and the drop is recorded.
+    Returns the resulting prompt plus a budget report.
     """
 
     if context_budget is not None and (
@@ -162,8 +258,28 @@ def apply_context_budget(
     body, payload = prompt[:json_index], prompt[json_index:]
     slot_section = body[len(AGENT_INSTRUCTIONS):]
     minimum = len(AGENT_INSTRUCTIONS) + len(payload)
-    if minimum > context_budget:
+    payload_compacted = False
+    original_payload_characters = len(payload)
+    if minimum > context_budget and not allow_payload_compaction:
         raise ContractError(f"提示词固定指令和分析载荷至少需要 {minimum} 字符，超过预算 {context_budget}；未调用 Agent")
+    if minimum > context_budget:
+        try:
+            payload_value = json.loads(payload[len(marker):].rsplit("\n```", 1)[0])
+        except json.JSONDecodeError as exc:
+            raise ContractError("提示词固定载荷不是合法 JSON；未调用 Agent") from exc
+        if not isinstance(payload_value, dict):
+            raise ContractError("提示词固定载荷必须是 JSON 对象；未调用 Agent")
+        for aggressive in (False, True):
+            compact_value = _compact_agent_payload(payload_value, aggressive=aggressive)
+            compact_payload = marker + json.dumps(compact_value, ensure_ascii=False, separators=(",", ":")) + "\n```\n"
+            compact_minimum = len(AGENT_INSTRUCTIONS) + len(compact_payload)
+            if compact_minimum <= context_budget:
+                payload = compact_payload
+                minimum = compact_minimum
+                payload_compacted = True
+                break
+        if minimum > context_budget:
+            raise ContractError(f"提示词固定指令和紧凑分析载荷至少需要 {minimum} 字符，超过预算 {context_budget}；未调用 Agent")
     available = context_budget - minimum
     parts = slot_section.split("\n## Prompt Slot: ")
     preamble = parts[0] if len(parts[0]) <= available else ""
@@ -178,7 +294,7 @@ def apply_context_budget(
         else:
             truncated_slots.append(slot.splitlines()[0])
     rebuilt = AGENT_INSTRUCTIONS + preamble + "".join(slots_kept) + payload
-    return rebuilt, {
+    report = {
         **prompt_size_telemetry(rebuilt),
         "context_budget": context_budget,
         "budget_exceeded": len(rebuilt) > context_budget,
@@ -186,6 +302,13 @@ def apply_context_budget(
         "truncated_slots": truncated_slots,
         "original_characters": telemetry["prompt_characters"],
     }
+    if payload_compacted:
+        report.update(
+            payload_compacted=True,
+            original_payload_characters=original_payload_characters,
+            compact_payload_characters=len(payload),
+        )
+    return rebuilt, report
 
 
 def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
@@ -427,3 +550,11 @@ def load_or_prepare_agent_context(
     if not isinstance(report, dict) or report.get("context_budget") != config["context_budget"]:
         raise ContractError("准备的预算报告与运行配置不一致；请重新执行 prepare-agent")
     return prompt, manifest
+
+
+# Provider-neutral public names. Keep the Agent aliases above so existing
+# runtime artifacts and integrations can be migrated without a hard cutover.
+build_skill_input = build_agent_input
+build_skill_prompt = build_agent_prompt
+prepare_skill_context = prepare_agent_context
+load_or_prepare_skill_context = load_or_prepare_agent_context

@@ -18,13 +18,19 @@
 
 用户的 115 首 Apple Music 快照已准备为 6 批分析任务，尚未执行真实 Agent；不存在合成画像或假推荐。无需先维护私有艺人目录，但仍需有效公开研究结果才能生成分析并进入推荐。
 
+## 分析与推荐 Skill 化（2026-09-07，本地未提交）
+
+已新增项目级 `skills/music-atlas-analysis/` 与 `skills/music-atlas-recommendation/`，将第二步逐批音乐事实研究、第三步候选事实研究明确成低复杂度、可校验的 Skill 契约。`skill_runner.py` 只规定任务输入与 JSON 输出，不选择或依赖任何模型、供应商、SDK、检索服务或账号；执行器由外部环境决定。`workflow.py` 默认使用 `--analysis-mode skill`，新增 `prepare-skill` 与 `skill` 入口，旧 `agent` 命令、模块名和产物文件名保留为兼容别名。
+
+已通过 Skill 契约快速校验、Python 语法检查、`git diff --check` 与 179 项 Python 回归测试；本地变更尚未提交或推送。
+
 仍需实际完成的工作：
 
-- 为分析 Agent 配置真实公开检索执行器，完成已准备的 115 首研究任务；未知曲目保留缺口，覆盖门槛不等于画像正确性验收。维护私有目录不再是默认前置条件。
+- 为分析 Skill 配置真实公开检索执行器，完成已准备的 115 首研究任务；未知曲目保留缺口，覆盖门槛不等于画像正确性验收。维护私有目录不再是默认前置条件。
 - 接入可信的在线事实核验通道。目录端点匹配、来源域名与格式检查不能证明候选歌曲、版本或关系属实。
-- 使用真实试听标签，在同输入、同评分日期和相同研究预算下做对照。夹具只能证明功能与边界，尚未测得喜欢率提升或真实 Agent 时间/费用下降。
-- 实时分析/候选 Agent 试运行仍未执行。2026-09-06 用户歌单已通过 TuneMyMusic 实际导出 115 首；这不代表所有歌单和当前页面状态的全面兼容性验收。部署需单独授权。
-- 当前字符上限约束研究 prompt 和已捕获的 JSON；外部进程 stdout 仍先完整捕获，内存硬限、真实计费 token/费用统计与外部 Agent 沙箱属于后续执行器加固，不应声称已经实现。
+- 使用真实试听标签，在同输入、同评分日期和相同研究预算下做对照。夹具只能证明功能与边界，尚未测得喜欢率提升或真实 Skill 执行时间/费用下降。
+- 实时分析/候选 Skill 试运行仍未执行。2026-09-06 用户歌单已通过 TuneMyMusic 实际导出 115 首；这不代表所有歌单和当前页面状态的全面兼容性验收。部署需单独授权。
+- 当前字符上限约束研究 prompt 和已捕获的 JSON；外部进程 stdout 仍先完整捕获，内存硬限、真实计费 token/费用统计与外部 Skill 执行器沙箱属于后续执行器加固，不应声称已经实现。
 
 ## P1: Measurement And Feedback
 
@@ -35,7 +41,7 @@
 
 ## P1: Evidence Quality
 
-- Replace URL/domain syntax checks with trusted source-specific verification adapters. **尚未完成在线事实核验**；已实现来源分类与稳定标识符格式检查，并将其与来源等级、事实核验状态分开报告。Agent 自报 `verified` 不被采信。
+- Replace URL/domain syntax checks with trusted source-specific verification adapters. **尚未完成在线事实核验**；已实现来源分类与稳定标识符格式检查，并将其与来源等级、事实核验状态分开报告。Skill 自报 `verified` 不被采信。
 - ~~Add source provenance fields such as retrieval time, source identifier, and verification result.~~ 已实现：`contracts` 支持可选 `retrieved_at` / `source_identifier` / `verification_result`；`evidence.verify_evidence_item` 回填 source_class 与 verification_result。
 - ~~Add tests for stale, contradictory, inaccessible, and duplicated evidence.~~ 已实现：负面判定、过期、重复、无时区及非法日期、自报 verified 不采信、审计失败不写成功产物；见 `tests/test_evidence.py` 与 `tests/test_hardening.py`。
 - ~~Define acceptance rules for evidence grades A/B/C per claim type and source class.~~ 已实现：`evidence.GRADE_RULES`（claim_type × source_class → 等级）与 `check_evidence_acceptance`（声明不得超过来源支持的最高等级）；`workflow.py validate --evidence-audit` 输出逐首审计。
@@ -43,10 +49,10 @@
 ## P1: Operational Robustness
 
 - ~~Add an explicit warning/report artifact when the style profile catalog falls back to the public example catalog or has unclassified artists.~~ 已实现：`musician_analyzer.write_coverage_report`；`analyze`/`run` 在 degraded 时写出 `coverage_report.json`。
-- ~~Add prompt-size telemetry and a configurable context budget with deterministic truncation/reporting.~~ 已实现：`agent_prompt.prompt_size_telemetry` / `apply_context_budget`；`run`/`prepare-agent`/`agent` 支持正整数字符硬预算，固定指令与载荷仍超预算时拒绝调用 Agent。准备 manifest 保存配置与摘要，执行阶段原样复用；自定义清单通过 `--manifest` 配对。
+- ~~Add prompt-size telemetry and a configurable context budget with deterministic truncation/reporting.~~ 已实现：`agent_prompt.prompt_size_telemetry` / `apply_context_budget`；`run`/`prepare-skill`/`skill` 支持正整数字符硬预算，固定指令与载荷仍超预算时拒绝调用 Skill。准备 manifest 保存配置与摘要，执行阶段原样复用；自定义清单通过 `--manifest` 配对。旧 `prepare-agent`/`agent` 入口继续兼容。
 - ~~Migrate or archive historical Schema 1 runtime artifacts; current runtime artifacts must be regenerated before a live Schema 2 run.~~ 已实现：`workflow.py archive-schema1` 把含 1.0 JSON 的运行时目录迁至 `runtime/archive/schema1-*`（不删除）；README 已注明实时运行前需重新 `run`。
-- Run a live-agent dry run with externally verifiable evidence before treating the workflow as production-ready. The completed end-to-end verification so far uses the local fixture agent only. 未纳入：属于范围边界内的实时代理执行，README 已列为生产就绪前置条件；本地夹具链路验证完成。
+- Run a live Skill dry run with externally verifiable evidence before treating the workflow as production-ready. The completed end-to-end verification so far uses the local fixture executor only. 未纳入：属于范围边界内的实时 Skill 执行，README 已列为生产就绪前置条件；本地夹具链路验证完成。
 
 ## Scope Boundary
 
-The current change set implements Schema 2 staging, Agent-based analysis research, deterministic aggregation and seven-factor scoring, hard recall quotas and diversity caps, energy-arc sequencing, evidence/explanation contracts, profile coverage metadata, bounded prompts, resumable research, and regression coverage. No feedback-driven learning, trusted online verification adapter, live-model execution, commit, push, or deployment is included.
+The current change set implements Schema 2 staging, Skill-based analysis research, deterministic aggregation and seven-factor scoring, hard recall quotas and diversity caps, energy-arc sequencing, evidence/explanation contracts, profile coverage metadata, bounded prompts, resumable research, and regression coverage. No feedback-driven learning, trusted online verification adapter, live-executor sandbox, commit, push, or deployment is included.

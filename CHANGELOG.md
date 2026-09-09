@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-09（迁移 GitHub，维护标签 patch-20260909-160756）
+
+- 将 Atlas 独立仓库当前工作流变更迁移到 GitHub `Hawkiethehawk/music-atlas`；GitHub 作为 `origin`，原 Gitee 远端保留为 `gitee-archive`。
+- 完成通用分析/推荐 Skill 链路、研究上下文与确定性排序边界，补充微信 OpenClaw/Pi wechatbot 交付入口和微信分段文本渲染。
+- 更新工作流文档、契约和测试；移除旧的 Hermes 入口脚本，保留运行产物、个人输入和凭据不进入仓库。
+
+实际验证：
+
+- `python -m unittest discover -s tests -v`：191 项通过。
+- `python -m compileall -q .`：通过。
+- `git diff --check`：通过。
+- 本地夹具端到端链路：`run` 准备分析任务，`analyze` 完成 3 首测试快照的 Skill 研究汇总，`skill` 生成 10 首研究草稿并完成确定性排序；测试数据不代表真实音乐事实。
+
 ## 2026-09-07（同步 Gitee 最新提交，维护标签 patch-20260907-163229）
 
 - 合并 Gitee origin/master 提交 9701810，纳入 research-agent 工作流重构；按确认保留本地 AGENTS.md 版本。
