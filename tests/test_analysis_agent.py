@@ -6,6 +6,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -329,6 +331,51 @@ class AnalysisAgentTests(unittest.TestCase):
         with patch("analysis_agent.time.perf_counter", side_effect=lambda: clock[0]):
             self.execute(batch_size=1, timeout=6, execute=measured)
         self.assertEqual(limits, [6, 4, 2])
+
+    def test_parallel_analysis_uses_bounded_workers_and_keeps_manifest_order(self):
+        active = 0
+        maximum = 0
+        lock = threading.Lock()
+
+        def parallel_execute(command, prompt, **kwargs):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                time.sleep(0.03)
+                return fixture_execute(command, prompt, **kwargs)
+            finally:
+                with lock:
+                    active -= 1
+
+        bundle_path = self.execute(batch_size=1, parallelism=5, execute=parallel_execute)
+        report = read_json(self.directory / "research_report.json")
+        bundle = read_json(bundle_path)
+        self.assertEqual(report["parallelism"], 5)
+        self.assertEqual(report["completed_batch_count"], 3)
+        self.assertEqual(report["batches"], sorted(report["batches"], key=lambda item: item["worker_index"]))
+        self.assertEqual(report["batches"][0]["worker_count"], 3)
+        self.assertGreaterEqual(maximum, 2)
+        self.assertLessEqual(maximum, 5)
+        self.assertEqual(sorted(item["position"] for result in bundle["batches"] for item in result["track_profiles"]), [1, 2, 3])
+
+    def test_parallel_analysis_reports_batch_progress_without_changing_result_order(self):
+        progress = []
+        bundle_path = self.execute(batch_size=1, parallelism=2, progress=progress.append)
+        starts = [event for event in progress if event["event"] == "task_started"]
+        completed = [event for event in progress if event["event"] == "task_completed"]
+        self.assertEqual(progress[0]["event"], "stage_detail")
+        self.assertEqual(len(starts), 3)
+        self.assertEqual(len(completed), 3)
+        self.assertEqual({event["parallel_slots"] for event in starts}, {2})
+        self.assertEqual(sorted(event["task_index"] for event in completed), [1, 2, 3])
+        self.assertEqual(completed[-1]["track_total"], 3)
+        manifest = read_json(self.directory / "manifest.json")
+        self.assertEqual(
+            [result["request_id"] for result in read_json(bundle_path)["batches"]],
+            [record["request_id"] for record in manifest["batches"]],
+        )
 
     def test_output_size_limit_and_failed_reimport_preserve_previous_bundle(self):
         def huge(command, prompt, **kwargs):

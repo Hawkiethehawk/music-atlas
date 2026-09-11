@@ -90,10 +90,13 @@ python workflow.py prepare-skill --analysis runtime/current/musician_analysis.js
 | `--analysis-batch-size` | 新任务 20 首，范围 1 到 50；续跑继承 manifest |
 | `--analysis-context-budget` | 新任务每批 100000 字符；续跑继承 manifest，超预算不截断曲目 |
 | `--analysis-timeout` | 每次执行所有分析批次共用 600 秒，不按批重置 |
+| `--analysis-parallelism` | 分析研究并行任务数；网页默认 5，范围 1 到 16 |
 
 每批结果先校验再保存，已完成批次续跑时重新校验并复用，不重复调用命令。提示词、配置、快照或词表不匹配时拒绝复用；研究包绑定完整快照摘要，不能因 snapshot_id 相同而复用另一时间或内容的快照。失败写入 `research_report.json`，保留已完成批次及原有产物，不生成新的分析或推荐。需要重新研究时使用新的研究目录；不要直接修改 prompt/manifest。
 
 `run` 是新快照入口。已有研究任务后用 `analyze --snapshot` 继续，重复 `run` 不会覆盖已绑定的快照。`analyze` 的 Markdown、manifest 和覆盖报告默认与 JSON 输出放在同一目录，输出不能覆盖输入或互相覆盖。
+
+分析与推荐的并行边界：Step 2 内部默认 5 个任务并行；只有 Step 2 的全部批次、校验、聚合和覆盖率检查成功后才启动 Step 3。Step 3 内部默认 4 个候选研究任务并行（可选 3），所有候选池返回后才由程序统一去重、评分和排序；并行任务不会改变两个步骤之间的先后关系。
 
 Skill 模式不读取本地画像、关系目录或 `preferred_artists.txt`，显式传入这些参数也会拒绝。`agent` 是旧兼容别名。离线兼容可使用 `--analysis-mode catalog --style-profiles styles/artist_style_profiles.example.json`；直接调用不带 `research_bundle_path` 的 Python 分析 API 仍保持原目录模式。目录模式与 Skill 模式不会默默混合。
 
@@ -165,7 +168,7 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
     --playlist-id 3778678 --playlist-name '热歌榜' --output runtime/snapshot.json
   ```
 
-  `--playlist-id` 接受数字 ID 或 `music.163.com` 分享链接（含 `#/playlist/...` 形式）；仅能读取公开歌单，隐私歌单（如“我喜欢的音乐”）无法匿名获取。数量来自接口 `trackIds`，与实际解析数不一致时 `reader_status` 为 `incomplete`。
+  `--playlist-id` 接受数字 ID 或 `music.163.com` 分享链接（含 `#/playlist/...` 形式）；网页入口另外接受网易云 `163cn.tv` 短链并在服务端解析为歌单 ID。当前适配器使用 v6 歌单详情接口读取完整 `trackIds`，对超过接口首批 1000 首的歌单再按每批 200 首调用歌曲详情接口，按原顺序重建快照；任一曲目无法解析时保持 `reader_status: "incomplete"`，阻止后续步骤。仅能读取公开可访问歌单，隐私或权限受限来源不会伪造结果。
 - QQ 音乐公开歌单（匿名，不使用登录态）：
 
   ```bash
@@ -188,12 +191,26 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
 - `preference_model.py` + `candidate_routes.py`：多兴趣画像与当前目录绑定的候选路线。
 - `research.py` + `explanations.py`：有界分轮研究与程序拥有的入选说明。
 - `benchmark.py`：同输入的人工试听清单与只读方案对照。
+- `web_view_model.py` + `workflow.py web-export`：将已校验的运行产物转换为网页专用、只读的脱敏数据。
+- `config/web.json`：网页服务默认配置；端口、稳定发布文件、运行目录和并行度均由项目内文件决定。
+- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。
 
 Apple 自动导出入口为 `python workflow.py export-apple-playlist --url <分享链接> --expected-count <独立确认的歌曲数>`。下载先进入临时目录，经 UTF-8、标准 CSV 解析与数量检查后才替换目标文件；失败保留原文件。不提供 `--expected-count` 时输出 `completeness_status: "unconfirmed"`，不能仅凭 CSV 行数宣称完整。安装与浏览器验收见 [tools/README.md](tools/README.md)。
 
 ## 输出文件
 
-`workflow.py run` 默认生成快照、分析研究 prompt/manifest；配置分析 Skill 并完成研究后才生成分析、Markdown 和推荐上下文。研究工件含每批 result、完整 `research_bundle.json` 和 `research_report.json`；后者记录模式、批次状态、复用、字符数、耗时和研究包摘要。覆盖不足会在准备推荐 Skill 前停止，保留分析及 `coverage_report.json`。随后执行 `workflow.py skill` 才生成已排序的 `recommendation_bundle.json`、`channel_text.txt` 和 `recommendation_bundle.research.json`。可视化接口当前没有后端。这些目录默认被 Git 忽略。
+`workflow.py run` 默认生成快照、分析研究 prompt/manifest；配置分析 Skill 并完成研究后才生成分析、Markdown 和推荐上下文。研究工件含每批 result、完整 `research_bundle.json` 和 `research_report.json`；后者记录模式、批次状态、复用、字符数、耗时和研究包摘要。覆盖不足会在准备推荐 Skill 前停止，保留分析及 `coverage_report.json`。随后执行 `workflow.py skill` 才生成已排序的 `recommendation_bundle.json`、`channel_text.txt` 和 `recommendation_bundle.research.json`。网页展示前执行 `workflow.py web-export`，生成运行目录内的 `web_payload.json`，再由 `web/server.js` 按 `config/web.json` 中的稳定发布路径只读提供。运行目录和网页数据默认被 Git 忽略，默认配置纳入 Git。
+
+网页导出示例：
+
+```bash
+python workflow.py web-export \
+  --runtime-dir runtime/apple-link-20260908 \
+  --output runtime/apple-link-20260908/web_payload.json
+```
+
+默认允许展示当前工作流的研究草稿；若需要只导出正式可发布数据，增加
+`--require-publishable`，当发布状态或证据审计未通过时命令会拒绝写出。
 
 如果已有本次运行的 Step 2/Step 3 文件，也可以只校验并生成渠道文本：
 
@@ -389,12 +406,18 @@ python -m unittest discover -s tests -v
 python -m compileall -q .
 node --check tools/export_apple_playlist.mjs
 node --check tools/apple_export_helpers.mjs
+node --check web/server.js
 # 已安装 tools 依赖和 Chromium 后：
 npm --prefix tools test
 npm --prefix tools run test:browser
+# 已安装 web 依赖后：
+npm --prefix web test
+npm --prefix web run test:browser
 ```
 
-当前 191 项 Python 测试不依赖 `input/` 或私有风格画像。另有 11 项 Node 单元测试与 1 项真实 Chromium 本地下载测试；浏览器测试覆盖生产下载/校验辅助函数，不访问 TuneMyMusic 线上页面。
+当前 203 项 Python 测试不依赖 `input/` 或私有风格画像。另有 11 项 Node 单元测试与 1 项真实 Chromium 本地下载测试；浏览器测试覆盖生产下载/校验辅助函数，不访问 TuneMyMusic 线上页面。
+
+`web/tests/` 覆盖网页层回归：`server.test.mjs` 与 `workflow-job.test.mjs` 用隔离端口和临时配置启动独立 `server.js` 实例（`ATLAS_WEB_CONFIG`），验证静态服务、错误路径、真实任务生命周期、SSE 事件顺序与并发互斥；`workflow-ui.browser.mjs` 用 Playwright 注入可编程 `EventSource`，覆盖乱序、重复、丢帧事件、SSE 中断回退轮询与轮询去重；`atlas-fixture.browser.mjs` 用 `tests/fixtures/playlist_sample.json` 与夹具执行器真实运行 `web_workflow.py`，在隔离 runtime 发布后验证页面渲染 10 首推荐。测试不访问外部歌单内容，不依赖真实检索执行器。
 
 `tests/test_analysis_agent.py` 新增 31 项测试，覆盖无目录研究、精确逐批覆盖/身份、快照和词表绑定、未知值、证据与程序字段边界、预算与总超时、失败报告/断点续跑、结果导入、输入保护、两阶段 Skill 到 10 首草稿及严格审计。真实 115 首快照另已准备 6 批分析任务；尚未执行真实分析 Skill，不将任务准备或夹具耗时当作推荐质量验收。
 

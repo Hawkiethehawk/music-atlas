@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from agent_prompt import (
     load_or_prepare_agent_context,
@@ -108,13 +108,17 @@ def run_agent(
     max_research_rounds: int = 2,
     candidate_target: int | None = None,
     max_candidates: int = 80,
+    recommendation_parallelism: int = 1,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     packet_value = read_json(analysis_path)
     packet = validate_analysis_packet(packet_value)
     candidate_target = packet["recommendation_policy"]["candidate_pool_min"] if candidate_target is None else candidate_target
-    if any(isinstance(value, bool) or not isinstance(value, int) for value in (max_research_rounds, candidate_target, max_candidates)):
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in (max_research_rounds, candidate_target, max_candidates, recommendation_parallelism)):
         raise ContractError("研究轮数和候选预算必须是整数")
+    if not 1 <= recommendation_parallelism <= 8:
+        raise ContractError("recommendation_parallelism 必须是 1 到 8 的整数")
     if not 1 <= max_research_rounds <= 3 or not packet["recommendation_policy"]["candidate_pool_min"] <= candidate_target <= max_candidates <= 200:
         raise ContractError("研究轮数须为 1 到 3；候选目标不得低于策略最小值，候选上限不得超过 200")
     prompt, context_manifest = load_or_prepare_agent_context(
@@ -135,6 +139,8 @@ def run_agent(
                 packet, prompt, command or "", execute=run_external_skill, timeout=timeout,
                 context_budget=context_budget, max_rounds=max_research_rounds,
                 candidate_target=candidate_target, max_candidates=max_candidates,
+                parallelism=recommendation_parallelism,
+                progress=progress,
             )
         except ResearchFailure as exc:
             exc.report.update(preparation_ms=prepared_ms, total_elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
@@ -167,6 +173,7 @@ def run_agent(
         "recommendation_count": len(bundle["recommendations"]),
         "ranking_applied": bool(bundle.get("ranking")),
         "research_rounds": len(research_report["rounds"]),
+        "recommendation_parallelism": recommendation_parallelism,
         "research_report_path": str(report_path),
         "prompt_characters": len(prompt),
         "estimated_tokens": prompt_size_telemetry(prompt)["estimated_tokens"],
@@ -238,6 +245,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；--timeout 为研究总预算")
     parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
     parser.add_argument("--max-candidates", type=int, default=80, help="本次研究的候选数量上限，最大 200")
+    parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
+                        help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
     return parser
 
 

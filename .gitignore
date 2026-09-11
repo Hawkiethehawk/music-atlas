@@ -7,6 +7,8 @@ __pycache__/
 *.pyc
 input/
 runtime/
+web/data/
 styles/artist_style_profiles.json
 auth_server.py
 tools/node_modules/
+web/node_modules/

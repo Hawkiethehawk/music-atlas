@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
 from contracts import ContractError, SCHEMA_VERSION, normalized_text, track_key, utc_now, write_json
@@ -328,7 +328,9 @@ class CsvPlaylistReader:
         }
 
 
-NETEASE_DETAIL_URL = "https://music.163.com/api/playlist/detail"
+NETEASE_DETAIL_URL = "https://music.163.com/api/v6/playlist/detail"
+NETEASE_SONG_DETAIL_URL = "https://music.163.com/api/v3/song/detail"
+NETEASE_SONG_DETAIL_BATCH_SIZE = 200
 NETEASE_REQUEST_HEADERS = {
     "Cookie": "os=pc; appver=2.9.7",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -367,10 +369,10 @@ def _playlist_id_from_arg(value: str) -> str:
 
 
 def _fetch_netease_playlist_detail(playlist_id: str) -> bytes:
-    """Fetch the anonymous public playlist detail endpoint."""
+    """Fetch the current anonymous public playlist detail endpoint."""
 
     request = Request(
-        f"{NETEASE_DETAIL_URL}?id={playlist_id}",
+        f"{NETEASE_DETAIL_URL}?id={playlist_id}&n=1000",
         headers=NETEASE_REQUEST_HEADERS,
     )
     try:
@@ -378,6 +380,92 @@ def _fetch_netease_playlist_detail(playlist_id: str) -> bytes:
             return response.read()
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise ContractError(f"网易云接口请求失败：{exc}") from exc
+
+
+def _fetch_netease_song_details(track_ids: list[str]) -> bytes:
+    """Fetch a bounded batch of song objects by numeric ids."""
+
+    if not track_ids:
+        raise ContractError("网易云歌曲详情请求不能为空")
+    payload = json.dumps(
+        [{"id": int(track_id)} for track_id in track_ids],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    request = Request(
+        f"{NETEASE_SONG_DETAIL_URL}?c={quote(payload, safe='')}",
+        headers=NETEASE_REQUEST_HEADERS,
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.read()
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        raise ContractError(f"网易云歌曲详情请求失败：{exc}") from exc
+
+
+def _netease_container(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the playlist container from both legacy and v6 responses."""
+
+    for key in ("playlist", "result"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            return value
+    raise ContractError("网易云接口缺少 playlist/result 对象")
+
+
+def _netease_track_ids(container: dict[str, Any]) -> list[str]:
+    raw_track_ids = container.get("trackIds") or []
+    if not isinstance(raw_track_ids, list):
+        raise ContractError("网易云接口的 trackIds 必须是数组")
+    track_ids: list[str] = []
+    for index, raw_item in enumerate(raw_track_ids, 1):
+        value = raw_item.get("id") if isinstance(raw_item, dict) else raw_item
+        track_id = normalized_text(value)
+        if not track_id.isdigit():
+            raise ContractError(f"网易云接口 trackIds[{index}] 缺少有效数字 ID")
+        track_ids.append(track_id)
+    return track_ids
+
+
+def _netease_artist_names(raw_item: dict[str, Any]) -> list[str]:
+    values = raw_item.get("artists")
+    if not isinstance(values, list) or not values:
+        values = raw_item.get("ar")
+    if not isinstance(values, list):
+        return []
+    return [
+        normalized_text(artist.get("name"))
+        for artist in values
+        if isinstance(artist, dict) and normalized_text(artist.get("name"))
+    ]
+
+
+def _normalize_netease_track(raw_item: Any, position: int) -> dict[str, Any] | None:
+    if not isinstance(raw_item, dict):
+        return None
+    title = normalized_text(raw_item.get("name"))
+    credited = _netease_artist_names(raw_item)
+    if not title or not credited:
+        return None
+    track_id = normalized_text(raw_item.get("id"))
+    album_value = raw_item.get("album")
+    if not isinstance(album_value, dict):
+        album_value = raw_item.get("al")
+    album = normalized_text(album_value.get("name")) if isinstance(album_value, dict) else ""
+    links: dict[str, str] = {}
+    if track_id:
+        links["netease"] = f"https://music.163.com/song?id={track_id}"
+    return {
+        "position": position,
+        "title": title,
+        "artist": credited[0],
+        "artists": credited,
+        "album": album,
+        "duration": "",
+        "platform_track_id": track_id,
+        "track_key": track_key(title, credited[0]),
+        "links": links,
+    }
 
 
 def _parse_netease_detail(payload: Any) -> tuple[list[dict[str, Any]], int, str]:
@@ -392,47 +480,34 @@ def _parse_netease_detail(payload: Any) -> tuple[list[dict[str, Any]], int, str]
     if not isinstance(payload, dict) or payload.get("code") != 200:
         code = payload.get("code") if isinstance(payload, dict) else "非对象"
         raise ContractError(f"网易云接口返回异常：code={code}")
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        raise ContractError("网易云接口缺少 result 对象")
-    raw_tracks = result.get("tracks") or []
-    raw_track_ids = result.get("trackIds") or []
-    if not isinstance(raw_tracks, list) or not isinstance(raw_track_ids, list):
-        raise ContractError("网易云接口的 tracks/trackIds 必须是数组")
-    playlist_name = normalized_text(result.get("name"))
+    container = _netease_container(payload)
+    raw_tracks = container.get("tracks") or []
+    if not isinstance(raw_tracks, list):
+        raise ContractError("网易云接口的 tracks 必须是数组")
+    track_ids = _netease_track_ids(container)
+    playlist_name = normalized_text(container.get("name"))
     normalized: list[dict[str, Any]] = []
     for raw_item in raw_tracks:
-        if not isinstance(raw_item, dict):
-            continue
-        title = normalized_text(raw_item.get("name"))
-        credited = [
-            normalized_text(artist.get("name"))
-            for artist in (raw_item.get("artists") or [])
-            if isinstance(artist, dict) and normalized_text(artist.get("name"))
-        ]
-        if not title or not credited:
-            continue
-        track_id = normalized_text(raw_item.get("id"))
-        album_value = raw_item.get("album")
-        album = normalized_text(album_value.get("name")) if isinstance(album_value, dict) else ""
-        links: dict[str, str] = {}
-        if track_id:
-            links["netease"] = f"https://music.163.com/song?id={track_id}"
-        normalized.append(
-            {
-                "position": len(normalized) + 1,
-                "title": title,
-                "artist": credited[0],
-                "artists": credited,
-                "album": album,
-                "duration": "",
-                "platform_track_id": track_id,
-                "track_key": track_key(title, credited[0]),
-                "links": links,
-            }
-        )
-    declared = len(raw_track_ids) if raw_track_ids else len(normalized)
+        track = _normalize_netease_track(raw_item, len(normalized) + 1)
+        if track is not None:
+            normalized.append(track)
+    declared = len(track_ids) if track_ids else len(normalized)
     return normalized, declared, playlist_name
+
+
+def _parse_netease_song_details(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict) or payload.get("code") != 200:
+        code = payload.get("code") if isinstance(payload, dict) else "非对象"
+        raise ContractError(f"网易云歌曲详情接口返回异常：code={code}")
+    raw_songs = payload.get("songs") or []
+    if not isinstance(raw_songs, list):
+        raise ContractError("网易云歌曲详情接口的 songs 必须是数组")
+    result: list[dict[str, Any]] = []
+    for raw_item in raw_songs:
+        track = _normalize_netease_track(raw_item, len(result) + 1)
+        if track is not None:
+            result.append(track)
+    return result
 
 
 class NeteasePublicPlaylistReader:
@@ -441,7 +516,9 @@ class NeteasePublicPlaylistReader:
     No login state is used or accepted: private playlists (such as the
     account's own favourites) are outside this reader's reach by design.
     The ``input_path`` argument is ignored; the playlist comes from
-    ``playlist_id`` (numeric id or a music.163.com share URL).
+    ``playlist_id`` (numeric id or a music.163.com share URL). The v6 detail
+    response is supplemented with bounded song-detail requests when the
+    playlist contains more than the first 1000 tracks returned by v6.
     """
 
     def read(
@@ -461,15 +538,45 @@ class NeteasePublicPlaylistReader:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ContractError(f"网易云接口响应不是有效 UTF-8 JSON：{exc}") from exc
         tracks, declared_from_api, api_playlist_name = _parse_netease_detail(payload)
+        raw_parts = [raw]
+        song_detail_request_count = 0
+        if "playlist" in payload:
+            container = _netease_container(payload)
+            track_ids = _netease_track_ids(container)
+            by_id: dict[str, dict[str, Any]] = {}
+            for start in range(0, len(track_ids), NETEASE_SONG_DETAIL_BATCH_SIZE):
+                batch_ids = track_ids[start:start + NETEASE_SONG_DETAIL_BATCH_SIZE]
+                detail_raw = _fetch_netease_song_details(batch_ids)
+                raw_parts.append(detail_raw)
+                song_detail_request_count += 1
+                try:
+                    detail_payload = json.loads(detail_raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ContractError(f"网易云歌曲详情响应不是有效 UTF-8 JSON：{exc}") from exc
+                for track in _parse_netease_song_details(detail_payload):
+                    track_id = track.get("platform_track_id")
+                    if track_id and track_id not in by_id:
+                        by_id[track_id] = track
+            ordered: list[dict[str, Any]] = []
+            for track_id in track_ids:
+                track = by_id.get(track_id)
+                if track is not None:
+                    ordered.append({**track, "position": len(ordered) + 1})
+            tracks = ordered
         declared = _declared_count(
             {"declared_track_count": declared_from_api},
             explicit=declared_count,
             count_file=declared_count_file,
         )
         actual = len(tracks)
+        digest = hashlib.sha256()
+        for raw_part in raw_parts:
+            digest.update(len(raw_part).to_bytes(8, "big"))
+            digest.update(raw_part)
+        input_sha256 = digest.hexdigest()
         return {
             "schema_version": SCHEMA_VERSION,
-            "snapshot_id": f"{platform}-{hashlib.sha256(raw).hexdigest()[:16]}",
+            "snapshot_id": f"{platform}-{input_sha256[:16]}",
             "platform": platform,
             "playlist_id": playlist_arg,
             "playlist_name": api_playlist_name or normalized_text(playlist_name),
@@ -477,10 +584,13 @@ class NeteasePublicPlaylistReader:
             "track_count": actual,
             "reader_status": "complete" if declared == actual else "incomplete",
             "captured_at": utc_now(),
-            "input_sha256": hashlib.sha256(raw).hexdigest(),
+            "input_sha256": input_sha256,
             "reader": {
                 "type": "netease_public",
                 "source_playlist_id": playlist_arg,
+                "api_endpoint": NETEASE_DETAIL_URL,
+                "song_detail_batch_size": NETEASE_SONG_DETAIL_BATCH_SIZE,
+                "song_detail_request_count": song_detail_request_count,
                 "declared_count_source": (
                     "argument" if declared_count is not None else "api_track_ids"
                 ),

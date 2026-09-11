@@ -1,0 +1,24 @@
+[Unit]
+Description=Music Atlas Web (Editorial Atlas Edition)
+After=network.target
+
+[Service]
+Type=simple
+# 部署时按实际路径/用户修改以下两行
+User=www-data
+WorkingDirectory=/opt/music-atlas-web
+ExecStart=/usr/bin/node /opt/music-atlas-web/server.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8420
+Restart=on-failure
+RestartSec=3
+
+# 加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/music-atlas-web
+
+[Install]
+WantedBy=multi-user.target

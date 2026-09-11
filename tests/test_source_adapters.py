@@ -16,6 +16,7 @@ from source_adapters import (
     QQPublicPlaylistReader,
     _normalize_csv_key,
     _parse_netease_detail,
+    _parse_netease_song_details,
     _parse_qq_diss_page,
     _playlist_id_from_arg,
     _playlist_id_from_qq_arg,
@@ -52,6 +53,26 @@ SAMPLE_DETAIL_PAYLOAD = {
 }
 
 SAMPLE_RESPONSE_BYTES = json.dumps(SAMPLE_DETAIL_PAYLOAD, ensure_ascii=False).encode("utf-8")
+
+V6_DETAIL_PAYLOAD = {
+    "code": 200,
+    "playlist": {
+        "name": "v6 歌单",
+        "trackIds": [{"id": 102}, {"id": 101}, {"id": 103}],
+        "tracks": [
+            {"id": 102, "name": "Song B", "ar": [{"name": "Artist B"}], "al": {"name": "Album B"}},
+        ],
+    },
+}
+
+V3_SONG_DETAIL_PAYLOAD = {
+    "code": 200,
+    "songs": [
+        {"id": 101, "name": "Song A", "ar": [{"name": "Artist A"}], "al": {"name": "Album A"}},
+        {"id": 102, "name": "Song B", "ar": [{"name": "Artist B"}], "al": {"name": "Album B"}},
+        {"id": 103, "name": "Song C", "ar": [{"name": "Artist C"}], "al": {"name": "Album C"}},
+    ],
+}
 
 
 class PlaylistIdParsingTests(unittest.TestCase):
@@ -147,6 +168,14 @@ class NeteaseDetailParsingTests(unittest.TestCase):
         self.assertEqual(len(tracks), 3)
         self.assertEqual(declared, 3)
 
+    def test_v6_playlist_and_v3_song_shapes_are_normalized(self) -> None:
+        tracks, declared, playlist_name = _parse_netease_detail(V6_DETAIL_PAYLOAD)
+        self.assertEqual(playlist_name, "v6 歌单")
+        self.assertEqual(declared, 3)
+        self.assertEqual(tracks[0]["artist"], "Artist B")
+        details = _parse_netease_song_details(V3_SONG_DETAIL_PAYLOAD)
+        self.assertEqual([item["platform_track_id"] for item in details], ["101", "102", "103"])
+
 
 class NeteasePublicReaderTests(unittest.TestCase):
     def test_read_builds_snapshot_with_declared_mismatch_incomplete(self) -> None:
@@ -188,6 +217,28 @@ class NeteasePublicReaderTests(unittest.TestCase):
         self.assertEqual(snapshot["declared_track_count"], 3)
         self.assertEqual(snapshot["reader_status"], "complete")
         self.assertEqual(snapshot["reader"]["declared_count_source"], "argument")
+
+    def test_v6_reader_fetches_missing_tracks_and_restores_playlist_order(self) -> None:
+        reader = NeteasePublicPlaylistReader()
+        with mock.patch(
+            "source_adapters._fetch_netease_playlist_detail",
+            return_value=json.dumps(V6_DETAIL_PAYLOAD).encode("utf-8"),
+        ), mock.patch(
+            "source_adapters._fetch_netease_song_details",
+            return_value=json.dumps(V3_SONG_DETAIL_PAYLOAD).encode("utf-8"),
+        ) as fetch_details:
+            snapshot = reader.read(
+                None,
+                platform="netease",
+                playlist_id="7786449876",
+                playlist_name="忽略的名称",
+            )
+        self.assertEqual(snapshot["reader_status"], "complete")
+        self.assertEqual(snapshot["declared_track_count"], 3)
+        self.assertEqual(snapshot["track_count"], 3)
+        self.assertEqual([item["platform_track_id"] for item in snapshot["tracks"]], ["102", "101", "103"])
+        fetch_details.assert_called_once_with(["102", "101", "103"])
+        self.assertEqual(snapshot["reader"]["song_detail_request_count"], 1)
 
 
 QQ_SAMPLE_PAGE = {

@@ -51,6 +51,22 @@ class PipelineCliTests(unittest.TestCase):
             self.cli("validate", "--analysis", analysis, "--bundle", bundle, "--ranked-output", ranked,
                      "--output", root / "channel.txt")
             self.assertEqual(read_json(bundle), read_json(ranked))
+            web_payload_path = root / "web_payload.json"
+            web_summary = self.cli(
+                "web-export",
+                "--runtime-dir",
+                run,
+                "--bundle",
+                bundle,
+                "--output",
+                web_payload_path,
+            )
+            self.assertEqual(web_summary["status"], "web_payload_written")
+            web_payload = read_json(web_payload_path)
+            self.assertEqual(web_payload["payload_type"], "music_atlas_web")
+            self.assertEqual(web_payload["source"]["trackCount"], 3)
+            self.assertEqual(len(web_payload["recommendations"]), 10)
+            self.assertEqual(web_payload["status"]["publication"], "draft")
             ids = [item["canonical_track_id"] for item in read_json(ranked)["recommendations"]]
             feedback = root / "feedback.json"
             write_json(feedback, [new_feedback_record(analysis_id=packet["analysis_id"], recommendation_id=track_id,

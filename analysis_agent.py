@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, Callable
 
@@ -112,9 +113,13 @@ def prepare_analysis_research(snapshot_path: Path, taxonomy_path: Path, director
 
 def execute_analysis_research(snapshot_path: Path, taxonomy_path: Path, directory: Path, *, command: str | None,
                               batch_size: int | None = None, context_budget: int | None = None, timeout: int = 600,
-                              execute: Callable[..., dict] | None = None) -> Path:
+                              parallelism: int = 1,
+                              execute: Callable[..., dict] | None = None,
+                              progress: Callable[[dict[str, Any]], None] | None = None) -> Path:
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
         raise ContractError("analysis-timeout 必须为正整数秒数")
+    if isinstance(parallelism, bool) or not isinstance(parallelism, int) or not 1 <= parallelism <= 16:
+        raise ContractError("analysis-parallelism 必须是 1 到 16 的整数")
     if execute is None:
         from skill_runner import run_external_skill
         execute = run_external_skill
@@ -126,39 +131,313 @@ def execute_analysis_research(snapshot_path: Path, taxonomy_path: Path, director
     report = {"schema_version": SCHEMA_VERSION, "artifact_type": "analysis_research_report",
               "source_snapshot_id": snapshot["snapshot_id"], "snapshot_sha256": stable_hash(snapshot),
               "mode": "external_command" if command else "imported_batch_results", "batches": [],
-               "timeout_seconds": timeout, "context_budget": context_budget, "executor_kind": "generic_external_executor",
-               "policy_changed": False, "send_performed": False}
+              "timeout_seconds": timeout, "context_budget": context_budget, "executor_kind": "generic_external_executor",
+               "parallelism": parallelism, "policy_changed": False, "send_performed": False}
     started = time.perf_counter()
     results = []
+    total_batches = len(requests)
+    total_tracks = snapshot["track_count"]
+    completed_batches = 0
+    completed_tracks = 0
+
+    def notify(event: str, **payload: Any) -> None:
+        if progress is not None:
+            progress({"event": event, "stage": "analysis", **payload})
+
+    notify(
+        "stage_detail",
+        task_kind="analysis_batch",
+        task_total=total_batches,
+        completed=0,
+        total=total_batches,
+        track_completed=0,
+        track_total=total_tracks,
+        parallelism=parallelism,
+        parallel_slots=parallelism,
+        message=f"已准备 {total_batches} 个分析批次，使用 {parallelism} 个并行槽位",
+    )
     try:
-        for request, record in zip(requests, manifest["batches"]):
+        if parallelism == 1 or len(requests) <= 1:
+            for request, record in zip(requests, manifest["batches"]):
+                remaining = timeout - (time.perf_counter() - started)
+                if remaining <= 0:
+                    raise ContractError("分析研究总超时预算耗尽")
+                batch_start = time.perf_counter()
+                telemetry = {"request_id": request["request_id"], "prompt_characters": record["prompt_characters"],
+                             "prompt_sha256": record["prompt_sha256"], "status": "started"}
+                report["batches"].append(telemetry)
+                result_path = directory / record["result_file"]
+                reuse = result_path.is_file()
+                task_index = len(results) + 1
+                notify(
+                    "task_started",
+                    task_kind="analysis_batch",
+                    task_id=request["request_id"],
+                    task_index=task_index,
+                    task_total=total_batches,
+                    task_status="running",
+                    track_count=len(request["tracks"]),
+                    parallelism=parallelism,
+                    parallel_slots=parallelism,
+                )
+                try:
+                    if command and not reuse:
+                        raw = execute(command, (directory / record["prompt_file"]).read_text(encoding="utf-8"), timeout=math.ceil(remaining))
+                    else:
+                        if result_path.stat().st_size > 2000000:
+                            raise ContractError("分析 Skill 单批结果文件超过 2 MB 上限")
+                        raw = read_json(result_path)
+                    serialized_size = len(json.dumps(raw, ensure_ascii=False))
+                    if serialized_size > 500000:
+                        raise ContractError("分析 Skill 单批输出超过 500,000 字符上限")
+                    result = validate_research_result(raw, request, taxonomy)
+                    if time.perf_counter() - started > timeout:
+                        raise ContractError("分析研究总超时预算耗尽")
+                    if command and not reuse:
+                        write_json(result_path, result)
+                    results.append(result)
+                    telemetry.update(status="validated", output_characters=serialized_size,
+                                     reused_result=reuse,
+                                     elapsed_ms=round((time.perf_counter() - batch_start) * 1000, 2))
+                    completed_batches += 1
+                    completed_tracks += len(request["tracks"])
+                    notify(
+                        "task_completed",
+                        task_kind="analysis_batch",
+                        task_id=request["request_id"],
+                        task_index=task_index,
+                        task_total=total_batches,
+                        task_status="validated",
+                        completed=completed_batches,
+                        total=total_batches,
+                        track_completed=completed_tracks,
+                        track_total=total_tracks,
+                        track_count=len(request["tracks"]),
+                        parallelism=parallelism,
+                        parallel_slots=parallelism,
+                        reused_result=reuse,
+                        elapsed_ms=telemetry["elapsed_ms"],
+                    )
+                except (ContractError, OSError, ValueError) as exc:
+                    telemetry.update(status="failed", error=str(exc), reused_result=reuse,
+                                     elapsed_ms=round((time.perf_counter() - batch_start) * 1000, 2))
+                    notify(
+                        "task_failed",
+                        task_kind="analysis_batch",
+                        task_id=request["request_id"],
+                        task_index=task_index,
+                        task_total=total_batches,
+                        task_status="failed",
+                        completed=completed_batches,
+                        total=total_batches,
+                        track_completed=completed_tracks,
+                        track_total=total_tracks,
+                        track_count=len(request["tracks"]),
+                        parallelism=parallelism,
+                        parallel_slots=parallelism,
+                        error=str(exc),
+                        elapsed_ms=telemetry["elapsed_ms"],
+                    )
+                    raise
+        else:
+            worker_count = min(parallelism, len(requests))
+            report["batches"] = [
+                {
+                    "request_id": request["request_id"],
+                    "prompt_characters": record["prompt_characters"],
+                    "prompt_sha256": record["prompt_sha256"],
+                    "status": "started",
+                    "worker_index": index + 1,
+                    "worker_count": worker_count,
+                }
+                for index, (request, record) in enumerate(zip(requests, manifest["batches"]))
+            ]
             remaining = timeout - (time.perf_counter() - started)
             if remaining <= 0:
                 raise ContractError("分析研究总超时预算耗尽")
-            batch_start = time.perf_counter()
-            telemetry = {"request_id": request["request_id"], "prompt_characters": record["prompt_characters"],
-                         "prompt_sha256": record["prompt_sha256"], "status": "started"}
-            report["batches"].append(telemetry)
-            result_path = directory / record["result_file"]
-            reuse = result_path.is_file()
-            if command and not reuse:
-                raw = execute(command, (directory / record["prompt_file"]).read_text(encoding="utf-8"), timeout=math.ceil(remaining))
-            else:
-                if result_path.stat().st_size > 2000000:
-                    raise ContractError("分析 Skill 单批结果文件超过 2 MB 上限")
-                raw = read_json(result_path)
-            serialized_size = len(json.dumps(raw, ensure_ascii=False))
-            if serialized_size > 500000:
-                raise ContractError("分析 Skill 单批输出超过 500,000 字符上限")
-            result = validate_research_result(raw, request, taxonomy)
-            if time.perf_counter() - started > timeout:
-                raise ContractError("分析研究总超时预算耗尽")
-            if command and not reuse:
-                write_json(result_path, result)
-            results.append(result)
-            telemetry.update(status="validated", output_characters=serialized_size,
-                             reused_result=reuse,
-                             elapsed_ms=round((time.perf_counter() - batch_start) * 1000, 2))
+
+            def run_batch(index: int, request: dict, record: dict, timeout_budget: int):
+                batch_start = time.perf_counter()
+                result_path = directory / record["result_file"]
+                reuse = result_path.is_file()
+                telemetry = report["batches"][index]
+                notify(
+                    "task_started",
+                    task_kind="analysis_batch",
+                    task_id=request["request_id"],
+                    task_index=index + 1,
+                    task_total=total_batches,
+                    task_status="running",
+                    track_count=len(request["tracks"]),
+                    parallelism=parallelism,
+                    parallel_slots=worker_count,
+                )
+                try:
+                    if command and not reuse:
+                        raw = execute(
+                            command,
+                            (directory / record["prompt_file"]).read_text(encoding="utf-8"),
+                            timeout=timeout_budget,
+                        )
+                    else:
+                        if result_path.stat().st_size > 2000000:
+                            raise ContractError("分析 Skill 单批结果文件超过 2 MB 上限")
+                        raw = read_json(result_path)
+                    serialized_size = len(json.dumps(raw, ensure_ascii=False))
+                    if serialized_size > 500000:
+                        raise ContractError("分析 Skill 单批输出超过 500,000 字符上限")
+                    result = validate_research_result(raw, request, taxonomy)
+                    if time.perf_counter() - started > timeout:
+                        raise ContractError("分析研究总超时预算耗尽")
+                    if command and not reuse:
+                        write_json(result_path, result)
+                    telemetry.update(
+                        status="validated",
+                        output_characters=serialized_size,
+                        reused_result=reuse,
+                        elapsed_ms=round((time.perf_counter() - batch_start) * 1000, 2),
+                    )
+                    return result, telemetry, None
+                except (ContractError, OSError, ValueError) as exc:
+                    telemetry.update(
+                        status="failed",
+                        error=str(exc),
+                        reused_result=reuse,
+                        elapsed_ms=round((time.perf_counter() - batch_start) * 1000, 2),
+                    )
+                    return None, telemetry, exc
+
+            executor = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="music-atlas-analysis")
+            futures = {
+                executor.submit(run_batch, index, request, record, math.ceil(remaining)): index
+                for index, (request, record) in enumerate(zip(requests, manifest["batches"]))
+            }
+            try:
+                ordered_results: dict[int, dict] = {}
+                outcomes: dict[int, tuple[dict | None, Exception | None]] = {}
+                pending = set(futures)
+                while pending:
+                    remaining_now = timeout - (time.perf_counter() - started)
+                    if remaining_now <= 0:
+                        done_now = set()
+                    else:
+                        done_now, pending = wait(
+                            pending,
+                            timeout=max(0.0, remaining_now),
+                            return_when=FIRST_COMPLETED,
+                        )
+                    if not done_now:
+                        break
+                    for future in done_now:
+                        index = futures[future]
+                        try:
+                            result, telemetry, error = future.result()
+                        except Exception as exc:  # pragma: no cover - defensive future boundary
+                            report["batches"][index].update(status="failed", error=str(exc))
+                            outcomes[index] = (None, exc)
+                            notify(
+                                "task_failed",
+                                task_kind="analysis_batch",
+                                task_id=requests[index]["request_id"],
+                                task_index=index + 1,
+                                task_total=total_batches,
+                                task_status="failed",
+                                completed=completed_batches,
+                                total=total_batches,
+                                track_completed=completed_tracks,
+                                track_total=total_tracks,
+                                track_count=len(requests[index]["tracks"]),
+                                parallelism=parallelism,
+                                parallel_slots=worker_count,
+                                error=str(exc),
+                            )
+                            continue
+                        outcomes[index] = (result, error)
+                        if error is not None:
+                            notify(
+                                "task_failed",
+                                task_kind="analysis_batch",
+                                task_id=requests[index]["request_id"],
+                                task_index=index + 1,
+                                task_total=total_batches,
+                                task_status="failed",
+                                completed=completed_batches,
+                                total=total_batches,
+                                track_completed=completed_tracks,
+                                track_total=total_tracks,
+                                track_count=len(requests[index]["tracks"]),
+                                parallelism=parallelism,
+                                parallel_slots=worker_count,
+                                error=str(error),
+                                elapsed_ms=telemetry.get("elapsed_ms"),
+                            )
+                        elif result is not None:
+                            completed_batches += 1
+                            completed_tracks += len(requests[index]["tracks"])
+                            notify(
+                                "task_completed",
+                                task_kind="analysis_batch",
+                                task_id=requests[index]["request_id"],
+                                task_index=index + 1,
+                                task_total=total_batches,
+                                task_status="validated",
+                                completed=completed_batches,
+                                total=total_batches,
+                                track_completed=completed_tracks,
+                                track_total=total_tracks,
+                                track_count=len(requests[index]["tracks"]),
+                                parallelism=parallelism,
+                                parallel_slots=worker_count,
+                                reused_result=telemetry.get("reused_result"),
+                                elapsed_ms=telemetry.get("elapsed_ms"),
+                            )
+                not_done = pending
+                for future in not_done:
+                    future.cancel()
+                    index = futures[future]
+                    error = ContractError("分析研究总超时预算耗尽")
+                    report["batches"][index].update(
+                        status="failed",
+                        error=str(error),
+                        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                    )
+                    outcomes[index] = (None, error)
+                    notify(
+                        "task_failed",
+                        task_kind="analysis_batch",
+                        task_id=requests[index]["request_id"],
+                        task_index=index + 1,
+                        task_total=total_batches,
+                        task_status="timeout",
+                        completed=completed_batches,
+                        total=total_batches,
+                        track_completed=completed_tracks,
+                        track_total=total_tracks,
+                        track_count=len(requests[index]["tracks"]),
+                        parallelism=parallelism,
+                        parallel_slots=worker_count,
+                        error=str(error),
+                        elapsed_ms=report["batches"][index]["elapsed_ms"],
+                    )
+                errors: list[Exception] = []
+                for index in range(len(requests)):
+                    result, error = outcomes.get(index, (None, ContractError("分析研究总超时预算耗尽")))
+                    if error is not None:
+                        errors.append(error)
+                    elif result is not None:
+                        ordered_results[index] = result
+                if errors:
+                    results.extend(ordered_results[index] for index in sorted(ordered_results))
+                    first = errors[0]
+                    if isinstance(first, ContractError):
+                        raise first
+                    raise ContractError(str(first)) from first
+                results.extend(ordered_results[index] for index in range(len(requests)))
+            finally:
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except TypeError:  # pragma: no cover - Python < 3.9 compatibility
+                    executor.shutdown(wait=False)
         bundle = {"schema_version": SCHEMA_VERSION, "bundle_type": "musician_research_bundle", "publication_status": "draft",
                   "source_snapshot_id": snapshot["snapshot_id"], "snapshot_sha256": stable_hash(snapshot),
                   "taxonomy_sha256": sha256_path(taxonomy_path), "batch_size": batch_size,
@@ -166,9 +445,10 @@ def execute_analysis_research(snapshot_path: Path, taxonomy_path: Path, director
                   "batches": results}
         validate_research_bundle(bundle, snapshot, taxonomy, sha256_path(taxonomy_path))
     except (ContractError, OSError, ValueError) as exc:
-        if report["batches"] and report["batches"][-1]["status"] == "started":
-            report["batches"][-1].update(status="failed", error=str(exc),
-                                        elapsed_ms=round((time.perf_counter() - batch_start) * 1000, 2))
+        for telemetry in report["batches"]:
+            if telemetry.get("status") == "started":
+                telemetry.update(status="failed", error=str(exc),
+                                 elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
         report.update(status="failed", error=str(exc), completed_batch_count=len(results),
                       elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
         write_json(directory / "research_report.json", report)

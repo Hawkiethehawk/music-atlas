@@ -1,0 +1,25 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8420
+  },
+  "paths": {
+    "published": "runtime/web/current.json",
+    "jobs": "runtime/web-jobs",
+    "input": "input"
+  },
+  "runtime": {
+    "python": "python",
+    "codex_reasoning_effort": "low"
+  },
+  "executors": {
+    "analysis": "executors/analysis_runner.py",
+    "recommendation": "executors/recommendation_runner.py"
+  },
+  "workflow": {
+    "analysis_parallelism": 5,
+    "recommendation_parallelism": 4,
+    "analysis_timeout_seconds": 7200,
+    "recommendation_timeout_seconds": 3600
+  }
+}

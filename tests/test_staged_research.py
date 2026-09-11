@@ -54,6 +54,34 @@ class StagedResearchTests(unittest.TestCase):
             self.assertEqual(report["final_explanations_generated"], len(ranked["recommendations"]))
             self.assertGreater(report["input_characters_total"], summary["prompt_characters"])
 
+    def test_parallel_recommendation_workers_merge_before_program_ranking(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, packet = self.setup_pool(root)
+            with patch("agent_runner.run_external_agent", return_value=pool) as agent:
+                summary = self.execute(root, recommendation_parallelism=4)
+            self.assertEqual(agent.call_count, 4)
+            self.assertEqual(summary["recommendation_parallelism"], 4)
+            self.assertEqual(summary["research_rounds"], 1)
+            report = read_json(root / "bundle.research.json")
+            self.assertEqual(report["parallelism"], 4)
+            self.assertEqual(report["rounds"][0]["worker_count"], 4)
+            self.assertEqual(len(read_json(root / "bundle.json")["recommendations"]), packet["recommendation_policy"]["target_recommendations"])
+
+    def test_parallel_recommendation_reports_round_and_worker_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, _ = self.setup_pool(root)
+            progress = []
+            with patch("agent_runner.run_external_agent", return_value=pool):
+                self.execute(root, recommendation_parallelism=4, progress=progress.append)
+            self.assertEqual(len([event for event in progress if event["event"] == "round_started"]), 1)
+            self.assertEqual(len([event for event in progress if event["event"] == "task_started"]), 4)
+            completed = [event for event in progress if event["event"] == "task_completed"]
+            self.assertEqual(len(completed), 4)
+            self.assertEqual({event["parallel_slots"] for event in completed}, {4})
+            self.assertEqual(len([event for event in progress if event["event"] == "round_completed"]), 1)
+
     def test_stagnation_stops_at_round_budget_without_success_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -43,6 +43,7 @@ from source_adapters import build_snapshot, save_snapshot
 from skill_runner import run_skill
 from tune import propose_tuning
 from visualization_interface import render_recommendation_card
+from web_view_model import export_web_payload
 
 
 ROOT = Path(__file__).resolve().parent
@@ -143,7 +144,8 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
     if args.analysis_command or args.import_analysis_results:
         result = execute_analysis_research(snapshot_path, taxonomy_path, directory, command=args.analysis_command,
                                            batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget,
-                                           timeout=args.analysis_timeout)
+                                           timeout=args.analysis_timeout,
+                                           parallelism=args.analysis_parallelism)
         return result, None
     manifest = prepare_analysis_research(snapshot_path, taxonomy_path, directory,
                                          batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget)
@@ -151,6 +153,7 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
         "status": "analysis_agent_required", "analysis_mode": args.analysis_mode, "skill_name": "music-atlas-analysis",
         "executor_kind": "generic_external_executor", "source_snapshot_id": manifest["source_snapshot_id"],
         "source_track_count": manifest["source_track_count"], "research_batch_count": len(manifest["batches"]),
+        "analysis_parallelism": args.analysis_parallelism,
         "analysis_research_dir": str(directory), "research_manifest_path": str(directory / "manifest.json"),
         "analysis_written": False, "recommendation_count": 0, "send_performed": False,
         "next_action": "使用任意模型或工具执行 Skill：提供 --analysis-command，或完成各批 result 文件后用 --import-analysis-results 汇总；不要重新抓取快照。",
@@ -199,6 +202,7 @@ def command_analyze(args: argparse.Namespace) -> int:
             "artist_profile_count": packet["style_analysis"]["artist_profile_count"],
             "profile_catalog_mode": packet["style_analysis"]["profile_catalog_mode"],
             "analysis_mode": args.analysis_mode,
+            "analysis_parallelism": args.analysis_parallelism,
             "research_bundle_path": str(research_path) if research_path else None,
             "profile_coverage_degraded": packet["style_analysis"]["profile_coverage"]["degraded"],
             "coverage_report_path": coverage_report
@@ -415,6 +419,7 @@ def _run_step3(args: argparse.Namespace, runner: Any) -> dict[str, Any]:
         max_research_rounds=args.max_research_rounds,
         candidate_target=args.candidate_target,
         max_candidates=args.max_candidates,
+        recommendation_parallelism=args.recommendation_parallelism,
     )
 
 
@@ -737,6 +742,7 @@ def command_run(args: argparse.Namespace) -> int:
             "skill_name": "music-atlas-recommendation",
             "executor_kind": "generic_external_executor",
             "analysis_mode": args.analysis_mode,
+            "analysis_parallelism": args.analysis_parallelism,
             "research_bundle_path": str(research_path) if research_path else None,
             "as_of_date": packet["as_of_date"],
             "source_snapshot_id": snapshot["snapshot_id"],
@@ -751,6 +757,7 @@ def command_run(args: argparse.Namespace) -> int:
                 "mode": "skill_required",
                 "skill_name": "music-atlas-recommendation",
                 "executor_kind": "generic_external_executor",
+                "parallelism": args.recommendation_parallelism,
                 "input": "MusicianAnalysisPacket only",
                 "algorithm": packet["recommendation_policy"].get("algorithm_version", "hybrid_music_discovery_v2"),
                 "send_performed": False,
@@ -787,7 +794,30 @@ def command_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_export_apple_playlist(args: argparse.Namespace) -> int:
+def command_web_export(args: argparse.Namespace) -> int:
+    """Export a validated runtime as a read-only web view model."""
+
+    runtime_dir = _path(args.runtime_dir, ROOT / "runtime")
+    if runtime_dir is None:
+        raise ContractError("网页导出运行目录不能为空")
+    output_path = _path(args.output, runtime_dir / "web_payload.json")
+    if output_path is None:
+        raise ContractError("网页导出输出路径不能为空")
+    summary = export_web_payload(
+        runtime_dir,
+        output_path,
+        snapshot_path=_path(args.snapshot, None),
+        analysis_path=_path(args.analysis, None),
+        bundle_path=_path(args.bundle, None),
+        evidence_audit_path=_path(args.evidence_audit, None),
+        editorial_path=_path(args.editorial, None),
+        require_publishable=args.require_publishable,
+    )
+    _print_summary(summary)
+    return 0
+
+
+def export_apple_playlist_file(url: str, output_path: Path, expected_count: int | None = None) -> dict[str, Any]:
     """Export a shared Apple Music playlist to CSV via TuneMyMusic (no login)."""
 
     import shutil
@@ -802,12 +832,12 @@ def command_export_apple_playlist(args: argparse.Namespace) -> int:
             "未找到 node；请先安装 Node.js，并在 tools/ 目录执行 "
             "`npm install playwright`（见 tools/README.md）"
         )
-    output_path = _path(args.output, ROOT / "input" / "apple_favorite_songs.csv")
-    if args.expected_count is not None and not 0 < args.expected_count <= 9007199254740991:
+    output_path = output_path.resolve()
+    if expected_count is not None and not 0 < expected_count <= 9007199254740991:
         raise ContractError("expected-count 必须是正整数且不超过 JavaScript 安全整数范围")
-    command = [node_executable, str(tool_path), args.url, str(output_path)]
-    if args.expected_count is not None:
-        command.append(str(args.expected_count))
+    command = [node_executable, str(tool_path), url, str(output_path)]
+    if expected_count is not None:
+        command.append(str(expected_count))
     try:
         completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=600)
     except subprocess.TimeoutExpired as exc:
@@ -822,6 +852,15 @@ def command_export_apple_playlist(args: argparse.Namespace) -> int:
     except (ValueError, IndexError) as exc:
         raise ContractError(f"导出工具输出无法解析：{completed.stdout[:200]}") from exc
     summary["output"] = str(output_path)
+    return summary
+
+
+def command_export_apple_playlist(args: argparse.Namespace) -> int:
+    summary = export_apple_playlist_file(
+        args.url,
+        _path(args.output, ROOT / "input" / "apple_favorite_songs.csv"),
+        args.expected_count,
+    )
     _print_summary(summary)
     return 0
 
@@ -870,6 +909,7 @@ def _add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--analysis-batch-size", type=int, default=None, help="每批最多曲目数，1 到 50；继承准备配置，新任务默认 20")
     parser.add_argument("--analysis-context-budget", type=int, default=None, help="分析 Skill 单批字符硬预算；继承准备配置，新任务默认 100000")
     parser.add_argument("--analysis-timeout", type=int, default=600, help="所有分析研究批次共用的秒数预算，默认 600")
+    parser.add_argument("--analysis-parallelism", type=int, default=5, help="Step 2 同时执行的分析任务数，默认 5")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -924,6 +964,24 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--print-text", action="store_true")
     validate_parser.add_argument("--evidence-audit", default=None, help="输出证据离线审计报告路径")
     validate_parser.set_defaults(func=command_validate)
+
+    web_parser = subparsers.add_parser(
+        "web-export",
+        help="校验当前运行并导出 Editorial Atlas 的只读网页视图模型",
+    )
+    web_parser.add_argument("--runtime-dir", default=None, help="运行产物目录，默认 runtime")
+    web_parser.add_argument("--snapshot", default=None, help="可选的 PlaylistSnapshot 路径")
+    web_parser.add_argument("--analysis", default=None, help="可选的 MusicianAnalysisPacket 路径")
+    web_parser.add_argument("--bundle", default=None, help="可选的 RecommendationBundle 路径")
+    web_parser.add_argument("--evidence-audit", default=None, help="可选的 evidence_audit.json 路径")
+    web_parser.add_argument("--editorial", default=None, help="可选的人工网页 editorial 配置 JSON")
+    web_parser.add_argument("--output", default=None, help="网页视图模型输出路径")
+    web_parser.add_argument(
+        "--require-publishable",
+        action="store_true",
+        help="仅允许正式可发布状态；默认允许导出研究草稿供本机预览",
+    )
+    web_parser.set_defaults(func=command_web_export)
 
     send_weixin_parser = subparsers.add_parser(
         "send-weixin",
@@ -1027,6 +1085,8 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；timeout 为研究总预算")
     agent_parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
     agent_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
+    agent_parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
+                              help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
     agent_parser.set_defaults(func=command_agent)
 
     skill_parser = subparsers.add_parser("skill", help="Step 3: 执行通用 Recommendation Skill 并校验结果")
@@ -1050,6 +1110,8 @@ def build_parser() -> argparse.ArgumentParser:
     skill_parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；timeout 为研究总预算")
     skill_parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
     skill_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
+    skill_parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
+                              help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
     skill_parser.set_defaults(func=command_skill)
 
     run_parser = subparsers.add_parser("run", help="快照 + 分析 Skill 研究 + 程序聚合 + 推荐上下文准备；未配置 Skill 时停在研究准备")
@@ -1061,6 +1123,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--as-of-date", default=None, help="评分基准 YYYY-MM-DD；默认快照的 UTC 日期")
     run_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
     run_parser.add_argument("--context-budget", type=int, default=None, help="Agent 提示词字符预算")
+    run_parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
+                            help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
     _add_style_options(run_parser)
     _add_analysis_options(run_parser)
     run_parser.set_defaults(func=command_run)

@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Atlas · Editorial Atlas</title>
+<link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="/favicon.ico">
+<link rel="preload" href="/fonts/EBGaramond.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="/fonts/EBGaramond-Italic.ttf" as="font" type="font/ttf" crossorigin>
+<style>
+@font-face{
+  font-family:"MA Latin";
+  src:url("/fonts/EBGaramond.ttf") format("truetype-variations");
+  font-weight:400 800;
+  font-style:normal;
+  font-display:block;
+}
+@font-face{
+  font-family:"MA Latin";
+  src:url("/fonts/EBGaramond-Italic.ttf") format("truetype-variations");
+  font-weight:400 800;
+  font-style:italic;
+  font-display:block;
+}
+@font-face{
+  font-family:"MA CJK";
+  src:local("思源宋体 CN"),local("Source Han Serif CN"),local("Noto Serif SC"),local("Source Han Serif SC"),local("SimSun");
+  font-weight:400;
+  font-style:normal;
+  font-display:block;
+}
+:root{
+  --bg:#0f0d0a; --bg2:#15120e; --panel:#1a1611; --ink:#eae3d6; --dim:#a39a88; --faint:#6e6759;
+  --line:#2b251d; --line2:#3a3226; --acc:#c8622f; --gold:#c9a227;
+  --serif:"MA Latin","MA CJK",serif; --mono:"MA Latin","MA CJK",serif; --sans:"MA Latin","MA CJK",serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scrollbar-gutter:stable}
+@supports not (scrollbar-gutter:stable){html{overflow-y:scroll}}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:18px;line-height:1.6;font-variant-numeric:lining-nums;font-size-adjust:0.50;font-variation-settings:"wght" 520;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+::selection{background:var(--acc);color:#fff}
+.wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+.mono{font-family:var(--mono)}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim)}
+.kicker b{color:var(--acc);font-weight:400}
+/* header */
+header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(15,13,10,.94);backdrop-filter:blur(8px);z-index:50}
+.hd{display:flex;align-items:center;justify-content:space-between;height:60px}
+.logo{font-family:var(--serif);font-size:20px;letter-spacing:.12em}
+.logo em{color:var(--acc);font-style:normal}
+nav{display:flex;gap:26px}
+nav a{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);padding:6px 0;border-bottom:1px solid transparent}
+nav a:hover{color:var(--ink)}
+nav a.on{color:var(--ink);border-bottom-color:var(--acc)}
+/* hero */
+.hero{padding:34px 0 56px;border-bottom:1px solid var(--line);position:relative;overflow:hidden}
+.hero h1{font-family:var(--serif);font-weight:500;font-size:52px;line-height:1.04;letter-spacing:-.015em;margin:22px 0 26px;max-width:820px}
+@media(min-width:1100px){.hero h1{font-size:72px}}
+@media(min-width:1500px){.hero h1{font-size:96px}}
+.hero h1 em{font-style:italic;color:var(--acc);display:block;margin-top:12px}
+.lede{max-width:560px;color:var(--dim);font-size:18px;line-height:1.85}
+.collage{position:absolute;right:0;top:40px;width:460px;height:400px}
+.cc{position:absolute;border:1px solid var(--line2);box-shadow:0 30px 60px rgba(0,0,0,.55)}
+.cc .tagline{position:absolute;bottom:8px;left:10px;font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:rgba(255,255,255,.75)}
+/* section head */
+.sec{padding:64px 0 30px}
+.sec-hd{display:flex;align-items:baseline;gap:18px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:8px}
+.sec-hd h2{font-family:var(--serif);font-weight:500;font-size:32px;letter-spacing:.01em}
+.sec-hd .sub{font-family:var(--mono);font-size:12px;letter-spacing:.24em;color:var(--faint);text-transform:uppercase}
+.sec-hd .more{margin-left:auto;font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--acc);text-transform:uppercase}
+.sec-hd .more:hover{color:var(--ink)}
+/* atlas list (editorial index) */
+.trow{display:grid;grid-template-columns:56px 92px minmax(230px,0.9fr) 1.7fr 200px;align-items:stretch;border-bottom:1px solid var(--line)}
+.trow>*{position:relative;padding:20px 0}
+.trow .rank{display:flex;align-items:center;justify-content:flex-end;padding-right:18px;font-family:var(--serif);font-size:36px;color:var(--faint);font-style:italic}
+.trow .cvgo{cursor:pointer;align-self:center;display:flex}
+.trow .info{display:flex;flex-direction:column;justify-content:center;cursor:pointer;padding:20px 18px;gap:6px}
+.trow .info::after{content:"";position:absolute;top:0;bottom:0;right:0;width:1px;background:var(--line)}
+.trow .info:hover .tt{color:var(--acc)}
+.trow .cvgo:hover .ci{color:#fff}
+.trow .cvgo:hover ~ .info .tt{color:var(--acc)}
+.trow .ol{display:flex;flex-direction:column;justify-content:center;color:var(--dim);font-size:16px;line-height:1.6;padding:20px 18px}
+.trow .ol::after{content:"";position:absolute;top:0;bottom:0;right:0;width:1px;background:var(--line)}
+.trow .plcol{display:flex;flex-direction:column;justify-content:center;padding:20px 0 20px 18px}
+.trow .tt{font-family:var(--serif);font-weight:500;font-size:22px;line-height:24px;margin:0}
+.trow .ar{color:var(--dim);font-size:16px;line-height:24px;margin:0}
+.trow .ar .alb{font-size:14px;color:var(--faint);line-height:24px;margin:0;display:block}
+.trow .typechip{margin-bottom:0;transform:translateY(-2px)}
+.trow .info>:nth-child(3){transform:translateY(-2px)}
+.typechip{display:inline-block;width:fit-content;align-self:flex-start;font-family:var(--mono);font-size:12px;letter-spacing:.2em;padding:2px 2px 2px calc(2px + .2em);border:1px solid var(--line2);color:var(--dim);margin-bottom:8px}
+.typechip.t-style{color:#d99a5b;border-color:#5b4632}
+.typechip.t-ext{color:var(--gold);border-color:#5c5220}
+.typechip.t-rel{color:#b8a6e8;border-color:#4a3f63}
+.typechip.t-exp{color:#7fb8a4;border-color:#33544a}
+.plink{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--dim);display:block;padding:7px 0;border-top:1px solid var(--line)}
+.plink:first-child{border-top:none}
+.plink:hover{color:var(--acc)}
+/* orbit cards */
+.cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;padding:22px 0}
+.card{border:1px solid var(--line);background:var(--bg2);cursor:pointer}
+.card:hover{border-color:var(--line2)}
+.card .cover{height:230px}
+.card .cbody{padding:20px 22px 22px}
+.card h3{font-family:var(--serif);font-weight:500;font-size:22px;margin:8px 0 2px}
+.card .car{color:var(--dim);font-size:14px}
+.card p{color:var(--dim);font-size:16px;line-height:1.7;margin-top:12px}
+/* musicians chain */
+.chain{border:1px solid var(--line);background:var(--bg2);padding:44px 48px;display:grid;grid-template-columns:1fr 380px;gap:44px;align-items:center;margin:22px 0}
+.chainbig{font-family:var(--serif);font-weight:500;font-size:32px;line-height:1.2}
+.chainstep{display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:14px;letter-spacing:.12em;color:var(--dim);padding:10px 0}
+.chainstep .node{width:9px;height:9px;background:var(--acc);flex:none}
+.chainstep .ln{flex:1;border-top:1px dashed var(--line2)}
+/* further out */
+.outgrid{display:grid;grid-template-columns:1fr 1fr;gap:26px;padding:22px 0}
+.outcard{border:1px dashed var(--line2);padding:26px;cursor:pointer;position:relative}
+.outcard:hover{border-color:#33544a;background:#12100d}
+.outcard .ob{font-family:var(--mono);font-size:12px;letter-spacing:.3em;color:#7fb8a4;margin-bottom:12px}
+.outcard h3{font-family:var(--serif);font-weight:500;font-size:24px}
+.outcard .car{color:var(--dim);font-size:14px;margin-bottom:10px}
+.outcard p{color:var(--dim);font-size:16px;line-height:1.7}
+/* cover */
+.cover{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:2px;background:var(--bg);border:1px solid var(--line2)}
+.cover:not(.has-img){background:var(--cover-fallback,var(--bg))}
+.cover img.cover-img{position:absolute;inset:3px;width:calc(100% - 6px);height:calc(100% - 6px);object-fit:cover;opacity:0;transition:opacity .45s ease}
+body.covers-ready .cover img.cover-img{opacity:1}
+.cover.has-img .ci,.cover.has-img .frame,.cover.has-img .cl{display:none}
+.cover .ci{font-family:var(--serif);font-style:italic;font-size:36px;color:rgba(255,255,255,.82);text-shadow:0 2px 18px rgba(0,0,0,.5)}
+.cover .frame{position:absolute;inset:9px;border:1px solid rgba(255,255,255,.18);z-index:1}
+.cover .cl{position:absolute;top:12px;left:13px;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:rgba(255,255,255,.65);z-index:1}
+.plink.wait{color:var(--faint);pointer-events:none}
+.plink.nodata{color:var(--faint)}
+/* buttons */
+.btnrow{display:flex;gap:10px;flex-wrap:wrap}
+.btn{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;padding:10px 16px;border:1px solid var(--line2);color:var(--dim);cursor:pointer;background:none}
+.btn:hover{color:var(--ink);border-color:var(--acc)}
+.btn.primary{border-color:var(--acc);color:var(--acc)}
+.btn.primary:hover{background:var(--acc);color:#fff}
+/* article / detail */
+.crumb{font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--faint);padding:26px 0 0;text-transform:uppercase}
+.crumb a:hover{color:var(--acc)}
+.dgrid{display:grid;grid-template-columns:320px 1fr;gap:52px;padding:30px 0 70px}
+.dcover{border:1px solid var(--line2);height:320px;box-shadow:0 40px 80px rgba(0,0,0,.5)}
+.dtitle{font-family:var(--serif);font-weight:500;font-size:44px;line-height:1.1;margin:8px 0 6px}
+.dsub{color:var(--dim);font-size:18px;margin-bottom:20px}
+.metatab{font-family:var(--mono);font-size:12px;color:var(--dim);border-top:1px solid var(--line);margin:20px 0}
+.metatab div{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}
+.metatab span{color:var(--faint);letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+.metatab a:hover{color:var(--acc)}
+.explain{font-size:18px;line-height:1.9;color:var(--ink);max-width:620px}
+.quoted{border-left:2px solid var(--acc);padding-left:18px;font-family:var(--serif);font-size:20px;line-height:1.7;font-style:italic;color:var(--ink)}
+/* why layers */
+.layer{padding:34px 0;border-top:1px solid var(--line)}
+.layer .lnum{font-family:var(--serif);font-style:italic;font-size:18px;color:var(--acc);margin-bottom:6px}
+.layer h3{font-family:var(--mono);font-size:12px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+/* taste connection */
+.tconn{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+.tnode{border:1px solid var(--line2);background:var(--bg2);padding:14px 18px;min-width:170px}
+.tnode .tk{font-family:var(--mono);font-size:12px;letter-spacing:.22em;color:var(--faint);text-transform:uppercase;margin-bottom:6px}
+.tnode .tv{font-family:var(--serif);font-size:16px;line-height:1.35}
+.tnode.cur{border-color:var(--acc)}
+.tnode.cur .tv{color:var(--acc);font-style:italic}
+.tarrow{display:flex;align-items:center;padding:0 12px;color:var(--faint);font-family:var(--mono)}
+/* route */
+.routelist{max-width:560px}
+.rstep{display:flex;gap:16px;align-items:flex-start}
+.rstep .rk{width:22px;font-family:var(--mono);font-size:12px;color:var(--acc);padding-top:3px;text-align:center;flex:none}
+.rstep .rv{padding:0 0 4px}
+.rstep .rv .l1{font-size:18px}
+.rstep .rv .l2{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--faint);text-transform:uppercase}
+.rline{width:22px;display:flex;justify-content:center;color:var(--faint);font-family:var(--mono);font-size:12px;padding:0 0 10px}
+/* evidence */
+.evgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+.evcard{border:1px solid var(--line2);background:var(--panel);padding:18px 20px}
+.evcard .ek{font-family:var(--mono);font-size:12px;letter-spacing:.26em;color:var(--acc);text-transform:uppercase;margin-bottom:10px}
+.evcard .ep{font-family:var(--serif);font-size:16px;margin-bottom:8px}
+.evcard .ed{color:var(--dim);font-size:14px;line-height:1.65;margin-bottom:12px}
+.evmeta{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.1em;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.badge{padding:2px 8px;border:1px solid;letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+.b-confirmed{color:#8fce9b;border-color:#2f4a35}
+.b-has-source{color:#9db8d9;border-color:#33415a}
+.b-pending{color:#d9b96a;border-color:#57491f}
+.b-speculative{color:#d98a7a;border-color:#572d24}
+.b-computed{color:var(--dim);border-color:var(--line2)}
+/* axes */
+.axbar{display:grid;grid-template-columns:150px 1fr 40px;gap:14px;align-items:center;margin:7px 0;font-family:var(--mono);font-size:12px}
+.axbar .an{color:var(--dim);letter-spacing:.14em;text-transform:uppercase}
+.axbar .tr{height:3px;background:var(--line)}
+.axbar .fl{height:3px;background:var(--acc)}
+.axbar .av{color:var(--faint);text-align:right}
+/* taste map */
+.islands{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;padding:26px 0 60px}
+.island{border:1px solid var(--line);background:var(--bg2);padding:26px}
+.island .code{font-family:var(--serif);font-style:italic;font-size:18px;color:var(--acc)}
+.island h3{font-family:var(--serif);font-weight:500;font-size:26px;margin:4px 0 10px}
+.island .genres{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase;line-height:2;margin-bottom:14px}
+.island p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:16px}
+.island .rep{font-family:var(--mono);font-size:12px;color:var(--faint);line-height:2;border-top:1px solid var(--line);padding-top:12px}
+.island:hover{border-color:var(--line2);cursor:pointer}
+.disclaim{border:1px dashed var(--line2);padding:16px 20px;font-family:var(--mono);font-size:12px;letter-spacing:.1em;color:var(--faint);margin-bottom:50px}
+/* sources */
+.srccard{border:1px solid var(--line);background:var(--bg2);padding:24px 26px;display:grid;grid-template-columns:1fr auto;gap:20px;margin-bottom:16px}
+.srccard h3{font-family:var(--serif);font-weight:500;font-size:20px}
+.srccard .via{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.1em;margin:6px 0 12px}
+.srccard .st{font-family:var(--mono);font-size:12px;letter-spacing:.18em;padding:4px 10px;border:1px solid #2f4a35;color:#8fce9b;display:inline-block}
+.srccard .st.archived{border-color:var(--line2);color:var(--faint)}
+.flow{border:1px solid var(--line2);background:var(--panel);padding:26px;margin:18px 0 26px;display:none}
+.flow.on{display:block}
+.workflow-panel{border:1px solid var(--line2);background:var(--bg2);padding:26px;margin:26px 0 18px}
+.workflow-panel h3{font-family:var(--serif);font-size:24px;font-weight:500;margin-bottom:6px}
+.workflow-panel .hint{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
+.wf-form{display:grid;grid-template-columns:1fr 1.6fr 130px;gap:12px;align-items:end}
+.wf-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.wf-field label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
+.wf-field input,.wf-field select{font:inherit;font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:10px 12px;min-height:42px;outline:none}
+.wf-field input:focus,.wf-field select:focus{border-color:var(--acc)}
+.wf-field.has-error label{color:#d99a5b}
+.wf-field input[aria-invalid="true"]{border-color:var(--acc);box-shadow:inset 0 -1px 0 var(--acc)}
+.wf-error{display:none;border-left:2px solid var(--acc);background:rgba(200,98,47,.08);color:#d99a5b;font-family:var(--mono);font-size:12px;letter-spacing:.08em;line-height:1.5;padding:6px 10px}
+.wf-field.has-error .wf-error{display:block}
+.wf-field.hidden{display:none}
+.wf-actions{display:flex;gap:10px;align-items:end;align-self:start;margin-top:23px}
+.wf-actions .btn{min-height:42px;white-space:nowrap}
+.wf-actions .btn:disabled{opacity:.45;cursor:not-allowed}
+.wf-meta{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;margin-top:14px;line-height:1.8}
+.wf-events{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+.wf-event{display:flex;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--dim)}
+.wf-event .stamp{color:var(--faint);min-width:70px}
+.wf-event.done{color:var(--ink)}
+.wf-event.fail{color:#d98a7a}
+.fstep{font-family:var(--mono);font-size:14px;color:var(--faint);padding:9px 0;letter-spacing:.06em}
+.fstep.done{color:var(--ink)}
+.fstep.done::before{content:"— ";color:var(--acc)}
+.fstep::before{content:"· "}
+.wf-dashboard{display:grid;gap:18px}
+.wf-stagebar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;border-top:1px solid var(--line);padding-top:14px}
+.wf-stage{min-width:0;border-top:2px solid var(--line2);padding-top:8px;color:var(--faint);font-family:var(--mono);font-size:11px;letter-spacing:.08em}
+.wf-stage.current{border-top-color:var(--acc);color:var(--acc)}
+.wf-stage.done{border-top-color:#70947d;color:var(--ink)}
+.wf-stage-index{display:block;font-size:10px;color:var(--faint);margin-bottom:3px}
+.wf-stage.current .wf-stage-index{color:var(--acc)}
+.wf-stage.done .wf-stage-index{color:#8fce9b}
+.wf-stage-label{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf-stage-state{display:block;margin-top:3px;color:var(--faint);font-size:10px;letter-spacing:.04em}
+.wf-stage.current .wf-stage-state{color:#d99a5b}
+.wf-stage.done .wf-stage-state{color:#8fce9b}
+.wf-summary{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:13px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--dim)}
+.wf-summary-main{color:var(--ink)}
+.wf-summary-count{color:var(--acc)}
+.wf-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wf-task-panel{min-width:0;border:1px solid var(--line);padding:16px 18px;background:rgba(0,0,0,.08)}
+.wf-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:9px}
+.wf-panel-head h4{font-family:var(--serif);font-weight:500;font-size:18px;color:var(--ink)}
+.wf-panel-stat{font-family:var(--mono);font-size:11px;color:var(--acc);white-space:nowrap}
+.wf-panel-note{min-height:38px;padding:10px 0 8px;color:var(--dim);font-family:var(--mono);font-size:11px;line-height:1.7}
+.wf-task-list{border-top:1px solid var(--line)}
+.wf-task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--dim)}
+.wf-task-row:last-child{border-bottom:0}
+.wf-task-name{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf-task-detail{display:block;color:var(--faint);font-size:10px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf-task-state{color:var(--faint);white-space:nowrap}
+.wf-task-row.running .wf-task-state{color:#d99a5b}
+.wf-task-row.done .wf-task-state{color:#8fce9b}
+.wf-task-row.failed .wf-task-state{color:#d98a7a}
+.wf-task-row.waiting{opacity:.62}
+.wf-events-title{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--faint);margin-bottom:7px}
+@media (max-width:900px){.wf-detail-grid{grid-template-columns:1fr}}
+.grp{margin:30px 0}
+.grp h4{font-family:var(--mono);font-size:12px;letter-spacing:.26em;color:var(--faint);text-transform:uppercase;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.sres{display:flex;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.sres:hover{background:var(--bg2)}
+.sres .t{font-family:var(--serif);font-size:18px}
+.sres .a{color:var(--dim);font-size:14px}
+/* tracklist */
+.trk{display:flex;gap:16px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer}
+.trk:hover{background:var(--bg2)}
+.trk .n{font-family:var(--mono);color:var(--faint);width:26px;font-size:12px;padding-top:2px}
+.trk.reco .t{color:var(--acc)}
+.trk .t{font-family:var(--serif);font-size:16px}
+.trk .why{margin-left:auto;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--gold);align-self:center}
+/* filter tabs */
+.tabs{display:flex;gap:8px;padding:20px 0 8px;flex-wrap:wrap}
+.tab{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;padding:8px 14px;border:1px solid var(--line);color:var(--dim);cursor:pointer}
+.tab:hover{border-color:var(--line2);color:var(--ink)}
+.tab.on{border-color:var(--acc);color:var(--acc)}
+/* toast */
+#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:12px;letter-spacing:.08em;padding:13px 22px;transition:.3s;z-index:99;pointer-events:none;max-width:80vw}
+#toast.on{transform:translateX(-50%) translateY(0)}
+body:not(.atlas-ready) #app{visibility:hidden}
+.atlas-status{border-bottom:1px solid #57491f;background:#18140d;color:#d9b96a}
+.atlas-status .wrap{padding-top:9px;padding-bottom:9px;font-family:var(--mono);font-size:12px;letter-spacing:.08em}
+.empty-state{border:1px dashed var(--line2);padding:24px;color:var(--dim);font-family:var(--mono);font-size:13px}
+.load-state{min-height:70vh;display:grid;place-items:center;color:var(--dim);font-family:var(--mono);font-size:14px;letter-spacing:.08em}
+footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px}
+.ft{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--faint);text-transform:uppercase;line-height:2.2;flex-wrap:wrap;gap:10px}
+.proto-note{font-family:var(--mono);font-size:12px;letter-spacing:.24em;color:var(--faint);text-transform:uppercase;border:1px dashed var(--line2);display:inline-block;padding:5px 12px;margin-bottom:18px}
+.big-sec-title{font-family:var(--serif);font-weight:500;font-size:40px;margin:14px 0 8px}
+.axis-duo{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:18px}
+@media (max-width:1000px){.trow{grid-template-columns:44px 70px 1fr;gap:16px}.trow>*{padding:16px 0}.trow .info{padding:16px 0}.trow .info::after,.trow .ol::after{display:none}.trow .ol,.trow .plcol{display:none}.collage{display:none}.dgrid{grid-template-columns:1fr}.islands,.cards3,.outgrid{grid-template-columns:1fr}.chain{grid-template-columns:1fr}.axis-duo{grid-template-columns:1fr}}
+@media (max-width:760px){.wf-form{grid-template-columns:1fr}.wf-actions{align-items:stretch;margin-top:0}.wf-actions .btn{width:100%}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+<script>
+/* ================= DATA (loaded from /api/atlas) ================= */
+let ISSUE={};
+let AXES=[];
+let INTERESTS=[];
+let RECS=[];
+let ARTISTS={};
+let ALBUMS={};
+let SOURCES=[];
+let WORKFLOW={analysis_executor_configured:false,recommendation_executor_configured:false,analysis_parallelism:5,recommendation_parallelism:4};
+let ACTIVE_JOB_ID=null;
+let workflowPollTimer=null;
+let workflowEventSource=null;
+let workflowStreamId=null;
+let workflowClockTimer=null;
+let workflowFinishedJobId=null;
+
+/* ================= HELPERS ================= */
+const hueFor=s=>{let h=0;for(const c of String(s))h=(h*31+c.charCodeAt(0))%360;return h;};
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+ const byId=id=>RECS.find(r=>r.id===decodeURIComponent(id||""));
+const intBy=id=>INTERESTS.find(i=>i.id===id);
+const metaKey=(artist,track)=>artist+"|"+track;
+const metaCache={}; // artist|track → Promise
+function fetchMeta(artist,track){const k=metaKey(artist,track);if(!metaCache[k])metaCache[k]=fetch(`/api/meta?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`).then(r=>r.json()).catch(()=>({ok:false}));return metaCache[k];}
+/* 渲染后扫描封面占位与链接锚点，异步填充真实封面 / 三平台歌曲链接 */
+function hydrate(rootEl){
+ const covers=rootEl.querySelectorAll(".cover[data-artist]");
+ const links=rootEl.querySelectorAll("a[data-songlink]");
+ let pending=covers.length;
+ const reveal=()=>{document.body.classList.add("covers-ready");};
+ if(pending===0)reveal();
+ covers.forEach(el=>{
+  if(el.dataset.done){if(--pending===0)reveal();return;}
+  el.dataset.done="1";
+  fetchMeta(el.dataset.artist,el.dataset.track).then(m=>{
+   if(m&&m.ok&&m.cover){const img=document.createElement("img");img.className="cover-img";img.alt="";img.referrerPolicy="no-referrer";img.src=m.cover;img.onload=()=>{el.classList.add("has-img");if(--pending===0)reveal();};img.onerror=()=>{if(--pending===0)reveal();};el.appendChild(img);}
+   else{if(--pending===0)reveal();}
+  }).catch(()=>{if(--pending===0)reveal();});
+ });
+ links.forEach(a=>{
+  if(a.dataset.done)return;a.dataset.done="1";
+  const [artist,track,plat]=a.dataset.songlink.split("||");
+  fetchMeta(artist,track).then(m=>{
+   const url=m&&m.ok&&m.links?m.links[plat]:null;
+   if(url){a.href=url;a.classList.remove("wait");}
+   else{a.classList.remove("wait");a.classList.add("nodata");a.title="未能解析到具体歌曲，请到平台搜索";}
+  });
+ });
+}
+const cover=(hue,label,o)=>{o=o||{};const data=(o.artist&&o.track)?` data-artist="${esc(o.artist)}" data-track="${esc(o.track)}"`:"";return `<div class="cover ${o.cls||""}" style="${o.style||""}--cover-fallback:linear-gradient(140deg,hsl(${hue} 42% 26%),hsl(${(hue+50)%360} 55% 11%))"${data}>${o.mini?"":'<div class="cl">MA·024</div><div class="frame"></div>'}<span class="ci"${o.ci?` style="${o.ci}"`:""}>${esc(label)}</span></div>`;};
+const repKey=i=>{const p=(i.repTracks[0]||"").split(" — ");return {artist:p[0]||"",track:p[1]||""};};
+const tcls=t=>t==="style"?"t-style":t==="ext"?"t-ext":t==="rel"?"t-rel":"t-exp";
+const typeChip=r=>`<span class="typechip ${tcls(r.type)}">${r.typeLabel}</span>`;
+const badgeCls=s=>({confirmed:"b-confirmed",pending:"b-pending","has-source":"b-has-source",speculative:"b-speculative",computed:"b-computed"}[s]||"b-computed");
+const badgeTxt=s=>({confirmed:"已确认",pending:"待二次验证","has-source":"有来源支持",speculative:"推测性关系",computed:"程序计算"}[s]||s);
+const PLAT=[
+ ["apple","在 Apple Music 打开"],
+ ["netease","网易云音乐"],
+ ["qq","QQ 音乐"]];
+const openBtns=r=>PLAT.map(([k,l])=>`<a class="plink wait" data-songlink="${esc(r.artist)}||${esc(r.track)}||${k}" href="#" target="_blank" rel="noopener">${l} ↗</a>`).join("");
+const openRow=r=>`<div class="plcol">${openBtns(r)}</div>`;
+let toastT;
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),2600);}
+function radar(a,color,size){size=size||190;const c=size/2,R=c-26;const pt=(i,v)=>{const ang=Math.PI*2*i/8-Math.PI/2;const r=R*v/100;return[c+Math.cos(ang)*r,c+Math.sin(ang)*r].map(n=>n.toFixed(1)).join(",");};
+ let grid="";[.25,.5,.75,1].forEach(g=>{grid+=`<polygon points="${AXES.map((_,i)=>pt(i,g*100)).join(" ")}" fill="none" stroke="#2b251d" stroke-width="1"/>`;});
+ const labels=AXES.map((ax,i)=>{const ang=Math.PI*2*i/8-Math.PI/2;const x=c+Math.cos(ang)*(R+14),y=c+Math.sin(ang)*(R+14);return`<text x="${x.toFixed(1)}" y="${(y+3).toFixed(1)}" text-anchor="middle" font-size="12" font-family="Cormorant Garamond,思源宋体 CN,serif" fill="#6e6759">${ax[0]}</text>`;}).join("");
+ const value=(key)=>{const v=a&&a[key];return typeof v==="number"&&Number.isFinite(v)?v:null;};
+ const poly=`<polygon points="${AXES.map((ax,i)=>pt(i,value(ax[0])===null?0:value(ax[0]))).join(" ")}" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-width="1.5"/>`;
+ const dots=AXES.map((ax,i)=>{const p=pt(i,value(ax[0])===null?0:value(ax[0])).split(",");return`<circle cx="${p[0]}" cy="${p[1]}" r="2.2" fill="${color}"/>`;}).join("");
+ return`<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${grid}${poly}${dots}${labels}</svg>`;}
+ const axisBars=a=>AXES.map(([k,n])=>{const v=a&&typeof a[k]==="number"?a[k]:null;return`<div class="axbar"><span class="an">${n.split(" · ")[0]}</span><div class="tr"><div class="fl" style="width:${v===null?0:v}%"></div></div><span class="av">${v===null?"—":v}</span></div>`;}).join("");
+const routeHTML=route=>route.map((s,i)=>{const [k,l,t]=s;const sym={int:"◈",style:"◇",move:"↓",rel:"◉",artist:"▲",track:"●"}[k]||"·";const tZH={int:"你的版图",style:"风格族群",move:"移动",rel:"音乐人关系",artist:"候选艺人",track:"结果"}[k]||t;
+ return`<div class="rstep"><div class="rk">${sym}</div><div class="rv"><div class="l2">${tZH}</div><div class="l1">${esc(l)}</div></div></div>`+(i<route.length-1?`<div class="rline">│</div>`:"");}).join("");
+const tasteHTML=t=>`<div class="tconn">${t.map((v,i)=>{const last=i===t.length-1;return`<div class="tnode ${last?"cur":""}"><div class="tk">${["起点","代表曲目","连接","推荐结果"][i]||""}</div><div class="tv">${esc(v)}</div></div>`+(last?"":`<div class="tarrow">→</div>`);}).join("")}</div>`;
+ const evHTML=evs=>`<div class="evgrid">${evs.map(e=>`<div class="evcard"><div class="ek">${e.kind} · ${esc(e.provider)}</div><div class="ed">${esc(e.detail)}</div><div class="evmeta"><span>获取于 ${e.retrieved}</span><span>等级 ${e.grade}</span><span class="badge ${badgeCls(e.status)}">${badgeTxt(e.status)}</span></div></div>`).join("")}</div>`;
+
+ let ATLAS=null;
+ const statusText=s=>({complete:"已完成",completed:"已完成",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"研究草稿",pending_verification:"待独立核验",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知"}[s]||s||"未知");
+ function statusBanner(){
+  if(!ATLAS||!ATLAS.status)return"";
+  const s=ATLAS.status;const notes=[];
+  if(s.publication==="draft")notes.push("研究草稿");
+  if(s.evidence_audit==="pending_verification")notes.push("公开事实待独立核验");
+  if(s.profile_coverage_degraded)notes.push("画像覆盖不足");
+  if(s.recommendation==="insufficient_evidence")notes.push("证据不足，暂无正式推荐");
+  if(!notes.length)return"";
+  return`<div class="atlas-status"><div class="wrap">状态：${notes.map(esc).join(" · ")}</div></div>`;
+ }
+ function applyAtlasPayload(payload){
+  ATLAS=payload;ISSUE=payload.issue||{};AXES=payload.axes||AXES;INTERESTS=payload.interests||[];RECS=payload.recommendations||[];
+  ARTISTS=payload.artists||{};ALBUMS=payload.albums||{};SOURCES=payload.sources||[];
+  if(ISSUE.title)document.title="Music Atlas · "+ISSUE.title;
+ }
+ function applyWorkflowConfig(payload){WORKFLOW=payload&&payload.workflow?payload.workflow:WORKFLOW;if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;}
+ async function bootAtlas(){
+  const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
+  const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
+  const [configResult,atlasResult]=await Promise.allSettled([configPromise,atlasPromise]);
+  if(configResult.status==="fulfilled"&&configResult.value&&configResult.value.ok)applyWorkflowConfig(configResult.value);
+  if(atlasResult.status==="fulfilled")applyAtlasPayload(atlasResult.value);
+  else{ATLAS=null;ISSUE={title:"当前 Atlas"};}
+  document.body.classList.add("atlas-ready");render();
+ }
+
+/* ================= HEADER / FOOTER ================= */
+const NAV=[["#/discover","发现"],["#/atlas","Atlas"],["#/taste","音乐版图"],["#/sources","推荐源"]];
+const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav></div></header>${statusBanner()}`;
+const footer=()=>`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span><span>${ATLAS?statusText(ATLAS.status.publication):"数据加载中"}</span></div></footer>`;
+
+/* ================= VIEWS ================= */
+function vDiscover(){
+ const n=RECS.length;
+ const collageSpec=[
+  "left:0;top:30px;width:220px;height:220px;transform:rotate(-4deg);z-index:3;",
+  "left:190px;top:0;width:190px;height:190px;transform:rotate(3deg);z-index:2;",
+  "left:60px;top:170px;width:180px;height:180px;transform:rotate(6deg);z-index:4;",
+  "left:280px;top:170px;width:170px;height:170px;transform:rotate(-2deg);z-index:1;",
+ ];
+ const collage=RECS.slice(0,4).map((r,i)=>cover(r.hue,r.track,{cls:"cc",style:collageSpec[i],ci:"font-size:24px",artist:r.artist,track:r.track})).join("");
+ const related=RECS.filter(r=>r.type==="rel")[0];
+ const explorers=RECS.filter(r=>r.type==="exp").slice(0,2);
+ return`
+<section class="hero"><div class="wrap" style="position:relative">
+ <h1>十张唱片，<br><em>轨道之外。</em></h1>
+ <p class="lede">${esc(ISSUE.lede||"本期 Atlas 数据尚未提供编辑摘要。")}</p>
+ <div class="collage">${collage}</div>
+</div></section>
+<div class="wrap">
+ <section class="sec">
+  <div class="sec-hd"><h2>Atlas</h2><span class="sub">${n} 首 · 按综合排序</span></div>
+  ${n?RECS.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join(""):`<div class="empty-state">当前运行没有可展示的推荐结果。</div>`}
+ </section>
+ <section class="sec">
+  <div class="sec-hd"><h2>轨道延伸</h2><span class="sub">从本期兴趣组向外一步</span></div>
+  <div class="cards3">${RECS.slice(0,3).map(r=>`<div class="card" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track,{style:"height:230px;",ci:"font-size:36px",artist:r.artist,track:r.track})}<div class="cbody">${typeChip(r)}<h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)}</div><p>${esc(r.oneLiner)}</p></div></div>`).join("")||`<div class="empty-state">暂无轨道延伸。</div>`}</div>
+ </section>
+ <section class="sec">
+  <div class="sec-hd"><h2>音乐人链路</h2><span class="sub">${related?"音乐人关系 · 本期路径":"本期没有音乐人关系推荐"}</span></div>
+  ${related?`<div class="chain"><div><div class="kicker">音乐人关系</div><div class="chainbig">${esc(related.artist)}<br><span style="color:var(--dim);font-size:12px;font-style:normal;margin-bottom:6px;display:inline-block">→ 关系路径</span><br>${esc(related.track)}</div><p class="lede" style="margin-top:14px;font-size:16px">${esc(related.oneLiner)}</p></div><div class="chainstep-col">${related.route.map(s=>`<div class="chainstep"><span class="node"></span><span>${esc(s[1])}</span><span class="ln"></span></div>`).join("")}</div></div>`:`<div class="empty-state">当前推荐包没有音乐人关系路径。</div>`}
+ </section>
+ <section class="sec">
+  <div class="sec-hd"><h2>更远处</h2><span class="sub">主动离开舒适区 · 探索推荐</span></div>
+  <div class="outgrid">${explorers.map(r=>`<div class="outcard" data-go="#/why/${encodeURIComponent(r.id)}"><div class="ob">轨道之外 · ${r.typeLabel}</div><h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)} · ${esc(r.album)}${r.year&&r.year!=="—"?` (${r.year})`:""}</div><p>${esc(r.oneLiner)}</p></div>`).join("")||`<div class="empty-state">本期没有探索推荐。</div>`}</div>
+ </section>
+</div>`;}
+function vAtlas(f){f=f||"all";const list=RECS.filter(r=>f==="all"||r.type===f);
+ const tabs=[["all",`全部 ${RECS.length} 首`],["style","风格邻近"],["ext","艺人延伸"],["rel","音乐人关系"],["exp","探索推荐"]];
+ return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / Atlas</div>
+ <h1 class="big-sec-title">Atlas</h1>
+ <div class="tabs">${tabs.map(([k,l])=>`<span class="tab ${f===k?"on":""}" data-tab="${k}">${l}</span>`).join("")}</div>
+ ${list.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join("")||`<div class="empty-state">当前筛选没有结果。</div>`}
+ <div style="height:60px"></div></div>`;}
+function vWhy(id){const r=byId(id);if(!r)return v404();
+ return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / <a href="#/atlas">Atlas</a> / 推荐依据</div>
+ <div class="dgrid"><div>
+   <div class="dcover">
+   ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",artist:r.artist,track:r.track})}
+ </div>
+   ${openBtns(r)}
+ </div><div>
+  <div class="proto-note">${r.typeLabel} · 第 ${String(r.rank).padStart(2,"0")} 位</div>
+  <h1 class="dtitle">${esc(r.track)}</h1>
+  <div class="dsub"><a href="#/artist/${encodeURIComponent(r.artist)}" style="border-bottom:1px solid var(--line2)">${esc(r.artist)}</a> · <a href="#/album/${encodeURIComponent(r.album)}" style="border-bottom:1px solid var(--line2)">${esc(r.album)}</a> · ${r.year}</div>
+  <div class="layer"><div class="lnum">I.</div><h3>这首为什么找到你</h3><p class="quoted">${esc(r.why)}</p></div>
+  <div class="layer"><div class="lnum">II.</div><h3>品味连接</h3>${tasteHTML(r.taste)}</div>
+  <div class="layer"><div class="lnum">III.</div><h3>发现路径</h3><div class="routelist">${routeHTML(r.route)}</div></div>
+  <div class="layer"><div class="lnum">IV.</div><h3>来源与证据</h3>${evHTML(r.evidence)}</div>
+  <div class="layer"><div class="lnum">V.</div><h3>听感轴对照</h3><div class="axis-duo"><div>${axisBars(r.axis)}</div><div>${radar(r.axis,"#c8622f",230)}<div class="disclaim" style="margin-top:10px">描述性画像 · 非实测音频特征</div></div></div></div>
+ </div></div></div>`;}
+function vTrack(id){const r=byId(id);if(!r)return v404();
+ const interest=intBy(r.interest);
+ return`<div class="wrap"><div class="crumb"><a href="#/atlas">Atlas</a> / 曲目</div>
+ <div class="dgrid"><div>
+  ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",artist:r.artist,track:r.track})}
+  ${openBtns(r)}
+ </div><div>
+  <div class="proto-note">${r.typeLabel} · 第 ${String(r.rank).padStart(2,"0")} 位</div>
+  <h1 class="dtitle">${esc(r.track)}</h1>
+  <div class="dsub">${esc(r.artist)}</div>
+  <div class="metatab">
+   <div><span>发行项目</span><a href="#/album/${encodeURIComponent(r.album)}">${esc(r.album)}</a></div>
+   <div><span>年份</span>${r.year||"—"}</div>${r.country?`<div><span>地区</span>${esc(r.country)}</div>`:""}
+   <div><span>兴趣岛</span>${interest?`<a href="#/interest/${encodeURIComponent(interest.id)}">${esc(interest.code+" · "+interest.name)}</a>`:"—"}</div>
+  </div>
+  <p class="quoted" style="margin:18px 0">${esc(r.oneLiner)}</p>
+  <p class="explain">${esc(r.why)}</p>
+  <div style="margin:22px 0"><h3 class="kicker" style="margin-bottom:12px">发现路径</h3><div class="routelist">${routeHTML(r.route)}</div></div>
+   <a class="btn primary" href="#/why/${encodeURIComponent(r.id)}">查看推荐依据 ↗</a>
+ </div></div></div>`;}
+function vAlbum(name){const al=ALBUMS[decodeURIComponent(name)];if(!al)return v404();
+ const nm=decodeURIComponent(name);
+ const recsHere=RECS.filter(r=>r.album===nm);const r0=recsHere[0];
+ return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 专辑</div>
+ <div class="dgrid"><div>
+  ${cover(r0?r0.hue:220,nm.substring(0,2),{style:"height:320px;",ci:"font-size:56px",artist:al.artist,track:recsHere[0]?recsHere[0].track:al.tracks[0]})}
+  ${r0?openBtns(r0):""}
+ </div><div>
+   <div class="proto-note">发行项目</div>
+  <h1 class="dtitle">${esc(nm)}</h1>
+   <div class="dsub">${al.artist?`<a href="#/artist/${encodeURIComponent(al.artist)}" style="border-bottom:1px solid var(--line2)">${esc(al.artist)}</a> · `:""}${al.year&&al.year!=="—"?al.year:""}${al.label&&al.label!=="—"?" · "+esc(al.label):""}</div>
+  <p class="explain" style="margin-bottom:20px">${esc(al.blurb)}</p>
+  <div class="metatab"><div><span>曲目数</span>${al.tracks.length}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>esc(r.track)).join(" · "):"—"}</div></div>
+  <h3 class="kicker" style="margin:14px 0 8px">曲目列表</h3>
+   ${al.tracks.length?al.tracks.map((t,i)=>{const rec=recsHere.find(r=>r.track===t);return`<div class="trk ${rec?"reco":""}" ${rec?`data-go="#/track/${encodeURIComponent(rec.id)}"`:""}><span class="n">${String(i+1).padStart(2,"0")}</span><span class="t">${esc(t)}</span>${rec?`<span class="why">入选曲目 ↗</span>`:""}</div>`;}).join(""):`<div class="empty-state">当前运行没有该发行项目的曲目清单。</div>`}
+ </div></div></div>`;}
+function vArtist(name){const nm=decodeURIComponent(name);const a=ARTISTS[nm];
+ if(!a){return v404("艺术家研究记录尚未建立");}
+ const recsHere=RECS.filter(r=>r.artist===nm);
+ const anchor=INTERESTS.find(i=>i.artists.includes(nm));
+ const rep=anchor?repKey(anchor):null;
+ const axis=a.axis|| (recsHere[0]?recsHere[0].axis:(anchor?anchor.axes:null));
+ return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 艺术家</div>
+ <div class="dgrid"><div>
+  ${cover(hueFor(nm),nm,{style:"height:320px;",ci:"font-size:44px;font-style:normal;letter-spacing:.04em",artist:nm,track:recsHere[0]?recsHere[0].track:(rep?rep.track:"")})}
+  ${recsHere[0]?openBtns(recsHere[0]):""}
+ </div><div>
+  <div class="proto-note">艺术家档案 · 研究笔记</div>
+  <h1 class="dtitle">${esc(nm)}</h1>
+  <div class="dsub">${[a.origin,a.years].filter(Boolean).map(esc).join(" · ")}</div>
+  <p class="explain">${esc(a.bio||"本期研究未提供艺人简介。")}</p>
+  <div class="metatab"><div><span>风格</span>${esc((a.genres||[]).join(" / ")||"—")}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>`<a href="#/track/${encodeURIComponent(r.id)}">${esc(r.track)}</a>`).join(" · "):"—"}</div><div><span>品味连接</span>${anchor?`<a href="#/interest/${encodeURIComponent(anchor.id)}">${esc(anchor.code+" · "+anchor.name)}</a>`:recsHere[0]&&intBy(recsHere[0].interest)?`<a href="#/interest/${encodeURIComponent(recsHere[0].interest)}">${esc(intBy(recsHere[0].interest).code+" · "+intBy(recsHere[0].interest).name)}</a>`:"—"}</div></div>
+  ${a.relations&&a.relations.length?`<h3 class="kicker" style="margin:16px 0 8px">艺术家关联</h3>${a.relations.map(([to,ty,note])=>`<div class="metatab" style="border-top:none"><div style="border-bottom:1px solid var(--line)"><span>${esc(ty)}</span><span style="color:var(--ink)">${esc(to)}</span></div><div style="border-bottom:none"><span>备注</span>${esc(note)}</div></div>`).join("")}`:""}
+  ${axis?`<h3 class="kicker" style="margin:16px 0 8px">听感画像</h3><div class="axis-duo"><div>${axisBars(axis)}</div><div>${radar(axis,"#c9a227",220)}<div class="disclaim" style="margin-top:8px">描述性画像 · 非实测音频特征</div></div></div>`:""}
+ </div></div></div>`;}
+function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 音乐版图</div>
+ <h1 class="big-sec-title">音乐版图</h1>
+ <p class="lede" style="max-width:640px">本期歌单被整理为 ${INTERESTS.length} 个兴趣区域，展示熟悉的声音，也标出下一步的延伸方向。</p>
+  <div class="islands">${INTERESTS.map(i=>{const ext=RECS.filter(r=>r.interest===i.id).length;
+   return`<div class="island" data-go="#/interest/${encodeURIComponent(i.id)}"><div class="code">${esc(i.code)} ·</div><h3>${esc(i.name)}</h3><div class="genres">${(i.genres||[]).map(esc).join("<br>")||"—"}</div><p>${esc(i.summary)}</p>${radar(i.axes,"hsl("+i.hue+" 45% 55%)",180)}<div class="rep">代表艺人<br>${(i.artists||[]).map(esc).join("<br>")||"—"}<br><br>延伸推荐 ${ext} 条 ↗</div></div>`;}).join("")||`<div class="empty-state">当前运行没有兴趣组。</div>`}</div>
+ <div class="disclaim">描述性画像 · 非实测音频特征 · 这些轴是研究得到的描述性估计，不是实际音频分析结果。</div></div>`;}
+ function vInterest(id){const interestId=decodeURIComponent(id||"");const i=intBy(interestId);if(!i)return v404();const ext=RECS.filter(r=>r.interest===interestId);
+ const rep=repKey(i);
+ return`<div class="wrap"><div class="crumb"><a href="#/taste">音乐版图</a> / 兴趣岛 ${i.code}</div>
+ <div class="dgrid"><div>
+  ${cover(i.hue,i.name,{style:"height:320px;",ci:"font-size:40px;font-style:normal",artist:rep.artist,track:rep.track})}
+ </div><div>
+  <div class="proto-note">兴趣岛 ${i.code}</div>
+  <h1 class="dtitle">${esc(i.name)}</h1>
+  <div class="dsub">${(i.genres||[]).map(esc).join(" · ")||"—"}</div>
+  <p class="explain">${esc(i.summary)}</p>
+  <div class="metatab"><div><span>核心艺人</span>${(i.artists||[]).map(a=>`<a href="#/artist/${encodeURIComponent(a)}">${esc(a)}</a>`).join(" · ")||"—"}</div><div><span>代表曲目</span>${(i.repTracks||[]).map(esc).join(" · ")||"—"}</div></div>
+  <h3 class="kicker" style="margin:16px 0 8px">听感轮廓</h3>
+  <div class="axis-duo"><div>${axisBars(i.axes)}</div><div>${radar(i.axes,"hsl("+i.hue+" 45% 55%)",220)}</div></div>
+  <h3 class="kicker" style="margin:22px 0 8px">延伸自本岛的推荐（${ext.length}）</h3>
+  ${ext.map(r=>`<div class="trk reco" data-go="#/why/${encodeURIComponent(r.id)}"><span class="n">${String(r.rank).padStart(2,"0")}</span><span class="t">${esc(r.track)} — ${esc(r.artist)}</span><span class="why">${r.typeLabel} ↗</span></div>`).join("")||`<div class="empty-state">当前兴趣组没有延伸推荐。</div>`}
+  <div style="height:60px"></div>
+ </div></div></div>`;}
+ const WORKFLOW_STAGE_ORDER=["snapshot","analysis","recommendation","export"];
+ const WORKFLOW_STAGE_LABELS={snapshot:"整理歌单",analysis:"分析歌单",recommendation:"生成推荐",export:"更新 Atlas",workflow:"歌单处理"};
+ function workflowStageLabel(stage){return WORKFLOW_STAGE_LABELS[stage]||"处理中";}
+ function workflowStageRank(stage){return WORKFLOW_STAGE_ORDER.indexOf(stage);}
+ function workflowEventText(event){
+  if(event.event==="queued")return"已加入处理队列";
+  if(event.event==="failed")return event.error?`本次处理未完成 · ${event.error}`:"本次处理未完成";
+  if(event.event==="stage_detail")return event.message||"正在准备当前阶段";
+  if(event.task_kind==="snapshot_import")return event.event==="task_completed"?`歌单已整理 · ${event.track_count||event.track_completed||0} 首`:"正在识别平台并拉取歌单";
+  if(event.task_kind==="analysis_batch"){
+   const index=event.task_index||0,total=event.task_total||0,count=event.track_count||0;
+   if(event.event==="task_started")return`第 ${index}/${total} 批进入分析 · ${count} 首`;
+   if(event.event==="task_completed")return`第 ${index}/${total} 批已完成 · 累计 ${event.track_completed||0}/${event.track_total||0} 首`;
+   if(event.event==="task_failed")return`第 ${index}/${total} 批未完成 · ${event.error||"请检查任务日志"}`;
+  }
+  if(event.task_kind==="analysis_aggregate")return event.event==="task_completed"?"分析包已校验，允许进入推荐阶段":"正在合并分析结果";
+  if(event.task_kind==="context_prepare")return event.event==="task_completed"?"推荐研究上下文已准备":"正在准备候选研究上下文";
+  if(event.task_kind==="recommendation_worker"){
+   const round=event.round||0,roundTotal=event.round_total||0,index=event.worker_index||event.task_index||0,total=event.worker_total||event.task_total||0;
+   if(event.event==="task_started")return`第 ${round}/${roundTotal} 轮 · 任务 ${index}/${total} 研究中`;
+   if(event.event==="task_completed")return`第 ${round}/${roundTotal} 轮 · 任务 ${index}/${total} 已返回`;
+   if(event.event==="task_failed")return`第 ${round}/${roundTotal} 轮 · 任务 ${index}/${total} 未完成`;
+  }
+  if(event.task_kind==="recommendation_round"){
+   if(event.event==="round_started")return event.message||`第 ${event.round||0}/${event.round_total||0} 轮开始`;
+   if(event.event==="round_completed")return event.message||`第 ${event.round||0} 轮完成 · 已接收 ${event.accepted_candidate_count||0} 个候选`;
+   if(event.event==="round_failed")return`第 ${event.round||0} 轮未完成 · ${event.error||"请检查任务日志"}`;
+  }
+  if(event.stage==="snapshot"&&event.event==="completed")return`歌单已整理 · ${event.track_count||0} 首`;
+  if(event.stage==="analysis"&&event.event==="started")return"开始分析歌单";
+  if(event.stage==="analysis"&&event.event==="completed")return`歌单分析完成 · ${event.classified_track_count||0} 首`;
+  if(event.stage==="recommendation"&&event.event==="started")return"开始生成推荐";
+  if(event.stage==="recommendation"&&event.event==="completed")return`推荐已生成 · ${event.recommendation_count||0} 首`;
+  if(event.stage==="export"&&event.event==="started")return"正在更新 Atlas";
+  if(event.stage==="export"&&event.event==="completed")return"Atlas 已更新";
+  return event.message||"正在处理中";
+ }
+ function workflowEventTime(value){
+  const raw=String(value||"");const date=new Date(raw);if(Number.isNaN(date.getTime()))return raw.slice(11,19);
+  return new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Shanghai",hourCycle:"h23",hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(date);
+ }
+ function workflowEventKey(event,index){return String(event&&event.seq!==undefined?event.seq:`legacy-${index}`);}
+ function workflowEventView(event){
+  const failed=event.event==="failed"||event.event==="task_failed"||event.event==="round_failed"||event.task_status==="failed"||event.task_status==="timeout";
+  const done=event.event==="completed"||event.event==="task_completed"||event.event==="round_completed"||event.task_status==="validated"||event.task_status==="published";
+  return{className:failed?"fail":done?"done":"",time:workflowEventTime(event.at),stage:workflowStageLabel(event.stage),text:workflowEventText(event)};
+ }
+ function workflowEventSignature(view){return JSON.stringify(view);}
+ function workflowEventMarkup(event,index){
+  const view=workflowEventView(event),key=workflowEventKey(event,index);return`<div class="wf-event ${view.className}" data-event-key="${esc(key)}" data-event-index="${index}" data-signature="${esc(workflowEventSignature(view))}"><span class="stamp">${esc(view.time)}</span><span class="event-copy"><b class="event-stage">${esc(view.stage)}</b> · <span class="event-text">${esc(view.text)}</span></span></div>`;
+ }
+ function updateWorkflowEventNode(node,view,index){
+  const signature=workflowEventSignature(view);node.dataset.eventIndex=String(index);if(node.dataset.signature===signature)return;
+  node.dataset.signature=signature;node.className=`wf-event ${view.className}`;
+  const stamp=node.querySelector(".stamp"),stage=node.querySelector(".event-stage"),text=node.querySelector(".event-text");
+  if(stamp&&stamp.textContent!==view.time)stamp.textContent=view.time;
+  if(stage&&stage.textContent!==view.stage)stage.textContent=view.stage;
+  if(text&&text.textContent!==view.text)text.textContent=view.text;
+ }
+ function workflowTaskState(event){return event.event==="task_failed"||event.task_status==="failed"||event.task_status==="timeout"?"failed":event.event==="task_started"||event.task_status==="running"?"running":"done";}
+ function workflowTaskRecords(events,kind,round){
+  const records=new Map();events.forEach((event,index)=>{
+   if(event.task_kind!==kind||!event.task_id||(round!==undefined&&Number(event.round)!==round))return;
+   const order=Number.isFinite(Number(event.seq))?Number(event.seq):index;const key=String(event.task_id);const prior=records.get(key);
+   if(!prior||order>=prior._order)records.set(key,{...event,_order:order});
+  });
+  return Array.from(records.values()).sort((a,b)=>{const stateRank={running:0,done:1,failed:2};const stateDiff=stateRank[workflowTaskState(a)]-stateRank[workflowTaskState(b)];return stateDiff||b._order-a._order;});
+ }
+ function workflowTaskMarkup(task,key,kind,waiting){
+  const state=waiting?"waiting":workflowTaskState(task);const name=waiting?"等待下一个任务":kind==="analysis_batch"?`第 ${task.task_index||"—"}/${task.task_total||"—"} 批分析`:`第 ${task.round||"—"}/${task.round_total||"—"} 轮 · 任务 ${task.worker_index||"—"}`;
+  const detail=waiting?"并行槽位空闲":kind==="analysis_batch"?`${task.track_count||0} 首${task.reused_result?" · 复用已完成结果":""}`:"候选研究分片";
+  const status=waiting?"等待":state==="running"?"进行中":state==="failed"?"失败":kind==="analysis_batch"?"已完成":"已返回";
+  return`<div class="wf-task-row ${state}" data-task-key="${esc(key)}"><div><span class="wf-task-name">${esc(name)}</span><span class="wf-task-detail">${esc(detail)}</span></div><span class="wf-task-state">${esc(status)}</span></div>`;
+ }
+ function updateWorkflowTaskNode(node,task,kind,waiting){
+  const state=waiting?"waiting":workflowTaskState(task);node.className=`wf-task-row ${state}`;
+  const name=waiting?"等待下一个任务":kind==="analysis_batch"?`第 ${task.task_index||"—"}/${task.task_total||"—"} 批分析`:`第 ${task.round||"—"}/${task.round_total||"—"} 轮 · 任务 ${task.worker_index||"—"}`;
+  const detail=waiting?"并行槽位空闲":kind==="analysis_batch"?`${task.track_count||0} 首${task.reused_result?" · 复用已完成结果":""}`:"候选研究分片";
+  const status=waiting?"等待":state==="running"?"进行中":state==="failed"?"失败":kind==="analysis_batch"?"已完成":"已返回";
+  const nameNode=node.querySelector(".wf-task-name"),detailNode=node.querySelector(".wf-task-detail"),statusNode=node.querySelector(".wf-task-state");
+  if(nameNode&&nameNode.textContent!==name)nameNode.textContent=name;if(detailNode&&detailNode.textContent!==detail)detailNode.textContent=detail;if(statusNode&&statusNode.textContent!==status)statusNode.textContent=status;
+ }
+ function workflowSyncTaskList(container,records,kind,slotCount){
+  if(!container)return;const desired=records.slice(0,slotCount).map((task)=>({task,key:String(task.task_id),waiting:false}));
+  for(let index=desired.length;index<slotCount;index++)desired.push({task:{},key:`empty-${kind}-${index}`,waiting:true});
+  const nodes=Array.from(container.querySelectorAll(".wf-task-row"));const keys=new Set(desired.map(item=>item.key));nodes.forEach(node=>{if(!keys.has(node.dataset.taskKey))node.remove();});
+  let cursor=container.firstElementChild;desired.forEach(item=>{
+   let node=Array.from(container.querySelectorAll(".wf-task-row")).find(candidate=>candidate.dataset.taskKey===item.key);
+   if(!node){container.insertAdjacentHTML("beforeend",workflowTaskMarkup(item.task,item.key,kind,item.waiting));node=Array.from(container.querySelectorAll(".wf-task-row")).find(candidate=>candidate.dataset.taskKey===item.key);}
+   if(node)updateWorkflowTaskNode(node,item.task,kind,item.waiting);
+   if(node&&node!==cursor)container.insertBefore(node,cursor);
+   cursor=node?node.nextElementSibling:cursor;
+  });
+ }
+ function workflowProgressView(job){
+  const events=Array.isArray(job.events)?job.events:[];let analysisTotal=0,analysisCompleted=0,analysisTrackTotal=0,analysisTrackCompleted=0,analysisAggregateDone=false;
+  let recommendationRound=0,recommendationRoundTotal=0,acceptedCandidates=0,candidateTarget=0;
+  events.forEach(event=>{
+   if(event.stage==="analysis"){
+    if(event.task_kind==="analysis_batch"||event.task_kind==="analysis_aggregate"){
+     if(Number.isFinite(Number(event.task_total)))analysisTotal=Math.max(analysisTotal,Number(event.task_total));
+     if(Number.isFinite(Number(event.completed)))analysisCompleted=Math.max(analysisCompleted,Number(event.completed));
+     if(Number.isFinite(Number(event.track_total)))analysisTrackTotal=Math.max(analysisTrackTotal,Number(event.track_total));
+     if(Number.isFinite(Number(event.track_completed)))analysisTrackCompleted=Math.max(analysisTrackCompleted,Number(event.track_completed));
+    }
+    if(event.task_kind==="analysis_aggregate"&&event.event==="task_completed")analysisAggregateDone=true;
+    if(Number.isFinite(Number(event.source_track_count)))analysisTrackTotal=Math.max(analysisTrackTotal,Number(event.source_track_count));
+   }
+   if(event.stage==="recommendation"){
+    if(Number.isFinite(Number(event.round)))recommendationRound=Math.max(recommendationRound,Number(event.round));
+    if(Number.isFinite(Number(event.round_total)))recommendationRoundTotal=Math.max(recommendationRoundTotal,Number(event.round_total));
+    if(Number.isFinite(Number(event.accepted_candidate_count)))acceptedCandidates=Math.max(acceptedCandidates,Number(event.accepted_candidate_count));
+    if(Number.isFinite(Number(event.candidate_target)))candidateTarget=Math.max(candidateTarget,Number(event.candidate_target));
+   }
+  });
+  const currentRound=recommendationRound||undefined;return{events,analysisTotal,analysisCompleted,analysisTrackTotal,analysisTrackCompleted,analysisAggregateDone,recommendationRound,recommendationRoundTotal,acceptedCandidates,candidateTarget,analysisTasks:workflowTaskRecords(events,"analysis_batch"),recommendationTasks:workflowTaskRecords(events,"recommendation_worker",currentRound)};
+ }
+ function workflowStageState(stage,job,events){
+  const completed=events.some(event=>event.stage===stage&&event.event==="completed");if(completed)return"done";
+  const current=workflowStageRank(job.stage),rank=workflowStageRank(stage);if(job.status==="queued")return stage==="snapshot"?"current":"pending";
+  if(current>=0&&rank<current)return"done";return stage===job.stage?"current":"pending";
+ }
+ function workflowElapsed(job){
+  const start=Date.parse(job.created_at||"");if(!Number.isFinite(start))return"—";const end=job.status==="queued"||job.status==="running"?Date.now():(Date.parse(job.updated_at||"")||Date.now());const seconds=Math.max(0,Math.floor((end-start)/1000));return`${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;
+ }
+ function workflowUpdateClock(job){
+  clearInterval(workflowClockTimer);workflowClockTimer=null;const flow=document.getElementById("flow");if(!flow||!flow.classList.contains("on"))return;const tick=()=>{const node=flow.querySelector("[data-wf-elapsed]");if(node)node.textContent=workflowElapsed(job);};tick();workflowClockTimer=setInterval(tick,1000);}
+ function renderWorkflowJob(job){
+  const flow=document.getElementById("flow");if(!flow||!job)return;const running=job.status==="queued"||job.status==="running";
+  if(!running){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
+  flow.classList.add("on");const jobId=String(job.id||"");let step=flow.querySelector(".fstep");
+  if(!step||flow.dataset.jobId!==jobId){
+   flow.innerHTML=`<div class="wf-dashboard"><div class="fstep"></div><div class="wf-stagebar" role="list">${WORKFLOW_STAGE_ORDER.map((stage,index)=>`<div class="wf-stage" data-stage="${stage}" role="listitem"><span class="wf-stage-index">0${index+1}</span><span class="wf-stage-label">${workflowStageLabel(stage)}</span><span class="wf-stage-state">等待</span></div>`).join("")}</div><div class="wf-summary"><span class="wf-summary-main" data-wf-summary>正在处理歌单</span><span data-wf-elapsed>00:00</span><span class="wf-summary-count" data-wf-count>准备中</span></div><div class="wf-detail-grid"><section class="wf-task-panel"><div class="wf-panel-head"><h4>第二步 · 歌单分析</h4><span class="wf-panel-stat" data-wf-stat="analysis">0/0 批</span></div><p class="wf-panel-note" data-wf-note="analysis">等待分析任务启动。</p><div class="wf-task-list" data-wf-tasks="analysis"></div></section><section class="wf-task-panel"><div class="wf-panel-head"><h4>第三步 · 生成推荐</h4><span class="wf-panel-stat" data-wf-stat="recommendation">等待</span></div><p class="wf-panel-note" data-wf-note="recommendation">等待第二步分析包校验。</p><div class="wf-task-list" data-wf-tasks="recommendation"></div></section></div><div class="wf-events"><div class="wf-events-title">最近事件 · 北京时间</div><div data-wf-events></div></div></div>`;
+   flow.dataset.jobId=jobId;step=flow.querySelector(".fstep");
+  }
+  const view=workflowProgressView(job),events=view.events,stepText=`正在处理歌单 · ${workflowStageLabel(job.stage)}`;if(step.textContent!==stepText)step.textContent=stepText;
+  WORKFLOW_STAGE_ORDER.forEach(stage=>{const node=flow.querySelector(`[data-stage="${stage}"]`);if(!node)return;const state=workflowStageState(stage,job,events);node.className=`wf-stage ${state}`;const label=node.querySelector(".wf-stage-label"),stateNode=node.querySelector(".wf-stage-state");if(label)label.textContent=workflowStageLabel(stage);if(stateNode)stateNode.textContent=state==="done"?"已完成":state==="current"?"进行中":"等待";});
+  const summary=flow.querySelector("[data-wf-summary]"),count=flow.querySelector("[data-wf-count]"),analysisNote=flow.querySelector('[data-wf-note="analysis"]'),recommendationNote=flow.querySelector('[data-wf-note="recommendation"]');
+  if(summary)summary.textContent=`${job.status==="queued"?"排队中":"正在处理"} · ${workflowStageLabel(job.stage)}`;
+  if(count)count.textContent=`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
+  const analysisStat=flow.querySelector('[data-wf-stat="analysis"]');if(analysisStat)analysisStat.textContent=`${view.analysisCompleted}/${view.analysisTotal} 批 · ${view.analysisTrackCompleted}/${view.analysisTrackTotal} 首`;
+  if(analysisNote)analysisNote.textContent=view.analysisAggregateDone?"分析包已校验，第三步已获得启动条件":`${WORKFLOW.analysis_parallelism||5} 个并行槽位 · 所有批次完成后才进入第三步`;
+  const recommendationStat=flow.querySelector('[data-wf-stat="recommendation"]');if(recommendationStat)recommendationStat.textContent=view.recommendationRound?`第 ${view.recommendationRound}/${view.recommendationRoundTotal||"—"} 轮 · ${view.acceptedCandidates}/${view.candidateTarget||"—"} 候选`:"等待分析包";
+  if(recommendationNote)recommendationNote.textContent=view.recommendationRound?`${WORKFLOW.recommendation_parallelism||4} 个并行槽位 · 仅在第二步完成并校验后启动第三步`:`等待第二步分析包校验。`;
+  workflowSyncTaskList(flow.querySelector('[data-wf-tasks="analysis"]'),view.analysisTasks,"analysis_batch",Number(WORKFLOW.analysis_parallelism)||5);
+  workflowSyncTaskList(flow.querySelector('[data-wf-tasks="recommendation"]'),view.recommendationTasks,"recommendation_worker",Number(WORKFLOW.recommendation_parallelism)||4);
+  const eventsContainer=flow.querySelector("[data-wf-events]"),visibleStart=Math.max(0,events.length-12),visible=events.slice(visibleStart),visibleKeys=new Set(visible.map((event,index)=>workflowEventKey(event,visibleStart+index)));
+  if(eventsContainer){Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).forEach(node=>{if(!visibleKeys.has(node.dataset.eventKey))node.remove();});if(!visible.length){if(!eventsContainer.querySelector("[data-placeholder]"))eventsContainer.insertAdjacentHTML("beforeend",'<div class="wf-event" data-placeholder>正在准备…</div>');}else{const placeholder=eventsContainer.querySelector("[data-placeholder]");if(placeholder)placeholder.remove();visible.forEach((event,offset)=>{const index=visibleStart+offset,key=workflowEventKey(event,index);let node=Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).find(candidate=>candidate.dataset.eventKey===key);const eventView=workflowEventView(event);if(node)updateWorkflowEventNode(node,eventView,index);else{eventsContainer.insertAdjacentHTML("beforeend",workflowEventMarkup(event,index));node=Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).find(candidate=>candidate.dataset.eventKey===key);}});}}
+  workflowUpdateClock(job);
+ }
+ async function refreshAtlas(){
+  try{const response=await fetch("/api/atlas",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){applyAtlasPayload(payload);render();}}catch{}
+ }
+ function setWorkflowButtonBusy(busy){const form=document.getElementById("workflow-form"),button=form&&form.querySelector("button[type=submit]");if(button)button.disabled=Boolean(busy)||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);}
+ function stopWorkflowStream(){if(workflowEventSource){workflowEventSource.close();workflowEventSource=null;}workflowStreamId=null;}
+ async function finishWorkflowJob(job){
+  clearTimeout(workflowPollTimer);workflowPollTimer=null;stopWorkflowStream();if(ACTIVE_JOB_ID===job.id)ACTIVE_JOB_ID=null;setWorkflowButtonBusy(false);
+  if(workflowFinishedJobId===job.id)return;workflowFinishedJobId=job.id;
+  if(job.status==="completed"){await refreshAtlas();toast("歌单分析与推荐已完成，网页数据已更新");}
+  else if(job.status==="failed")toast("歌单处理未完成，请检查本机运行日志。");
+ }
+ function startWorkflowStream(id){
+  if(typeof EventSource!=="function")return false;if(workflowStreamId===id&&workflowEventSource)return true;stopWorkflowStream();
+  const source=new EventSource(`/api/jobs/${encodeURIComponent(id)}/events`);workflowEventSource=source;workflowStreamId=id;
+  source.onmessage=message=>{try{const payload=JSON.parse(message.data);if(!payload.ok||!payload.job)return;renderWorkflowJob(payload.job);if(payload.job.status!=="queued"&&payload.job.status!=="running")finishWorkflowJob(payload.job);}catch{}};
+  source.onerror=()=>{if(workflowEventSource!==source)return;stopWorkflowStream();clearTimeout(workflowPollTimer);workflowPollTimer=setTimeout(()=>pollWorkflowJob(id),1000);};return true;
+ }
+ async function pollWorkflowJob(id){
+  clearTimeout(workflowPollTimer);workflowPollTimer=null;
+  try{
+   const response=await fetch(`/api/jobs/${encodeURIComponent(id)}`,{cache:"no-store"});const payload=await response.json();
+   if(!response.ok||!payload.ok)throw new Error(payload.error||"任务状态不可用");
+   const job=payload.job;renderWorkflowJob(job);
+   if(job.status==="queued"||job.status==="running"){
+    if(!startWorkflowStream(id))workflowPollTimer=setTimeout(()=>pollWorkflowJob(id),1000);
+   }else await finishWorkflowJob(job);
+  }catch(error){toast(error.message||"无法读取工作流状态");if(ACTIVE_JOB_ID===id)workflowPollTimer=setTimeout(()=>pollWorkflowJob(id),1500);}
+ }
+ function workflowFieldError(message){
+  const field=document.getElementById("wf-source-field"),input=document.getElementById("wf-source-url"),error=document.getElementById("wf-source-error");if(!field||!input||!error)return;
+  const active=Boolean(message);field.classList.toggle("has-error",active);input.setAttribute("aria-invalid",active?"true":"false");error.textContent=message||"";
+ }
+ function bindWorkflowControls(){
+  const form=document.getElementById("workflow-form");if(!form)return;
+  const input=document.getElementById("wf-source-url");
+  if(input)input.addEventListener("input",()=>workflowFieldError(""));
+  form.addEventListener("submit",async event=>{
+   event.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}
+   const sourceUrl=input?input.value.trim():"";
+   if(!sourceUrl){workflowFieldError("请粘贴歌单公开链接。");if(input)input.focus();return;}
+   if(input&&!input.validity.valid){workflowFieldError("链接格式不正确，请粘贴公开歌单链接。");input.focus();return;}
+   workflowFieldError("");
+   const body={source_url:sourceUrl};
+   const button=form.querySelector("button[type=submit]");if(button)button.disabled=true;
+   try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");ACTIVE_JOB_ID=payload.job.id;workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
+   catch(error){if(button)button.disabled=false;toast(error.message||"无法启动工作流");}
+  });
+  setWorkflowButtonBusy(Boolean(ACTIVE_JOB_ID));if(ACTIVE_JOB_ID)pollWorkflowJob(ACTIVE_JOB_ID);
+ }
+ function vSources(){const configured=WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured;
+  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 推荐源</div>
+  <h1 class="big-sec-title">推荐源</h1>
+  <p class="lede" style="max-width:620px">粘贴一个公开歌单链接，系统会自动识别平台，完成整理、分析与推荐。</p>
+  <section class="workflow-panel"><h3>生成新的推荐</h3><p class="hint">支持 Apple Music、网易云音乐和 QQ 音乐公开歌单。处理完成后，新的结果会更新到当前 Atlas。</p>
+   <form id="workflow-form" class="wf-form" novalidate>
+    <div class="wf-field" id="wf-source-field"><label for="wf-source-url">歌单链接</label><input id="wf-source-url" type="url" placeholder="粘贴 Apple Music、网易云音乐或 QQ 音乐链接" autocomplete="off" required aria-describedby="wf-source-error" aria-invalid="false"><p class="wf-error" id="wf-source-error" role="alert" aria-live="polite"></p></div>
+    <div class="wf-actions"><button class="btn primary" type="submit" ${configured?"":"disabled"}>生成推荐 ↗</button></div>
+   </form>
+   ${configured?"":`<div class="wf-meta">当前暂不可运行。</div>`}
+  </section>
+  <div class="flow" id="flow"></div>
+  ${SOURCES.map(s=>`<div class="srccard"><div><h3>${esc(s.name)}</h3><div class="metatab" style="margin:0"><div><span>曲目数</span>${s.tracks}</div><div><span>覆盖率</span>${esc(s.coverage)}</div><div><span>更新时间</span>${esc(s.updated)}</div></div></div><div style="align-self:center"><span class="st ${s.status==="archived"?"archived":""}">${esc(statusText(s.status))}</span></div></div>`).join("")||`<div class="empty-state">当前运行没有来源状态。</div>`}
+  <div style="height:50px"></div></div>`;}
+function v404(msg){return`<div class="wrap" style="padding:100px 0"><div class="proto-note">404</div><h1 class="big-sec-title">${esc(msg||"此页不在 Atlas 内")}</h1><a class="btn primary" href="#/discover">回到发现 ↗</a></div>`;}
+
+/* ================= ROUTER ================= */
+function render(){const h=location.hash.replace(/^#/,"")||"/discover";let html=header();
+ const m=h.split("/").filter(Boolean);
+ const map={"/discover":vDiscover,"/atlas":()=>vAtlas(m[1]),"/taste":vTaste,"/sources":vSources,
+  "/why":()=>vWhy(m[1]),"/track":()=>vTrack(m[1]),"/album":()=>vAlbum(m[1]),"/artist":()=>vArtist(m[1]),"/interest":()=>vInterest(m[1])};
+ html+=(map["/"+(m[0]||"discover")]||(()=>v404()))()+footer();
+ document.body.classList.remove("covers-ready");
+ document.getElementById("app").innerHTML=html;window.scrollTo(0,0);
+  hydrate(document.getElementById("app"));
+  bindWorkflowControls();}
+/* global click delegation */
+document.addEventListener("click",e=>{
+ const sl=e.target.closest("[data-songlink]");
+ if(sl){e.stopPropagation();
+  if(!sl.href||sl.href.endsWith("#")||sl.classList.contains("wait")){e.preventDefault();toast("正在解析歌曲链接，请稍候…");}
+  else if(sl.classList.contains("nodata")){e.preventDefault();toast("未能解析到具体歌曲，请到平台内搜索："+sl.textContent.replace(" ↗",""));}
+  return;}
+ const tab=e.target.closest("[data-tab]");
+ if(tab){const f=tab.getAttribute("data-tab");location.hash="#/atlas/"+(f==="all"?"":f);if(f==="all"){render();}return;}
+ const go=e.target.closest("[data-go]");
+ if(go){if(!e.target.closest("[data-open]")){location.hash=go.getAttribute("data-go");}return;}});
+window.addEventListener("hashchange",()=>{render();});
+ bootAtlas();
+</script>
+</body>
+</html>

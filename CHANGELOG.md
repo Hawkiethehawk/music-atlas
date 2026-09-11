@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-11（网页端工作流与验收基础设施，维护标签 patch-20260911-100253）
+
+- 新增网页端受控工作流：`web_workflow.py` 将整理、分析、推荐、发布四阶段通过 JSON 事件流提供给 `web/server.js`；浏览器只提交公开歌单链接，Skill 执行器由服务端配置；`web_view_model.py` 生成只读脱敏发布数据，`config/web.json` 固定端口、发布路径与并行度；`executors/` 提供项目内 Codex 执行器入口。
+- `web/` 新增 Editorial Atlas 页面与零依赖静态服务：四阶段进度、5+4 并行槽位、SSE 实时更新与轮询回退、最近事件北京时间展示、任务结束后隐藏详情并刷新数据。
+- 新增网页层回归套件 `web/tests/`：`server.test.mjs`/`workflow-job.test.mjs` 用 `ATLAS_WEB_CONFIG` 隔离实例验证静态服务、错误路径、真实任务生命周期与 SSE 事件顺序；`workflow-ui.browser.mjs` 用 Playwright 注入可编程 `EventSource`，覆盖乱序、重复、丢帧事件、SSE 中断回退轮询与轮询去重；`atlas-fixture.browser.mjs` 用夹具歌单与夹具执行器真实运行 `web_workflow.py` 并验证页面渲染 10 首推荐。`web/package.json` 新增 `test`/`test:browser` 命令；`.gitignore` 补充 `web/node_modules/`。
+- 重写 `ACCEPTANCE-REPORT.md`：记录基线 commit、验收命令、脚本路径、事件样本与截图索引，并明确未覆盖范围（真实检索执行器、在线事实核验、费用统计、真实试听对照、生产部署）。
+- 同步 README 测试章节；`design-qa.md` 保留设计验收记录。
+
+实际验证：
+
+- `node --test tests/*.test.mjs`（web/）：7 项通过。
+- `node --test tests/*.browser.mjs`（web/）：11 项通过。
+- `python -m unittest discover -s tests`：203 项通过。
+- `python -m compileall -q .`：通过。
+- `node --check web/server.js`、`node --check tools/export_apple_playlist.mjs`、`node --check tools/apple_export_helpers.mjs`：通过。
+- 夹具端到端：`web_workflow.py` 以 `tests/fixtures/playlist_sample.json` 与夹具执行器真实运行成功，退出码 0，31 条事件按四阶段推进，推荐数量固定 10 首；产物与事件样本在 `runtime/web-e2e-atlas-fixture-20260911015903-30aa4b/`（Git 忽略）。
+- 真实检索执行器、在线事实核验、真实费用统计与试听对照仍未完成；未部署。
+
 ## 2026-09-09（迁移 GitHub，维护标签 patch-20260909-160756）
 
 - 将 Atlas 独立仓库当前工作流变更迁移到 GitHub `Hawkiethehawk/music-atlas`；GitHub 作为 `origin`，原 Gitee 远端保留为 `gitee-archive`。
