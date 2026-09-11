@@ -458,19 +458,34 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
             batch = raw.get("candidate_pool")
             if not isinstance(batch, list):
                 raise ContractError("候选返回数量超过预算或不是数组")
-            _validate_candidate_pool(batch, known_refs=set(packet["analysis_ref_ids"]),
-                                     known_style_refs=set(packet["style_analysis"]["known_style_refs"]), require_all_types=False)
             for original in batch:
-                _validate_candidate_pool([original], known_refs=set(packet["analysis_ref_ids"]),
-                                         known_style_refs=set(packet["style_analysis"]["known_style_refs"]), require_all_types=False)
+                # 缺 track_identity / style 证据属于模型输出不完整：只丢弃该候选，
+                # 原因进研究报告供审计。证据本身不可用（矛盾/不可访问/过期）仍然致命，
+                # 由下面的 require_usable_evidence 直接报错，不静默丢弃。
+                try:
+                    _validate_candidate_pool([original], known_refs=set(packet["analysis_ref_ids"]),
+                                             known_style_refs=set(packet["style_analysis"]["known_style_refs"]), require_all_types=False)
+                except ContractError as exc:
+                    report.setdefault("rejected_candidates", []).append({
+                        "canonical_track_id": str(original.get("canonical_track_id") or ""),
+                        "reason": str(exc),
+                    })
+                    continue
                 require_usable_evidence(original)
                 candidate = deepcopy(original)
                 candidate["candidate_type"] = resolve_candidate_route(candidate, packet)["candidate_type"]
                 if candidate["candidate_type"] != original["candidate_type"]:
                     report["route_corrections"].append({"canonical_track_id": candidate["canonical_track_id"],
                                                        "declared": original["candidate_type"], "resolved": candidate["candidate_type"]})
-                _validate_candidate_pool([candidate], known_refs=set(packet["analysis_ref_ids"]),
-                                         known_style_refs=set(packet["style_analysis"]["known_style_refs"]), require_all_types=False)
+                try:
+                    _validate_candidate_pool([candidate], known_refs=set(packet["analysis_ref_ids"]),
+                                             known_style_refs=set(packet["style_analysis"]["known_style_refs"]), require_all_types=False)
+                except ContractError as exc:
+                    report.setdefault("rejected_candidates", []).append({
+                        "canonical_track_id": str(candidate.get("canonical_track_id") or ""),
+                        "reason": str(exc),
+                    })
+                    continue
                 identity = candidate["canonical_track_id"].casefold()
                 key = track_key(candidate["title"], candidate["artist"])
                 platform_id = normalized_text(candidate.get("platform_track_id")).casefold()

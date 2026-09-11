@@ -2,8 +2,9 @@
 """Execute or test the isolated Step 3 Skill boundary.
 
 The runner accepts task text on stdin for a provider-neutral external Skill
-executor. It does not know how to access a platform account and never sends a
-channel message. The old Agent names remain as compatibility aliases.
+executor. It does not know how to access a platform account and never sends
+messages anywhere: it only writes the bundle and an internal text report.
+The old Agent names remain as compatibility aliases.
 """
 
 from __future__ import annotations
@@ -18,15 +19,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from proc_util import hidden_window_kwargs
 from agent_prompt import (
     load_or_prepare_agent_context,
     prompt_size_telemetry,
 )
-from channels import render_for_channel
 from contracts import ContractError, read_json, stable_hash, utc_now, validate_analysis_packet, validate_recommendation_bundle, write_json
 from recommender import rank_bundle
+from reports import render_report
 from research import ResearchFailure, research_candidates
-from visualization_interface import render_recommendation_card
 
 
 def parse_agent_json(output: str) -> dict[str, Any]:
@@ -80,6 +81,7 @@ def run_external_agent(command: str, prompt: str, *, timeout: int) -> dict[str, 
             timeout=timeout,
             check=False,
             shell=False,
+            **hidden_window_kwargs(),
         )
     except FileNotFoundError as exc:
         raise ContractError(f"找不到 Agent 命令：{command}") from exc
@@ -96,10 +98,8 @@ def run_agent(
     *,
     prompt_path: Path,
     output_path: Path,
-    channel_output_path: Path,
-    channel_image_path: Path | None = None,
+    report_output_path: Path,
     prompt_dir: Path | None = None,
-    channel: str,
     command: str | None,
     mock: bool,
     timeout: int,
@@ -150,13 +150,10 @@ def run_agent(
             write_json(report_path, exc.report)
             raise
     validate_recommendation_bundle(bundle, packet)
-    channel_text = render_for_channel(channel, bundle, packet)
-    image_summary = None
-    if channel_image_path is not None:
-        image_summary = render_recommendation_card(bundle, packet, channel_image_path)
+    report_text = render_report(bundle, packet)
     write_json(output_path, bundle)
-    channel_output_path.parent.mkdir(parents=True, exist_ok=True)
-    channel_output_path.write_text(channel_text, encoding="utf-8")
+    report_output_path.parent.mkdir(parents=True, exist_ok=True)
+    report_output_path.write_text(report_text, encoding="utf-8")
     research_report.update(preparation_ms=prepared_ms, total_elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
                            ranked_bundle_sha256=stable_hash(bundle),
                            context_budget=context_budget, research_timeout_seconds=timeout,
@@ -180,15 +177,7 @@ def run_agent(
         "context_budget": context_budget,
         "budget_exceeded": budget_report.get("budget_exceeded"),
         "bundle_path": str(output_path),
-        "channel_text_path": str(channel_output_path),
-        "channel_image_path": image_summary["path"] if image_summary else None,
-        "channel_image_size": {
-            "width": image_summary["width"],
-            "height": image_summary["height"],
-        }
-        if image_summary
-        else None,
-        "send_performed": False,
+        "report_path": str(report_output_path),
     }
 
 
@@ -229,15 +218,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analysis", default="runtime/current-run/musician_analysis.json")
     parser.add_argument("--prompt", default="runtime/current-run/agent_prompt.md")
     parser.add_argument("--output", default="runtime/current-run/recommendation_bundle.json")
-    parser.add_argument("--channel-output", default="runtime/current-run/channel_text.txt")
-    parser.add_argument(
-        "--image-output",
-        default=None,
-        help="预留可视化输出接口；当前未配置渲染后端",
-    )
+    parser.add_argument("--report-output", default="runtime/current-run/report.txt",
+                        help="内部纯文本报告输出路径（不发送任何消息）")
     parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录；默认继承准备配置")
     parser.add_argument("--manifest", default=None, help="准备阶段的 context manifest 路径")
-    parser.add_argument("--channel", default="weixin", choices=("weixin", "feishu", "telegram"))
     parser.add_argument("--command", help="读取 stdin 中 prompt 并向 stdout 输出 JSON 的 Agent 命令")
     parser.add_argument("--mock", action="store_true", help="不调用外部模型，只验证无推荐证据不足分支")
     parser.add_argument("--timeout", type=int, default=600)
@@ -267,15 +251,12 @@ def main(argv: list[str] | None = None) -> int:
                 return cwd_candidate
             return root / candidate
 
-        image_output = resolve(args.image_output) if args.image_output else None
         summary = run_agent(
             resolve(args.analysis),
             prompt_path=resolve(args.prompt),
             output_path=resolve(args.output),
-            channel_output_path=resolve(args.channel_output),
-            channel_image_path=image_output,
+            report_output_path=resolve(args.report_output),
             prompt_dir=resolve(args.prompt_dir) if args.prompt_dir else None,
-            channel=args.channel,
             command=args.command,
             mock=args.mock,
             timeout=max(1, args.timeout),

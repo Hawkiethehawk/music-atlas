@@ -759,11 +759,15 @@ function workflowLimitView(job){
  }
  return null;
 }
+/* 档位只列出小于上限的值，末尾追加“全部”（= 歌单实际曲目数），不出现选不了的高档位。 */
 function renderLimitChips(maximum){
  const chips=document.getElementById("wf-limit-chips");if(!chips)return;
- const signature=workflowLimitOptions().join(",")+"|"+maximum;if(chips.dataset.signature===signature)return;
+ const options=workflowLimitOptions().filter(value=>value<maximum);
+ const signature=options.join(",")+"|"+maximum;if(chips.dataset.signature===signature)return;
  chips.dataset.signature=signature;
- chips.innerHTML=workflowLimitOptions().map(value=>`<button type="button" class="chip" data-limit="${value}"${value>maximum?" disabled":""}>${value}</button>`).join("");
+ const buttons=options.map(value=>`<button type="button" class="chip" data-limit="${value}">${value}</button>`);
+ buttons.push(`<button type="button" class="chip" data-limit="${maximum}">全部</button>`);
+ chips.innerHTML=buttons.join("");
 }
 function limitFieldError(message){
  const field=document.getElementById("wf-limit-field"),input=document.getElementById("wf-limit"),error=document.getElementById("wf-limit-error");if(!field||!input||!error)return;
@@ -794,7 +798,7 @@ function syncLimitControls(job){
  const maximumNode=document.getElementById("wf-limit-max"),note=document.getElementById("wf-limit-note");
  if(input)input.max=String(view.maximum);
  if(maximumNode)maximumNode.textContent=String(view.maximum);
- if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。选择前 N 首继续处理；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择前 N 首继续处理。`;
+ if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。选择前 N 首继续处理（选“全部”即处理全部 ${view.maximum} 首）；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择前 N 首继续处理。`;
  renderLimitChips(view.maximum);
  if(input&&input.dataset.jobId!==job.id){
   input.dataset.jobId=job.id;input.value=String(Math.min(workflowLimitDefault(),view.maximum));limitFieldError("");

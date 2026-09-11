@@ -24,6 +24,14 @@ DEFAULT_TIMEOUT_SECONDS = 600
 SUPPORTED_REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 
+def _hidden_window_kwargs() -> dict[str, Any]:
+    """Windows 下隐藏 Codex 子进程的控制台窗口（执行器自包含，不依赖项目根）。"""
+
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def _find_codex_command() -> list[str]:
     """Find the installed Codex executable without changing machine config."""
 
@@ -185,6 +193,7 @@ def run(role: str, task: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict
             timeout=max(1, int(timeout)),
             check=False,
             shell=False,
+            **_hidden_window_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"本机 Codex 执行超时：{timeout} 秒") from exc

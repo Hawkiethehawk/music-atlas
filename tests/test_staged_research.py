@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from agent_prompt import build_agent_prompt, prepare_agent_context
 from agent_runner import run_agent
-from channels import render_for_channel
+from reports import render_report
 from contracts import ContractError, read_json, write_json
 from recommender import rank_bundle
 from research import ResearchExhausted, ResearchFailure
@@ -30,7 +30,7 @@ class StagedResearchTests(unittest.TestCase):
 
     def execute(self, root, **options):
         return run_agent(root / "analysis.json", prompt_path=root / "prompt.md", output_path=root / "bundle.json",
-                         channel_output_path=root / "channel.txt", channel="weixin", command="fixture", mock=False,
+                         report_output_path=root / "report.txt", command="fixture", mock=False,
                          timeout=10, **options)
 
     def test_missing_routes_are_supplemented_and_only_selected_tracks_are_explained(self):
@@ -53,6 +53,28 @@ class StagedResearchTests(unittest.TestCase):
             report = read_json(root / "bundle.research.json")
             self.assertEqual(report["final_explanations_generated"], len(ranked["recommendations"]))
             self.assertGreater(report["input_characters_total"], summary["prompt_characters"])
+
+    def test_candidate_missing_style_evidence_is_dropped_not_fatal(self):
+        """缺 track_identity/style 证据的候选被程序丢弃，只记录原因，不让整轮研究失败。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, packet = self.setup_pool(root)
+            broken = deepcopy(pool)
+            target = broken["candidate_pool"][0]
+            target["evidence_items"] = [
+                item for item in target["evidence_items"] if item.get("claim_type") != "style"
+            ]
+            target["sources"] = [item["url"] for item in target["evidence_items"]]
+
+            with patch("agent_runner.run_external_agent", side_effect=lambda *a, **k: deepcopy(broken)):
+                with self.assertRaises(ResearchExhausted):
+                    self.execute(root, candidate_target=8, max_candidates=8, max_research_rounds=1)
+
+            report = read_json(root / "bundle.research.json")
+            rejected = report.get("rejected_candidates") or []
+            self.assertEqual(len(rejected), 1, "应恰好丢弃缺证据的那一个候选")
+            self.assertIn("style", rejected[0]["reason"])
 
     def test_parallel_recommendation_workers_merge_before_program_ranking(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -92,7 +114,7 @@ class StagedResearchTests(unittest.TestCase):
                     self.execute(root, candidate_target=8, max_research_rounds=2)
             self.assertEqual(agent.call_count, 2)
             self.assertFalse((root / "bundle.json").exists())
-            self.assertFalse((root / "channel.txt").exists())
+            self.assertFalse((root / "report.txt").exists())
             self.assertEqual(read_json(root / "bundle.research.json")["status"], "budget_exhausted")
 
     def test_supplemental_payload_cannot_escape_hard_context_budget(self):
@@ -115,7 +137,7 @@ class StagedResearchTests(unittest.TestCase):
             pool, _ = self.setup_pool(root)
             pool["candidate_pool"] = pool["candidate_pool"][:2]
             (root / "bundle.json").write_text("existing bundle", encoding="utf-8")
-            (root / "channel.txt").write_text("existing channel", encoding="utf-8")
+            (root / "report.txt").write_text("existing report", encoding="utf-8")
             with patch("agent_runner.run_external_agent", side_effect=[pool, ContractError("Agent 执行超时：10 秒")]):
                 with self.assertRaises(ResearchFailure):
                     self.execute(root, candidate_target=8)
@@ -130,7 +152,7 @@ class StagedResearchTests(unittest.TestCase):
             self.assertEqual(report["final_explanations_generated"], 0)
             self.assertNotIn("ranked_bundle_sha256", report)
             self.assertEqual((root / "bundle.json").read_text(encoding="utf-8"), "existing bundle")
-            self.assertEqual((root / "channel.txt").read_text(encoding="utf-8"), "existing channel")
+            self.assertEqual((root / "report.txt").read_text(encoding="utf-8"), "existing report")
 
     def test_invalid_research_limits_never_call_agent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -147,7 +169,7 @@ class StagedResearchTests(unittest.TestCase):
         ranked = rank_bundle(pool, packet)
         ranked["recommendations"][0]["program_explanation"]["text"] = "This altered explanation is not generated from the selected facts."
         with self.assertRaises(ContractError):
-            render_for_channel("weixin", ranked, packet)
+            render_report(ranked, packet)
 
 
 if __name__ == "__main__":

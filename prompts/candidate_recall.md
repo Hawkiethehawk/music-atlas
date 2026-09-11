@@ -4,6 +4,8 @@
 
 分别承接 interest_profiles 中由本次收藏推导的兴趣组。艺人延伸与音乐人关系必须匹配当前分析包中的候选艺人端点；researched 关系来自分析 Agent，不等于已核验事实。单独填写 analysis_refs 或 relation_path 不能证明关系；无匹配路径时按风格邻近或探索研究。
 
+每个候选必须同时提供 `track_identity` 与 `style` 两类 `evidence_items`（音乐人关系候选另需 `relation`），并把这些 URL 同时列进 `sources`；同时 `platform_links` 必须是至少含一个试听平台（如 `apple_music`、`netease`、`qq_music`）的非空对象。结构不完整的候选会被程序直接丢弃，不计入本轮配额。
+
 候选优先级：
 
 1. 当前喜欢艺人的未收录作品或新发行

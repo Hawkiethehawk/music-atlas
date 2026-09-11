@@ -1,6 +1,6 @@
 ---
 name: music-atlas-recommendation
-description: 执行 Music Atlas Step 3 的受限候选研究，读取当前分析包并返回未排序候选事实；不负责评分、选曲、排序或渠道发送。
+description: 执行 Music Atlas Step 3 的受限候选研究，读取当前分析包并返回未排序候选事实；不负责评分、选曲、排序或任何发送。
 metadata:
   short-description: Music Atlas 第三步候选 Skill
 ---

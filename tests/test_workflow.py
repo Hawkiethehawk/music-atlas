@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agent_prompt import build_agent_prompt
-from channels import render_for_channel
+from reports import render_report
 from contracts import (
     ContractError,
     target_counts,

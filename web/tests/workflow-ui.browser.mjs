@@ -534,15 +534,22 @@ test("档位选择：歌单读完后才可选数量，上限为曲目数，提�
       "等待期间进度面板保持显示");
     assert.match(await page.locator("[data-wf-summary]").textContent(), /等待选择处理数量/);
 
-    // 档位快捷键：超过上限的档位禁用
-    const chipStates = await page.locator("#wf-limit-chips .chip").evaluateAll((nodes) =>
-      nodes.map((node) => `${node.dataset.limit}:${node.disabled ? "disabled" : "enabled"}`));
-    assert.deepEqual(chipStates, ["30:enabled", "100:enabled", "200:disabled", "500:disabled", "1000:disabled"]);
+    // 档位快捷键：只列出小于上限的档位，末尾追加“全部”（= 实际曲目数）
+    const chipTexts = await page.locator("#wf-limit-chips .chip").evaluateAll((nodes) =>
+      nodes.map((node) => `${node.textContent}:${node.dataset.limit}`));
+    assert.deepEqual(chipTexts, ["30:30", "100:100", "全部:120"]);
+    assert.equal(await page.locator("#wf-limit-chips .chip[data-limit=\"200\"]").count(), 0,
+      "超过上限的档位不应显示");
 
     // 点档位快捷键：填值并高亮（识别并自动分档）
     await page.click('#wf-limit-chips .chip[data-limit="100"]');
     assert.equal(await page.locator("#wf-limit").inputValue(), "100");
     assert.equal(await page.locator("#wf-limit-chips .chip.on").getAttribute("data-limit"), "100");
+
+    // “全部”等同实际曲目数，点选后高亮
+    await page.click("#wf-limit-chips .chip:has-text('全部')");
+    assert.equal(await page.locator("#wf-limit").inputValue(), "120");
+    assert.equal(await page.locator("#wf-limit-chips .chip.on").textContent(), "全部");
 
     // 超上限：报错并阻止提交
     await page.fill("#wf-limit", "999");
@@ -581,9 +588,11 @@ test("等待选择数量时可以取消任务", async () => {
     addAwaitingLimitStage(job, 60);
     await pushJob(page, job);
     await page.waitForFunction(() => !document.getElementById("wf-limit-field").classList.contains("hidden"));
-    // 上限 60 时默认档位仍为 30，且超出上限的档位已禁用
+    // 上限 60 时默认档位仍为 30，且超过上限的档位不会出现
     assert.equal(await page.locator("#wf-limit").inputValue(), "30");
-    assert.equal(await page.locator("#wf-limit-chips .chip[data-limit=\"100\"]").isDisabled(), true);
+    const smallChips = await page.locator("#wf-limit-chips .chip").evaluateAll((nodes) =>
+      nodes.map((node) => `${node.textContent}:${node.dataset.limit}`));
+    assert.deepEqual(smallChips, ["30:30", "全部:60"]);
 
     await page.click("#wf-cancel");
     await waitFor(() => counters.cancels.length === 1, { message: "取请求未发出" });

@@ -333,7 +333,13 @@ async function startWorkflowJob(config) {
   const childEnvironment = { ...process.env };
   delete childEnvironment.ATLAS_WEB_ANALYSIS_COMMAND;
   delete childEnvironment.ATLAS_WEB_RECOMMENDATION_COMMAND;
-  const child = spawn(PYTHON, args, { cwd: PROJECT_ROOT, env: childEnvironment, stdio: ["ignore", "pipe", "pipe"] });
+  // windowsHide：避免在 Windows 上为每个工作流子进程弹出 python.exe 控制台窗口。
+  const child = spawn(PYTHON, args, {
+    cwd: PROJECT_ROOT,
+    env: childEnvironment,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   job.child = child;
   let stdoutBuffer = "";
   child.stdout.setEncoding("utf8");

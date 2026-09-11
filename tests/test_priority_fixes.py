@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from agent_runner import run_agent
 from agent_prompt import apply_context_budget, build_agent_prompt, prepare_agent_context
-from channels import render_for_channel
+from reports import render_report
 from contracts import ContractError, read_json, validate_recommendation_bundle, write_json
 from evidence import source_evidence_grade
 from recommender import rank_bundle, score_candidate
@@ -36,10 +36,10 @@ class EvidenceOutputTests(unittest.TestCase):
                 with patch("agent_runner.run_external_agent", return_value=pool):
                     with self.assertRaises(ContractError):
                         run_agent(root / "analysis.json", prompt_path=root / "prompt.md",
-                                  output_path=root / "bundle.json", channel_output_path=root / "channel.txt",
-                                  channel="weixin", command="fixture", mock=False, timeout=1)
+                                  output_path=root / "bundle.json", report_output_path=root / "report.txt",
+                                  command="fixture", mock=False, timeout=1)
                 self.assertFalse((root / "bundle.json").exists())
-                self.assertFalse((root / "channel.txt").exists())
+                self.assertFalse((root / "report.txt").exists())
 
     def test_old_retrieval_and_invalid_identifier_are_rejected(self):
         for update in ({"retrieved_at": "2001-01-01T00:00:00Z"},
@@ -67,16 +67,16 @@ class EvidenceOutputTests(unittest.TestCase):
         self.assertEqual(source_evidence_grade(candidate), "C")
         self.assertEqual(score_candidate(candidate, packet), baseline)
 
-    def test_unverified_output_is_always_a_draft_in_every_channel(self):
+    def test_unverified_output_is_always_a_draft(self):
         pool, packet = pool_bundle()
         for candidate in pool["candidate_pool"]:
             for item in candidate["evidence_items"]:
                 item["verification_result"] = "verified"
         ranked = rank_bundle(pool, packet)
         self.assertEqual(ranked["publication_status"], "draft")
-        for channel in ("weixin", "feishu", "telegram"):
-            self.assertIn("研究草稿", render_for_channel(channel, ranked, packet))
-            self.assertIn("不是正式推荐", render_for_channel(channel, ranked, packet))
+        text = render_report(ranked, packet)
+        self.assertIn("研究草稿", text)
+        self.assertIn("不是正式推荐", text)
         forged = deepcopy(ranked)
         forged["publication_status"] = "published"
         with self.assertRaises(ContractError):
@@ -96,11 +96,11 @@ class PreparedContextTests(unittest.TestCase):
                 with patch("agent_runner.run_external_agent") as agent:
                     with self.assertRaises(ContractError):
                         run_agent(root / "analysis.json", prompt_path=root / "prompt.md",
-                                  output_path=root / "bundle.json", channel_output_path=root / "channel.txt",
-                                  channel="weixin", command="fixture", mock=False, timeout=1,
+                                  output_path=root / "bundle.json", report_output_path=root / "report.txt",
+                                  command="fixture", mock=False, timeout=1,
                                   context_budget=budget)
                     agent.assert_not_called()
-                for name in ("prompt.md", "agent_context_manifest.json", "bundle.json", "channel.txt"):
+                for name in ("prompt.md", "agent_context_manifest.json", "bundle.json", "report.txt"):
                     self.assertFalse((root / name).exists())
 
     def test_prepared_prompt_budget_and_directory_are_reused(self):
@@ -119,8 +119,8 @@ class PreparedContextTests(unittest.TestCase):
             slot.write_text("changed after preparation", encoding="utf-8")
             with patch("agent_runner.run_external_agent", return_value=pool) as agent:
                 summary = run_agent(root / "analysis.json", prompt_path=root / "prompt.md",
-                                    output_path=root / "bundle.json", channel_output_path=root / "channel.txt",
-                                    channel="weixin", command="fixture", mock=False, timeout=1)
+                                    output_path=root / "bundle.json", report_output_path=root / "report.txt",
+                                    command="fixture", mock=False, timeout=1)
             self.assertEqual(agent.call_args.args[1], prepared)
             self.assertEqual(summary["context_budget"], budget)
             self.assertEqual((root / "prompt.md").read_bytes(), before_prompt)
@@ -148,8 +148,8 @@ class PreparedContextTests(unittest.TestCase):
                 with patch("agent_runner.run_external_agent") as agent:
                     with self.assertRaises(ContractError):
                         run_agent(root / "analysis.json", prompt_path=root / "prompt.md",
-                                  output_path=root / "bundle.json", channel_output_path=root / "channel.txt",
-                                  channel="weixin", command="fixture", mock=False, timeout=1, **options)
+                                  output_path=root / "bundle.json", report_output_path=root / "report.txt",
+                                  command="fixture", mock=False, timeout=1, **options)
                     agent.assert_not_called()
 
     def test_failed_preparation_preserves_existing_context(self):

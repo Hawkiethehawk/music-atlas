@@ -57,7 +57,7 @@ class ProfileQualityTests(unittest.TestCase):
             with patch("agent_runner.run_external_agent") as agent:
                 with self.assertRaisesRegex(ContractError, "画像覆盖不足"):
                     run_agent(root / "analysis.json", prompt_path=root / "prompt.md", output_path=root / "bundle.json",
-                              channel_output_path=root / "channel.txt", channel="weixin", command="fixture", mock=False, timeout=1)
+                              report_output_path=root / "report.txt", command="fixture", mock=False, timeout=1)
                 agent.assert_not_called()
             self.assertFalse((root / "bundle.json").exists())
 

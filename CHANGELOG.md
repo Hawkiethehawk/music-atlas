@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-11（移除发送途径、网页档位限位与候选容错，维护标签 patch-20260911-191520）
+
+- **移除全部消息发送途径**：删除 `channel_delivery.py`（OpenClaw CLI / Pi wechatbot over SSH / 本地包装器）、`channels.py`（微信/飞书/Telegram 渲染适配器）、`visualization_interface.py`（微信图文卡片）与 `tests/test_channel_delivery.py`；`workflow.py` 删除 `send-weixin` / `send-weixin-pi` / `send-weixin-pi-agent` 三个子命令及相关参数；`agent_runner.py` 去掉渠道参数与图片产物。流程只在网页端展示结果。
+- 新增 `reports.py`：内部纯文本报告，保留 `rank_bundle` 程序重排序与 `require_usable_evidence` 逐条证据门禁；产物由 `channel_text.txt` 改为 `report.txt`，CLI 参数 `--channel-output` 改为 `--report-output`。
+- 网页档位限位：只列出小于歌单实际曲目数的档位，末尾追加「全部」= 检测到的最大数量（1925 首时实测为 `30 / 100 / 200 / 500 / 1000 / 全部(1925)`），不再显示选不了的高档位。
+- 候选结构容错：`research.py` 对结构不完整的候选（缺 `track_identity` / `style` 证据、`platform_links` 为空）改为丢弃并写入 `rejected_candidates`，不再让整轮研究失败；证据本身不可用（矛盾/不可访问/过期）仍然致命。
+- prompt 强化：`candidate_recall.md` / `candidate_ranking.md` 明确要求每个候选同时提供 `track_identity` 与 `style` 证据（关系候选另需 `relation`）、URL 列入 `sources`、`platform_links` 非空。
+- 去掉 Windows 弹窗：新增 `proc_util.py` 的 `hidden_window_kwargs()`（`CREATE_NO_WINDOW`），应用于 `agent_runner.py`、`workflow.py`（Apple 导出调 node）、`setup_tool.py`（npm/npx）与 `executors/local_codex_executor.py`；`web/server.js` 的 `spawn` 增加 `windowsHide: true`，工作流不再为每个子进程弹出 python.exe 控制台窗口。
+- 文档：README 删除「发送到微信」整章与全部渠道描述；`atlas.md`、`web/README.md`、推荐 Skill 描述同步；`AGENTS.md` 去掉 Gitee 提及。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：277 项通过。
+- `python -m compileall -q .`：通过；`node --check web/server.js`：通过。
+- `npm --prefix web test`：8 项通过；`npm --prefix web run test:browser`：13 项通过（含更新后的档位限位用例）。
+- **真实网页端全流程**（Playwright 驱动生产面板）：真实网易云歌单读取 1925 首 → 档位按钮实测 `30 / 100 / 200 / 500 / 1000 / 全部`，点「全部」填入 1925，超上限提示「不能超过歌单曲目数 1925 首」→ 提交档位 30 → glm-5.3-flash 完成 Step 2/3（约 10 分钟）→ 提示「歌单分析与推荐已完成，网页数据已更新」，面板发布 10 首推荐与「旋律金属核 / 暗黑流行 / 另类摇滚」3 个兴趣组；本轮丢弃 19 个结构不完整候选，接受 25 个。
+- 未做：可信在线事实核验适配器（`evidence_audit` 仍为 `not_available`）。
+
 ## 2026-09-11（生产执行器切 glm-5.3-flash、完成实时试运行与在线档位冒烟，维护标签 patch-20260911-175634）
 
 - 新增 `executors/openai_compat_executor.py` 与三个薄入口（`openai_analysis.py` / `openai_recommendation.py` / `openai_taste.py`）：按 OpenAI Chat Completions 协议直连本机供应商，与 Codex 桥接执行器共用同一 stdin/stdout 契约（标准输入读任务、标准输出只生成一个 JSON、失败返回码与错误语义一致）。配置来自 `config/web.json` 的 `runtime.openai_compat`（非密钥）；API key 只从 `api_key_env` 指定的环境变量读取，不进仓库；5xx/429 重试 3 次、4xx 不重试；reasoning 占满预算导致空内容时给出明确错误。

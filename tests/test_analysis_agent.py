@@ -526,7 +526,7 @@ class AnalysisAgentTests(unittest.TestCase):
         analysis = root / "musician_analysis.json"
         bundle = root / "recommendation_bundle.json"
         self.cli("agent", "--analysis", analysis, "--prompt", root / "agent_prompt.md", "--output", bundle,
-                 "--channel-output", root / "channel.txt", "--command", process_command(ROOT / "tests/fixtures/fake_agent.py"))
+                 "--report-output", root / "report.txt", "--command", process_command(ROOT / "tests/fixtures/fake_agent.py"))
         self.assertEqual(len(read_json(bundle)["recommendations"]), 10)
         self.assertEqual(read_json(bundle)["publication_status"], "draft")
         ranked = root / "reranked.json"

@@ -7,7 +7,7 @@
 Music Atlas 是一个**按需触发、不绑定时间**的歌单推荐工作流：对本次输入的**整个歌单做全量解析**，推荐数量固定为 **10 首**，与歌单规模无关。当前结果仅为带公开证据引用的**研究草稿**，不代表事实已核验或正式推荐。
 
 ```
-Step 1 歌单快照 ──▶ Step 2 分析 Skill 研究 + 程序聚合 ──▶ Step 3 候选 Skill + 程序选曲 ──▶ 渠道文本
+Step 1 歌单快照 ──▶ Step 2 分析 Skill 研究 + 程序聚合 ──▶ Step 3 候选 Skill + 程序选曲 ──▶ 网页视图
 PlaylistSnapshot      MusicianResearchBundle / MusicianAnalysisPacket       RecommendationBundle
         └────────── 各步骤之间只用 JSON 契约连接，互不回头读取 ──────────┘
 ```
@@ -73,17 +73,16 @@ workflow.py export-apple-playlist --url <分享链接> --expected-count <独立�
 | `evidence.py` | 来源分类、稳定标识符格式检查、A/B/C 等级与事实核验状态分离；不信任 Skill 自报 verified |
 | `evaluation.py` / `feedback.py` / `tune.py` | 反馈契约、六类离线指标、人工批准调优建议 |
 | `benchmark.py` | 隐藏方案信息的试听清单、同输入的只读方案对照 |
-| `workflow.py` | CLI 入口：`snapshot / analyze / prepare-skill / skill / validate / send-weixin / send-weixin-pi / evaluate / tune / prepare-benchmark / benchmark / archive-schema1 / export-apple-playlist`；`prepare-agent / agent` 为兼容别名 |
-| `channel_delivery.py` | OpenClaw 与 Pi wechatbot 微信交付：默认发送计划、SSH 云服务器调用、本地包装器调用与返回值校验 |
-| `tools/` | 维护性辅助工具（Apple 歌单导出、OpenClaw 微信包装器），不属于纯 Python 工作流本体 |
+| `workflow.py` | CLI 入口：`snapshot / analyze / prepare-skill / skill / validate / evaluate / tune / prepare-benchmark / benchmark / archive-schema1 / export-apple-playlist / web-export`；`prepare-agent / agent` 为兼容别名 |
+| `tools/` | 维护性辅助工具（Apple 歌单导出），不属于纯 Python 工作流本体 |
 
 ## 五、质量与验证状态
 
-- **测试**：191 项 Python、11 项 Node 单元测试与 1 项真实 Chromium 本地下载测试通过，`compileall` 和两个 Node 模块语法检查通过。新增分析 Skill、OpenClaw、Pi wechatbot 交付和微信报告格式测试，包括跨批计时、证据与身份约束、断点续跑、输入保护、完整双 Skill 夹具流程、微信目标校验、SSH 参数隔离、默认不发送和用户文案隔离；旧目录路径显式 catalog 后继续通过。
+- **测试**：191 项 Python、11 项 Node 单元测试与 1 项真实 Chromium 本地下载测试通过，`compileall` 和两个 Node 模块语法检查通过。新增分析 Skill 与内部报告格式测试，包括跨批计时、证据与身份约束、断点续跑、输入保护、完整双 Skill 夹具流程与候选结构容错；旧目录路径显式 catalog 后继续通过。
 - **本次夹具链路**：`runtime/analysis-agent-acceptance-20260906-a49b1f/` 中 3 首输入经过 2 批 fake 分析 Skill，再由 fake 候选 Skill 生成 20 首候选、程序选出 10 首草稿，validate 重算文件逐字节一致。严格审计仍为 0/10 核验通过、10 首待核验，不写成功审计产物。两个 fake 执行器都不是实际音乐研究或真实质量测试。
 - **真实快照准备**：复用 115 首快照，在 `runtime/apple-agent-analysis-20260906-7c83e1/analysis_research/` 准备 6 批，大小为 20/20/20/20/20/15，115 个位置恰好覆盖一次。单批 prompt 为 16320 至 18273 字符，总计 102104 字符。没有真实 Skill 结果，也没有为此歌单伪造画像或推荐。
 - **历史真实验证记录（2026-09-04）**：网易云热歌榜 200 首、QQ 30 首、Apple Music 115 首三条链路曾跑通 snapshot → analyze → prepare-agent；本次未联网复测。
-- **生产就绪前置条件**：补齐可信在线事实核验通道，并完成一次使用外部可验证证据的实时 Skill 试运行。当前离线格式检查不能证明事实真实性；本次未调用真实 Skill、发送微信消息或部署，仅新增并验证了显式交付入口。
+- **生产就绪前置条件**：已于 2026-09-11 完成一次使用外部可验证证据的实时试运行（真实网易云歌单 + 网页档位 + glm-5.3-flash 执行器，产出 10 首推荐与 A/B 级公开来源）。可信在线事实核验适配器仍未补齐，结果保持 `draft`。
 
 ## 六、运维要点
 
@@ -92,7 +91,7 @@ workflow.py export-apple-playlist --url <分享链接> --expected-count <独立�
 - `skill` 复用准备时的 prompt、预算和目录；自定义清单用 `prepare-skill/skill --manifest` 指定。配置冲突、缺失或摘要不匹配时重新准备，预算不足不调用 Skill；`agent` 仍为兼容入口。
 - 默认不再要求私有画像；未配置分析执行器时只准备研究任务。续跑继承批次/字符预算，调整研究需新目录。公共示例只用于显式 catalog 兼容测试，不能代表个人完整画像。研究报告的字符量不是精确 token 或费用，Skill 关系也不是独立事实核验结果。
 - 服务器入口 hermes_weekly.sh 透传 CLI 参数，可显式配置 --analysis-command 和每次独立的 --runtime-dir；没有执行器命令时不会擅自启用任何模型。
-- 微信交付入口 `workflow.py send-weixin` 和 `workflow.py send-weixin-pi` 默认只输出 `delivery_plan`；OpenClaw 方式的 `--dry-run` 调用 OpenClaw 试运行，Pi wechatbot 方式的 `--dry-run` 检查已保存凭据与 `context_token`，两者都只有 `--send` 才实际发送。两种云服务器方式均使用 SSH，且要求显式提供以 `@im.wechat` 结尾的直接用户目标。
+- 消息发送途径（微信 / OpenClaw / Pi wechatbot）已从仓库移除，流程只在网页端展示与产出内部文本报告。
 - Schema 2.0 旧分析、上下文和排序工件需重新生成，不应手工补字段或改身份；Schema 1 历史产物只能归档不可复用。具体重建步骤见 README。
 - 版本流程：无版本对象仓库，推送必须带 CHANGELOG 更新 + `patch-YYYYMMDD-HHMMSS` 维护标签
 - 文档：`README.md`（用法）、`AGENTS.md`（仓库规则）、`CHANGELOG.md`（变更史）、`P0_P1_remaining.md`（遗留项）

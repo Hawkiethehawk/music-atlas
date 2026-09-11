@@ -67,6 +67,14 @@ class Check:
         }
 
 
+def _hidden_window_kwargs() -> dict[str, object]:
+    """Windows 下隐藏 npm/npx 子进程的控制台窗口。"""
+
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def _run(command: list[str], *, cwd: Path | None = None, timeout: int = 900,
          env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -79,6 +87,7 @@ def _run(command: list[str], *, cwd: Path | None = None, timeout: int = 900,
         errors="replace",
         timeout=timeout,
         shell=False,
+        **_hidden_window_kwargs(),
     )
 
 

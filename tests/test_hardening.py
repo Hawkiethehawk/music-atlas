@@ -119,10 +119,10 @@ class RankingBoundaryTests(unittest.TestCase):
             with patch("agent_runner.run_external_agent", return_value=self.ranked):
                 with self.assertRaises(ContractError):
                     run_agent(root / "analysis.json", prompt_path=root / "prompt.md",
-                              output_path=root / "bundle.json", channel_output_path=root / "channel.txt",
-                              channel="weixin", command="fixture", mock=False, timeout=10)
+                              output_path=root / "bundle.json", report_output_path=root / "report.txt",
+                              command="fixture", mock=False, timeout=10)
             self.assertFalse((root / "bundle.json").exists())
-            self.assertFalse((root / "channel.txt").exists())
+            self.assertFalse((root / "report.txt").exists())
 
 
 class ConstrainedSelectionTests(unittest.TestCase):
@@ -252,9 +252,9 @@ class EvidenceAuditBoundaryTests(unittest.TestCase):
             write_json(root / "analysis.json", packet)
             write_json(root / "bundle.json", pool)
             (root / "ranked.json").write_text("old ranked", encoding="utf-8")
-            (root / "channel.txt").write_text("old channel", encoding="utf-8")
+            (root / "report.txt").write_text("old report", encoding="utf-8")
             argv = ["validate", "--analysis", root / "analysis.json", "--bundle", root / "bundle.json",
-                    "--ranked-output", root / "ranked.json", "--output", root / "channel.txt",
+                    "--ranked-output", root / "ranked.json", "--output", root / "report.txt",
                     "--evidence-audit", root / "audit.json"]
             self.assertEqual(invoke_cli(argv), 2)
             self.assertEqual(read_json(root / "audit.json")["accepted_count"], 0)
@@ -264,7 +264,7 @@ class EvidenceAuditBoundaryTests(unittest.TestCase):
                 invoke_cli(argv)
             self.assertEqual(read_json(root / "audit.json")["status"], "invalid_contract")
             self.assertEqual((root / "ranked.json").read_text(encoding="utf-8"), "old ranked")
-            self.assertEqual((root / "channel.txt").read_text(encoding="utf-8"), "old channel")
+            self.assertEqual((root / "report.txt").read_text(encoding="utf-8"), "old report")
 
 
 class CsvCountBoundaryTests(unittest.TestCase):

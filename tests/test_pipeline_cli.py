@@ -45,11 +45,11 @@ class PipelineCliTests(unittest.TestCase):
             agent_command = subprocess.list2cmdline(agent_argv) if os.name == "nt" else shlex.join(agent_argv)
             bundle = root / "bundle.json"
             self.cli("agent", "--analysis", analysis, "--prompt", run / "agent_prompt.md",
-                     "--output", bundle, "--channel-output", root / "agent-channel.txt", "--command", agent_command)
+                     "--output", bundle, "--report-output", root / "agent-report.txt", "--command", agent_command)
             self.assertEqual(len(read_json(bundle)["recommendations"]), 10)
             ranked = root / "ranked.json"
             self.cli("validate", "--analysis", analysis, "--bundle", bundle, "--ranked-output", ranked,
-                     "--output", root / "channel.txt")
+                     "--output", root / "report.txt")
             self.assertEqual(read_json(bundle), read_json(ranked))
             web_payload_path = root / "web_payload.json"
             web_summary = self.cli(
@@ -84,22 +84,22 @@ class PipelineCliTests(unittest.TestCase):
             self.assertEqual(read_json(analysis)["recommendation_policy"], original_policy)
             audit = root / "audit.json"
             failed = self.cli("validate", "--analysis", analysis, "--bundle", bundle,
-                              "--ranked-output", root / "audit-ranked.json", "--output", root / "audit-channel.txt",
+                              "--ranked-output", root / "audit-ranked.json", "--output", root / "audit-report.txt",
                               "--evidence-audit", audit, expected=2)
             self.assertEqual(failed["status"], "evidence_audit_failed")
             self.assertEqual(read_json(audit)["accepted_count"], 0)
             self.assertEqual(read_json(audit)["recommendation_count"], 10)
             self.assertFalse((root / "audit-ranked.json").exists())
-            self.assertFalse((root / "audit-channel.txt").exists())
+            self.assertFalse((root / "audit-report.txt").exists())
             forged = read_json(bundle)
             forged["recommendations"][0]["title"] = "forged title"
             write_json(root / "forged.json", forged)
             self.cli("validate", "--analysis", analysis, "--bundle", root / "forged.json",
-                     "--ranked-output", root / "forged-ranked.json", "--output", root / "forged-channel.txt",
+                     "--ranked-output", root / "forged-ranked.json", "--output", root / "forged-report.txt",
                      "--evidence-audit", root / "forged-audit.json", expected=2)
             self.assertEqual(read_json(root / "forged-audit.json")["status"], "invalid_contract")
             self.assertFalse((root / "forged-ranked.json").exists())
-            self.assertFalse((root / "forged-channel.txt").exists())
+            self.assertFalse((root / "forged-report.txt").exists())
 
     def test_csv_count_mismatch_stops_before_step_two(self):
         with tempfile.TemporaryDirectory(prefix="atlas csv ") as directory:
@@ -123,7 +123,7 @@ class PipelineCliTests(unittest.TestCase):
             prompt_before = prompt.read_bytes()
             for name, target, rounds in (("a", 20, 1), ("b", 40, 2)):
                 summary = self.cli("agent", "--analysis", analysis, "--prompt", prompt, "--command", command,
-                                   "--output", root / f"{name}.json", "--channel-output", root / f"{name}.txt",
+                                   "--output", root / f"{name}.json", "--report-output", root / f"{name}.txt",
                                    "--candidate-target", target, "--max-research-rounds", 2)
                 self.assertEqual(summary["research_rounds"], rounds)
                 self.assertEqual(summary["recommendation_count"], 10)
@@ -150,7 +150,7 @@ class PipelineCliTests(unittest.TestCase):
             self.assertEqual(comparison["telemetry_a"]["status"], "measured")
             self.assertEqual(comparison["telemetry_b"]["round_count"], 2)
             self.cli("agent", "--analysis", analysis, "--prompt", prompt, "--command", command,
-                     "--output", root / "blocked.json", "--channel-output", root / "blocked.txt",
+                     "--output", root / "blocked.json", "--report-output", root / "blocked.txt",
                      "--candidate-target", 40, "--max-research-rounds", 1, expected=2)
             self.assertEqual(read_json(root / "blocked.research.json")["status"], "budget_exhausted")
             self.assertFalse((root / "blocked.json").exists())
@@ -168,7 +168,7 @@ class PipelineCliTests(unittest.TestCase):
             before = prompt.read_bytes()
             summary = self.cli("agent", "--analysis", root / "musician_analysis.json", "--prompt", prompt,
                                "--manifest", manifest, "--output", root / "bundle.json",
-                               "--channel-output", root / "channel.txt", "--mock")
+                               "--report-output", root / "report.txt", "--mock")
             self.assertEqual(summary["context_budget"], 100000)
             self.assertEqual(prompt.read_bytes(), before)
             self.cli("agent", "--analysis", root / "musician_analysis.json", "--prompt", prompt,

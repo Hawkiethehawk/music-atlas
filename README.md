@@ -1,6 +1,6 @@
 # Music Atlas
 
-Music Atlas 是一个可扩展的歌单推荐工作流：**随时手动触发，不绑定时间；对本次输入的整个歌单做全量解析**。它把歌单读取、音乐人关系分析和 Skill 推荐拆成三个独立步骤，并通过 JSON 契约连接每一步。推荐数量固定为 10 首，与歌单规模无关；当前输出仅为**研究草稿**，不代表外部事实已核验或正式推荐。`send-weixin` 和 `send-weixin-pi` 是独立的显式交付入口，可在人工指定微信目标后分别通过云服务器 OpenClaw 或 Pi agent 的 wechatbot 发送，不会被主工作流自动触发。
+Music Atlas 是一个可扩展的歌单推荐工作流：**随时手动触发，不绑定时间；对本次输入的整个歌单做全量解析**。它把歌单读取、音乐人关系分析和 Skill 推荐拆成三个独立步骤，并通过 JSON 契约连接每一步。推荐数量固定为 10 首，与歌单规模无关；当前输出仅为**研究草稿**，不代表外部事实已核验或正式推荐。所有产物都供网页端展示；仓库不含任何消息发送途径。
 
 ## 设计边界
 
@@ -80,11 +80,11 @@ python workflow.py skill \
   --command 'python tests/fixtures/fake_agent.py'
 ```
 
-`--command` 指向的进程从标准输入读取 Skill 任务，并向标准输出写入 Schema 2.0 的候选池 `RecommendationBundle`。候选阶段的 `explanation` 可省略；程序选曲后写入独占的 `program_explanation`，不采纳 Skill 说明作为排序依据。写入渠道文本前校验推荐数量、项目覆盖、重复歌曲、关系路径和逐事实公开来源。
+`--command` 指向的进程从标准输入读取 Skill 任务，并向标准输出写入 Schema 2.0 的候选池 `RecommendationBundle`。候选阶段的 `explanation` 可省略；程序选曲后写入独占的 `program_explanation`，不采纳 Skill 说明作为排序依据。写入内部文本报告前校验推荐数量、项目覆盖、重复歌曲、关系路径和逐事实公开来源。
 
 Skill 的 `ready` 输出只能是 `candidate_pool`，不能预填评分、选曲或排序字段，也不能提交 `ranked` 包。已有 `ranked` 文件在 `validate`、`evaluate` 和 `tune` 中会核对曲目信息，并从原候选池重新计算评分、入选歌曲和顺序；不一致时拒绝处理。结构链路通过不代表外部事实已经核验。
 
-来源等级和公开关联分数从证据 URL 与事实类型推导，不使用 Skill 自报的等级、来源类别或 `verified` 来加分。已知矛盾、不可访问、过期或受支持来源标识符格式错误的证据，会在排序前被拒绝。排序包的 `publication_status: "draft"` 由程序写入，Skill 不得提交；三个渠道均标注“研究草稿”和“不是正式推荐”。
+来源等级和公开关联分数从证据 URL 与事实类型推导，不使用 Skill 自报的等级、来源类别或 `verified` 来加分。已知矛盾、不可访问、过期或受支持来源标识符格式错误的证据，会在排序前被拒绝。排序包的 `publication_status: "draft"` 由程序写入，Skill 不得提交；网页端与内部报告均标注“研究草稿”和“不是正式推荐”。
 
 选曲先按原有贪心偏好尝试；发生召回类型、艺人名额或项目覆盖冲突时确定性回溯。搜索最多访问 50,000 个状态；“约束无解”与“搜索预算耗尽、尚不能判定是否有解”分别报错。
 
@@ -195,7 +195,7 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
   --command 'python tests/fixtures/fake_agent.py'
 ```
 
-补充轮仍遵守准备时的字符硬预算，原始 prompt/manifest 保持不变。预算耗尽或 Skill 执行器失败时仅写诊断，不生成或覆盖推荐与渠道文本。程序只给最终 10 首生成说明，包含代表收藏、目录路径、具体听感差异、相对本次输入的新鲜点及草稿限制。
+补充轮仍遵守准备时的字符硬预算，原始 prompt/manifest 保持不变。预算耗尽或 Skill 执行器失败时仅写诊断，不生成或覆盖推荐与内部报告。程序只给最终 10 首生成说明，包含代表收藏、目录路径、具体听感差异、相对本次输入的新鲜点及草稿限制。
 
 输出旁的 `<bundle 名>.research.json` 记录轮次、各轮 prompt 摘要、输入/输出字符数、耗时、候选预算和说明数量；成功时绑定排序包的精确摘要。字符量不是计费 token 或真实费用，fake Skill 执行器耗时也不代表真实检索延迟。
 
@@ -226,11 +226,9 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
 - `relations/artist_relations.json`：可审计的公开音乐人关系目录。
 - `analysis_contracts.py` + `analysis_agent.py`：绑定当前快照的研究协议、分批、上下文硬预算、外部分析 Skill 执行、结果导入与断点续跑。
 - `skills/music-atlas-analysis/` + `skills/music-atlas-recommendation/`：两个模型与供应商无关的 Skill 契约说明和约束参考。
-- `channels.py`：微信、飞书和 Telegram 的纯文本渲染适配器，只负责输出，不负责发送。
-- `channel_delivery.py`：独立的微信交付适配器，支持 SSH 调用云服务器 OpenClaw，或调用服务器本地包装器；默认只生成发送计划。
+- `reports.py`：推荐结果的内部纯文本报告（含排序与证据门禁），不发送任何消息。
 - `visualization_interface.py`：预留可视化后端接口，当前不包含实现。
 - `hermes_weekly.sh`：服务器侧调度入口模板；个人输入和运行目录应在部署环境中单独配置。
-- `tools/openclaw_weixin_send.sh`：服务器本地 OpenClaw 包装器示例，从标准输入读取已渲染文本。
 - `feedback.py` + `evaluation.py` + `tune.py`：反馈输入契约、只读离线评估与人工批准的调优建议。
 - `evidence.py`：离线来源分类、稳定标识符格式检查与 claim_type × source_class 的 A/B/C 等级规则。格式正确不等于事实已核验；可信在线核验适配器尚未实现，模块不发请求。
 - `preference_model.py` + `candidate_routes.py`：多兴趣画像与当前目录绑定的候选路线。
@@ -258,7 +256,7 @@ python workflow.py web-export \
 默认允许展示当前工作流的研究草稿；若需要只导出正式可发布数据，增加
 `--require-publishable`，当发布状态或证据审计未通过时命令会拒绝写出。
 
-如果已有本次运行的 Step 2/Step 3 文件，也可以只校验并生成渠道文本：
+如果已有本次运行的 Step 2/Step 3 文件，也可以只校验并生成内部报告：
 
 ```bash
 python workflow.py validate \
@@ -279,62 +277,7 @@ python workflow.py validate \
 
 审计分别报告 `grade_valid`、`identifier_status` 和 `verification_result`，`accepted_count` 仅统计真正核验通过的推荐；来源等级合规、标识符格式正确和 Skill 自报 `verified` 都不构成事实核验。负面判定与过期状态不会被重复 URL 掩盖；检索时间无时区时按 UTC 处理，非法日期返回契约错误。
 
-指定 `--evidence-audit` 会启用严格检查：`rejected` 或 `pending_verification` 时返回退出码 2，仅保留审计报告，不生成或覆盖本次排序文件与渠道文本。当前没有可信在线核验适配器，因此有推荐的离线审计不会报告“核验通过”；fake Skill 的 10 首测试数据也为 0 首核验通过。不带此选项仍检查结构、确定性排序与已知不可用证据，但只生成草稿，不证明事实真实性。
-
-## 发送到微信（OpenClaw / Pi wechatbot）
-
-`send-weixin` 和 `send-weixin-pi` 都会重新读取并确定性重排 bundle，校验分析身份、推荐合同和渠道文本，然后输出发送计划。默认不联网、不发送；只有显式指定 `--send` 或 `--dry-run` 才会调用发送器。腾讯 OpenClaw / WeChatBot 的直接用户目标必须是已知的 `用户标识@im.wechat`，本入口不负责搜索联系人或推断收件人。
-
-通过 SSH 调用云服务器上的 OpenClaw：
-
-```bash
-python workflow.py send-weixin \
-  --analysis runtime/<run>/musician_analysis.json \
-  --bundle runtime/<run>/recommendation_bundle.json \
-  --target 'WEIXIN_USER_ID@im.wechat' \
-  --remote-host <cloud-host> \
-  --remote-user ubuntu \
-  --ssh-identity <ssh-key> \
-  --dry-run
-```
-
-确认 dry-run 的 OpenClaw 返回 `ok: true` 后，改用 `--send` 才会实际发送。当前推荐包通常是 `publication_status: "draft"`；真实发送草稿必须额外指定 `--allow-draft`：
-
-```bash
-python workflow.py send-weixin \
-  --analysis runtime/<run>/musician_analysis.json \
-  --bundle runtime/<run>/recommendation_bundle.json \
-  --target 'WEIXIN_USER_ID@im.wechat' \
-  --remote-host <cloud-host> \
-  --allow-draft --send
-```
-
-也可以在已经部署 Music Atlas 的云服务器上使用本地包装器：
-
-```bash
-export OPENCLAW_WEIXIN_TARGET='WEIXIN_USER_ID@im.wechat'
-python workflow.py send-weixin \
-  --analysis runtime/<run>/musician_analysis.json \
-  --bundle runtime/<run>/recommendation_bundle.json \
-  --sender-command 'bash tools/openclaw_weixin_send.sh' \
-  --allow-draft --send
-```
-
-通过云服务器 Pi agent 已安装的 `@wechatbot/wechatbot` SDK 发送：
-
-```bash
-python workflow.py send-weixin-pi \
-  --analysis runtime/<run>/musician_analysis.json \
-  --bundle runtime/<run>/recommendation_bundle.json \
-  --target 'WEIXIN_USER_ID@im.wechat' \
-  --remote-host <cloud-host> \
-  --remote-user ubuntu \
-  --dry-run
-```
-
-Pi 方式的 `--dry-run` 只检查云端保存的 wechatbot 凭据和目标用户 `context_token`，不会调用发送 API；目标用户必须先给该 Pi wechatbot 发过消息。确认目标上下文存在后，使用 `--allow-draft --send` 才会通过 SDK 的 `bot.send()` 实际发送。默认模块路径为远端 `~/.pi/agent/npm/node_modules/@wechatbot/wechatbot`，默认凭据目录为 `~/.wechatbot`；可用 `--wechatbot-module`、`--wechatbot-storage-dir` 或对应的 `PI_WECHATBOT_*` 环境变量覆盖。
-
-目标、账号和 SSH 地址可分别使用 `OPENCLAW_WEIXIN_TARGET` / `PI_WECHATBOT_TARGET`、`OPENCLAW_WEIXIN_ACCOUNT_ID` / `PI_WECHATBOT_ACCOUNT_ID`、`OPENCLAW_SSH_HOST` / `PI_WECHATBOT_SSH_HOST` 配置。SSH 方式将消息作为编码后的 JSON 传给远端桥接程序，并以非 shell 方式调用发送器；入口不会把账号密钥写入仓库，也不会自动创建定时任务。
+指定 `--evidence-audit` 会启用严格检查：`rejected` 或 `pending_verification` 时返回退出码 2，仅保留审计报告，不生成或覆盖本次排序文件与内部报告。当前没有可信在线核验适配器，因此有推荐的离线审计不会报告“核验通过”；fake Skill 的 10 首测试数据也为 0 首核验通过。不带此选项仍检查结构、确定性排序与已知不可用证据，但只生成草稿，不证明事实真实性。
 
 ## 反馈记录与离线评估
 
@@ -451,7 +394,7 @@ Schema 1.0 的历史分析包和直接推荐包不能复用；修改后需要重
 仍需注意：**可信在线事实核验适配器尚未补齐**（当前证据 URL 由模型凭既有知识给出，
 `evidence_audit` 仍为 `not_available`），因此结果保持 `publication_status: draft` 与
 「画像覆盖不足」提示；不能把离线格式检查或 Skill 自报核验状态当成生产验收。
-`send-weixin` 仍只验证了本地入口与 dry-run 合同，未执行实际消息发送。
+消息发送途径已从仓库移除，不存在任何外发通道。
 
 ## 测试
 
