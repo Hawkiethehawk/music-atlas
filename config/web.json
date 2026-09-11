@@ -20,6 +20,9 @@
     "analysis_parallelism": 5,
     "recommendation_parallelism": 4,
     "analysis_timeout_seconds": 7200,
-    "recommendation_timeout_seconds": 3600
+    "recommendation_timeout_seconds": 3600,
+    "track_limit_options": [30, 100, 200, 500, 1000],
+    "track_limit_default": 30,
+    "await_limit_timeout_seconds": 1800
   }
 }

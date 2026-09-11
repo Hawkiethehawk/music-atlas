@@ -12,6 +12,45 @@ Step 3 使用混合音乐发现策略：Skill 只提交艺人延伸、音乐人�
 
 Apple Music 只用于歌单快照和最终跳转链接。Apple Music 或网易云的个性化推荐、登录状态和历史运行结果不参与候选发现、排序或说明生成。
 
+## 安装（一键部署）
+
+```powershell
+pwsh -File install.ps1        # Windows / PowerShell
+```
+
+```bash
+./install.sh                  # Linux / macOS
+```
+
+安装脚本本身只做一件事：定位 Python 并执行内置的 `atlas setup`。`setup` 会：
+
+1. 检查 Python ≥ 3.10、Node.js ≥ 18、npm、仓库配置与核心模块；
+2. 安装缺失依赖：`tools/` 与 `web/` 的 `npm ci`、Playwright Chromium（Apple 歌单导出需要）；
+3. 注册 `atlas` 命令：在用户级 bin 目录生成只调用本仓库的包装脚本（Windows 追加用户 PATH 并广播设置变更；Linux/macOS 写 `~/.local/bin/atlas`，目录不在 PATH 时只提示，不改 shell 配置）。
+
+注册是幂等的：重复执行不会重复追加 PATH 条目，也不会覆盖已有 `atlas`。可选参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--check-only` | 只检查环境，不做任何安装或注册 |
+| `--skip-node-deps` | 跳过 `npm ci` |
+| `--skip-browser` | 跳过 Playwright Chromium 下载 |
+| `--skip-register` | 跳过 `atlas` 命令注册 |
+| `--json` | 机器可读输出 |
+
+```bash
+python atlas.py setup --check-only     # 与 atlas setup --check-only 等价
+```
+
+安装完成后新开一个终端即可：
+
+```bash
+atlas status
+atlas start
+```
+
+纯 Python 工作流（Step 1–3、CLI）不需要 Node.js；Node 与 Playwright 只用于网页面板和 Apple 歌单导出。
+
 ## 快速开始
 
 仓库不包含任何个人歌单或运行产物。使用公开测试夹具可以完整运行本地链路：
@@ -118,6 +157,12 @@ CSV 的声明数量优先级为 `--declared-count` → `--declared-count-file` �
 
 `style_analysis.style_distribution` 是每首歌只有一个主风格的互斥审计分布；`style_analysis.overlap_style_distribution` 是逐曲多标签覆盖分布。一首歌可以命中多个细分风格，因此后者的覆盖率不要求合计 100%。
 
+## 兴趣组命名
+
+网页「音乐版图」的兴趣组名字由程序从本次歌单实际聚合出的主导风格总结生成：取该组 `style_mix` 权重最高的风格，用 `styles/style_taxonomy.json` 的 `label`，去掉英文与分隔符号后保持在 **3–5 个汉字**（超长标签保留结尾核心词，如 `现代另类金属核` → `另类金属核`）。同一期内名字互不重复，素材不足时依次尝试下一个风格，全部不合格才回退为 `兴趣组 NN`。
+
+命名与聚类同层、完全确定，不调用 Agent，也不改变 Step 1–3 契约。人工 `--editorial` 配置里的 `interests[].name` 仍然优先，并会被自动命名避让。
+
 ## 偏好分析
 
 - **未知不是低分**：缺失的听感画像使用 JSON `null`，不会当成安静、轻柔或低能量偏好。所有分析研究批次完成后，默认至少 50% 的当前曲目有完整分类，才允许准备推荐 Skill 上下文或排序；低覆盖仍保留分析与补全清单。
@@ -193,14 +238,14 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
 - `benchmark.py`：同输入的人工试听清单与只读方案对照。
 - `web_view_model.py` + `workflow.py web-export`：将已校验的运行产物转换为网页专用、只读的脱敏数据。
 - `config/web.json`：网页服务默认配置；端口、稳定发布文件、运行目录和并行度均由项目内文件决定。
-- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。
+- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。网页提交歌单链接后先读取歌单，再让操作者选择处理数量（档位 `30/100/200/500/1000` 或任意整数，上限为真实曲目数），随后继续分析与推荐；档位选项与等待超时由 `config/web.json` 决定。
 - `atlas.py` + `web_service.py`：统一 CLI 入口与面板服务管理。`atlas start [--port N] [--no-open] [--force]` 启动面板（已运行则复用），`atlas stop` / `atlas restart` / `atlas status [--json]` / `atlas logs`；其余子命令透传 workflow.py（如 `atlas run ...`）。停止与替换有身份防护：`/api/health` 携带 `service/pid/web_root`，只有本项目面板会被停止；端口被其他服务占用时默认拒绝，`--force` 才替换；状态文件 PID 存活但健康端点不可用时拒绝覆盖。日志在 `runtime/web/service.log`。Windows 下可将项目根加入 PATH 后用 `atlas` 直呼（`atlas.bat`）。
 
 Apple 自动导出入口为 `python workflow.py export-apple-playlist --url <分享链接> --expected-count <独立确认的歌曲数>`。下载先进入临时目录，经 UTF-8、标准 CSV 解析与数量检查后才替换目标文件；失败保留原文件。不提供 `--expected-count` 时输出 `completeness_status: "unconfirmed"`，不能仅凭 CSV 行数宣称完整。安装与浏览器验收见 [tools/README.md](tools/README.md)。
 
 ## 输出文件
 
-`workflow.py run` 默认生成快照、分析研究 prompt/manifest；配置分析 Skill 并完成研究后才生成分析、Markdown 和推荐上下文。研究工件含每批 result、完整 `research_bundle.json` 和 `research_report.json`；后者记录模式、批次状态、复用、字符数、耗时和研究包摘要。覆盖不足会在准备推荐 Skill 前停止，保留分析及 `coverage_report.json`。随后执行 `workflow.py skill` 才生成已排序的 `recommendation_bundle.json`、`channel_text.txt` 和 `recommendation_bundle.research.json`。网页展示前执行 `workflow.py web-export`，生成运行目录内的 `web_payload.json`，再由 `web/server.js` 按 `config/web.json` 中的稳定发布路径只读提供。运行目录和网页数据默认被 Git 忽略，默认配置纳入 Git。
+`workflow.py run` 默认生成快照、分析研究 prompt/manifest；配置分析 Skill 并完成研究后才生成分析、Markdown 和推荐上下文。研究工件含每批 result、完整 `research_bundle.json` 和 `research_report.json`；后者记录模式、批次状态、复用、字符数、耗时和研究包摘要。覆盖不足会在准备推荐 Skill 前停止，保留分析及 `coverage_report.json`。随后执行 `workflow.py skill` 才生成已排序的 `recommendation_bundle.json`、`channel_text.txt` 和 `recommendation_bundle.research.json`。网页展示前执行 `workflow.py web-export`，生成运行目录内的 `web_payload.json`，再由 `web/server.js` 按 `config/web.json` 中的稳定发布路径只读提供。网页工作流在 Step 1 与 Step 2 之间多一个等待点：歌单读取完成后暂停等待网页提交前 N 首（`awaiting_limit`），提交后按原顺序截断快照（截断前总数保留在 `reader.source_track_count`，快照 ID 追加 `-limitN`）再进入分析；CLI 直接调用不带该等待参数时行为不变。运行目录和网页数据默认被 Git 忽略，默认配置纳入 Git。
 
 网页导出示例：
 
@@ -418,7 +463,7 @@ npm --prefix web run test:browser
 
 当前 203 项 Python 测试不依赖 `input/` 或私有风格画像。另有 11 项 Node 单元测试与 1 项真实 Chromium 本地下载测试；浏览器测试覆盖生产下载/校验辅助函数，不访问 TuneMyMusic 线上页面。
 
-`web/tests/` 覆盖网页层回归：`server.test.mjs` 与 `workflow-job.test.mjs` 用隔离端口和临时配置启动独立 `server.js` 实例（`ATLAS_WEB_CONFIG`），验证静态服务、错误路径、真实任务生命周期、SSE 事件顺序与并发互斥；`workflow-ui.browser.mjs` 用 Playwright 注入可编程 `EventSource`，覆盖乱序、重复、丢帧事件、SSE 中断回退轮询与轮询去重；`atlas-fixture.browser.mjs` 用 `tests/fixtures/playlist_sample.json` 与夹具执行器真实运行 `web_workflow.py`，在隔离 runtime 发布后验证页面渲染 10 首推荐。测试不访问外部歌单内容，不依赖真实检索执行器。
+`web/tests/` 覆盖网页层回归：`server.test.mjs` 与 `workflow-job.test.mjs` 用隔离端口和临时配置启动独立 `server.js` 实例（`ATLAS_WEB_CONFIG`），验证静态服务、错误路径、真实任务生命周期、SSE 事件顺序与并发互斥；`workflow-ui.browser.mjs` 用 Playwright 注入可编程 `EventSource`，覆盖乱序、重复、丢帧事件、SSE 中断回退轮询与轮询去重，以及歌单读完后才解锁的档位选择（上限、快捷键、越界拦截、提交后继续与取消）；`atlas-fixture.browser.mjs` 用 `tests/fixtures/playlist_sample.json` 与夹具执行器真实运行 `web_workflow.py`，在隔离 runtime 发布后验证页面渲染 10 首推荐。测试不访问外部歌单内容，不依赖真实检索执行器。
 
 `tests/test_analysis_agent.py` 新增 31 项测试，覆盖无目录研究、精确逐批覆盖/身份、快照和词表绑定、未知值、证据与程序字段边界、预算与总超时、失败报告/断点续跑、结果导入、输入保护、两阶段 Skill 到 10 首草稿及严格审计。真实 115 首快照另已准备 6 批分析任务；尚未执行真实分析 Skill，不将任务准备或夹具耗时当作推荐质量验收。
 

@@ -2,7 +2,8 @@
 
 ## 1. 仓库边界
 
-- 本目录（`apps/music-atlas`）是**独立 Git 仓库**，远端为 `https://gitee.com/Hawkiethehawk/music-atlas.git`，分支 `master`。
+- 本目录（`apps/music-atlas`）是**独立 Git 仓库**，默认远端为 `origin` = `https://github.com/Hawkiethehawk/music-atlas.git`，分支 `master`。
+- **默认推送目标是 GitHub `origin`**；原 Gitee 远端保留为 `gitee-archive`，仅作归档，除非用户明确要求不推送。
 - 外层 Codex 工作区仓库（`E:\LLM-Sandbox\Codex`）不管理本目录内容；在外层仓库执行 `git add`/`commit`/`push` 时不得纳入本目录。
 - 所有提交、推送、标签操作仅针对本仓库；跨仓库操作前必须重新确认仓库根（`git rev-parse --show-toplevel`）。
 

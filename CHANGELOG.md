@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-11（网页档位选择、一键部署 setup 与兴趣组命名，维护标签 patch-20260911-165642）
+
+- 网页端新增「处理数量」档位：歌单读取完成前控件不可用，读完后才解锁，上限为实际读到的曲目数，不会超过歌单真实规模。可输入任意整数，或点 `30 / 100 / 200 / 500 / 1000` 快捷档位（超过上限的档位自动禁用）；输入值精确生效，等于某个档位时该档位高亮，默认档位 30。选项与默认值来自 `config/web.json` 的 `workflow.track_limit_options` / `workflow.track_limit_default`（旧配置缺字段时前端按合并语义保留默认，`server.js` 有同值兜底）。
+- `web_workflow.py` 在 Step 1 后新增等待点：`--await-track-limit` 在快照校验通过后发出 `awaiting_limit` 事件，轮询 `runtime_dir/requested_track_limit.json`；`--await-limit-timeout` 控制等待秒数（默认 1800）。越界或非法请求被丢弃并继续等待并写入 `limit_rejected` 事件，只有合法请求或超时结束等待；CLI 不带该参数时行为完全不变。
+- 截断保持 Step 1 契约：按歌单原顺序取前 N 首并重排 `position`，同步改写 `declared_track_count`/`track_count`；截断前总数记录在 `reader.source_track_count`、生效数量记录在 `reader.requested_track_limit`，快照 ID 追加 `-limitN` 后缀以隔离分析缓存，`web_job_report.json` 同步记录这两个字段。截断后重新执行 `validate_playlist_snapshot(require_complete=True)`，不修改 `contracts.py` 强制的数量契约。
+- `web/server.js`：任务状态新增 `awaiting_limit`；新增 `POST /api/jobs/:id/limit`（越界/非等待态分别返回 400/409）与 `POST /api/jobs/:id/cancel`；`/api/config` 下发档位选项、默认档位与等待超时；启动工作流时透传等待参数。
+- 页面交互：等待期间隐藏「生成推荐」、显示数量控件与「按所选数量继续」「取消任务」，进度面板保留 `awaiting_limit` 阶段并显示已读数；SSE 与轮询的状态判定统一为 `queued/running/awaiting_limit`，避免把等待误判为终态；终态复位数量控件，取消后使用独立提示文案。
+- 新增 `setup_tool.py` 与 `atlas setup` 子命令：检查 Python ≥ 3.10、Node.js ≥ 18、npm、`tools/`/`web/` 依赖、Playwright Chromium、`config/web.json` 与核心模块可导入性；按缺失项执行 `npm ci` 与 `npx playwright install chromium --only-shell`；支持 `--check-only` / `--skip-node-deps` / `--skip-browser` / `--skip-register` / `--json`。依赖安装失败只记录并报告，不中断整个安装。
+- 新增 `install.ps1` 与 `install.sh` 一键部署：脚本只负责定位 Python 并执行内置的 `atlas setup`，安装过程本身就会完成检查、依赖安装与命令注册。
+- `atlas` 命令注册：在用户级 bin 目录生成只调用本仓库 `atlas.py` 的包装脚本（Windows `%LOCALAPPDATA%/MusicAtlas/bin/atlas.cmd`，Linux/macOS `~/.local/bin/atlas`）；Windows 追加用户 PATH（HKCU `Environment`，REG_EXPAND_SZ）并广播 `WM_SETTINGCHANGE`，POSIX 目录不在 PATH 时只提示不改 shell 配置。注册完全幂等：重复执行不重复追加 PATH 条目，也不覆盖已有包装脚本。
+- 兴趣组命名：网页「音乐版图」的名字不再固定为 `兴趣组 NN`，而是由程序从该组 `style_mix` 权重最高的风格派生：取 `styles/style_taxonomy.json` 的 `label`，去英文与分隔符号后保持 3–5 个汉字（超长标签保留结尾核心词，如 `现代另类金属核` → `另类金属核`）；同一期内名字不重复，素材不足时依次尝试下一个风格，全部不合格才回退。命名与聚类同层、完全确定、不调用 Agent，也不改变 Step 1–3 契约；人工 `--editorial` 的 `interests[].name` 仍然优先并会被自动命名避让。
+- `AGENTS.md` 仓库边界改为 GitHub：默认远端为 `origin` = `https://github.com/Hawkiethehawk/music-atlas.git`，原 Gitee 远端保留为 `gitee-archive` 仅作归档；`atlas.md` 仓库链接同步。
+- 新增测试：`tests/test_web_workflow.py` 覆盖截断契约/顺序/边界、请求解析上下限、非法请求丢弃后继续等待、等待超时，以及带等待参数的真实夹具端到端（断言 `snapshot.json` 与 `web_job_report.json`）；`web/tests/server.test.mjs` 覆盖配置下发与档位/取消接口的 404 路径；`web/tests/workflow-ui.browser.mjs` 新增「歌单读完后才可选数量、上限、快捷键禁用、越界拦截、提交后继续」与「等待期取消」两条用例；`tests/test_setup_tool.py` 覆盖 PATH 追加幂等、包装脚本生成、注册幂等、检查项与 setup 编排（安装/跳过/失败/check-only）；`tests/test_web_view_model.py` 覆盖标签清洗、派生规则、同名避让、editorial 优先与全部名字长度在 3–5 字。
+- 同步 `README.md` 与 `web/README.md`：新增「安装（一键部署）」与「兴趣组命名」章节、档位流程与 `config/web.json` 新增配置项、`awaiting_limit` 状态下的两个 HTTP 接口，以及网页层回归范围。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：269 项通过（新增 9 项档位、17 项 setup、16 项兴趣组命名测试）。
+- `python -m compileall -q .`：通过。
+- `node --check web/server.js`、`editorial-atlas.html` 内联脚本 `node --check`：通过。
+- `npm --prefix web test`：8 项通过；`npm --prefix web run test:browser`：13 项通过（新增 2 项）。
+- `python atlas.py setup --check-only` 与 `--json`：真实执行，9 项检查全部通过。
+- `python atlas.py setup` 真实注册：写入 `C:\Users\cy\AppData\Local\MusicAtlas\bin\atlas.cmd`，用户 PATH 追加该目录并广播；第二次执行不再追加（幂等）；模拟新终端 PATH 后用 `Get-Command atlas` 能找到包装脚本，`atlas.cmd setup --check-only` 与 `atlas status --json`、`atlas --help`（透传 workflow.py）均真实执行通过。
+- 兴趣组命名端到端：`python workflow.py web-export --runtime-dir runtime/apple-link-20260908` 重新导出，3 个兴趣组命名为「电子摇滚」「另类摇滚」「另类金属核」，均为 3–5 个字。
+- 未部署；未做真实平台歌单的在线档位冒烟（等待链路已由夹具端到端覆盖）。
+
 ## 2026-09-11（规模分档品味摘要与 atlas CLI，维护标签 patch-20260911-153225）
 
 - 新增规模分档分析：≤30 首逐曲研究（每批默认 10 首，批次并发），31-500 首品味摘要（taste_summary），≥501 首歌手摘要（artist_summary）；后两者为单任务分析，基于程序统计的歌名/歌手清单与整体锐评，不再逐曲研究。

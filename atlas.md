@@ -1,6 +1,6 @@
 # Music Atlas 项目总结
 
-> 更新日期：2026-09-09 ｜ 仓库：https://gitee.com/Hawkiethehawk/music-atlas ｜ 191 项 Python、11 项 Node、1 项 Chromium 测试通过（本地未发布重构）
+> 更新日期：2026-09-09 ｜ 仓库：https://github.com/Hawkiethehawk/music-atlas ｜ 191 项 Python、11 项 Node、1 项 Chromium 测试通过（本地未发布重构）
 
 ## 一、项目是什么
 

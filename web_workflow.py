@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
@@ -126,6 +127,96 @@ def _publish_payload(source: Path, target: Path) -> None:
             temporary.unlink()
 
 
+DEFAULT_AWAIT_LIMIT_TIMEOUT_SECONDS = 1800
+AWAIT_LIMIT_MAX_TIMEOUT_SECONDS = 86400
+LIMIT_REQUEST_FILENAME = "requested_track_limit.json"
+LIMIT_WAIT_POLL_SECONDS = 0.5
+
+
+def _apply_track_limit(snapshot: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Keep only the first ``limit`` tracks as a self-consistent snapshot.
+
+    The web panel size control trims the playlist only *after* Step 1 has read
+    it, because the operator must not exceed the real track count. The Step 1
+    contract still requires ``declared_track_count == track_count ==
+    len(tracks)``, so the trimmed result stands on its own: the pre-trim source
+    total stays on ``reader.source_track_count`` for traceability and the
+    snapshot id is suffixed so trimmed and untrimmed runs never share analysis
+    caches.
+    """
+
+    tracks = snapshot.get("tracks")
+    if not isinstance(tracks, list):
+        raise ContractError("快照缺少 tracks 数组，无法应用处理数量")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ContractError("处理数量必须是大于等于 1 的整数")
+    reader = snapshot.get("reader")
+    if not isinstance(reader, dict):
+        reader = {}
+        snapshot["reader"] = reader
+    total = len(tracks)
+    reader["source_track_count"] = total
+    if limit >= total:
+        reader["requested_track_limit"] = None
+        return snapshot
+    trimmed: list[dict[str, Any]] = []
+    for position, track in enumerate(tracks[:limit], 1):
+        if not isinstance(track, dict):
+            raise ContractError(f"第 {position} 首歌曲不是对象")
+        trimmed.append({**track, "position": position})
+    reader["requested_track_limit"] = limit
+    snapshot["tracks"] = trimmed
+    snapshot["track_count"] = limit
+    snapshot["declared_track_count"] = limit
+    base_id = re.sub(r"-limit\d+$", "", str(snapshot.get("snapshot_id") or ""))
+    snapshot["snapshot_id"] = f"{base_id}-limit{limit}"
+    return snapshot
+
+
+def _read_limit_request(path: Path, maximum: int) -> int:
+    """Parse one operator-submitted track limit request."""
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ContractError("数量请求文件不存在") from exc
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContractError(f"数量请求文件无法解析：{exc}") from exc
+    if not isinstance(payload, dict):
+        raise ContractError("数量请求必须是 JSON 对象")
+    value = payload.get("limit")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ContractError("处理数量必须是整数")
+    if value < 1 or value > maximum:
+        raise ContractError(f"处理数量必须在 1 到 {maximum} 之间")
+    return value
+
+
+def _await_track_limit(request_path: Path, maximum: int, timeout: int) -> int:
+    """Block until the operator submits a track limit, then return it.
+
+    An invalid request is dropped and reported instead of failing the job, so
+    the page can correct the value; the wait ends only on a valid request or on
+    timeout. The playlist has already been read at this point, which is what
+    lets the upper bound be the real track count.
+    """
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if request_path.is_file():
+            try:
+                limit = _read_limit_request(request_path, maximum)
+            except ContractError as exc:
+                request_path.unlink(missing_ok=True)
+                emit("limit_rejected", status="awaiting_limit", stage="snapshot",
+                     track_count=maximum, error=str(exc))
+            else:
+                return limit
+        if time.monotonic() >= deadline:
+            raise ContractError(f"等待选择处理数量超时（{timeout} 秒），本次任务未继续")
+        time.sleep(LIMIT_WAIT_POLL_SECONDS)
+
+
 def _build_source(args: argparse.Namespace, runtime_dir: Path) -> tuple[dict, dict]:
     kind = args.source_kind
     playlist_name = (args.playlist_name or "").strip()
@@ -214,6 +305,37 @@ def run_web_workflow(args: argparse.Namespace) -> int:
          task_id="snapshot-import", task_index=1, task_total=1, task_status="validated",
          completed=1, total=1, track_completed=snapshot["track_count"],
          track_total=snapshot["track_count"], message=f"歌单已整理 · {snapshot['track_count']} 首")
+
+    # 网页端档位选择：歌单读取完成后暂停，等操作者提交处理数量再截断。
+    # 只有读到了曲目才谈得上上限，因此空歌单不走等待，交给既有校验报错。
+    source_track_count = snapshot["track_count"]
+    await_limit = bool(getattr(args, "await_track_limit", False))
+    if await_limit and source_track_count > 0:
+        limit_timeout = int(getattr(args, "await_limit_timeout", 0) or 0)
+        if not 0 < limit_timeout <= AWAIT_LIMIT_MAX_TIMEOUT_SECONDS:
+            raise ContractError(
+                f"await-limit-timeout 必须是 1 到 {AWAIT_LIMIT_MAX_TIMEOUT_SECONDS} 秒之间的整数")
+        request_path = runtime_dir / LIMIT_REQUEST_FILENAME
+        emit("awaiting_limit", status="awaiting_limit", stage="snapshot",
+             track_count=source_track_count, snapshot_id=snapshot["snapshot_id"],
+             timeout_seconds=limit_timeout,
+             message=f"歌单已读取 · {source_track_count} 首，等待选择处理数量")
+        emit("task_started", status="awaiting_limit", stage="snapshot", task_kind="track_limit",
+             task_id="track-limit", task_index=1, task_total=1, task_status="running",
+             track_count=source_track_count, message="等待选择处理数量")
+        limit = _await_track_limit(request_path, source_track_count, limit_timeout)
+        request_path.unlink(missing_ok=True)
+        snapshot = _apply_track_limit(snapshot, limit)
+        validate_playlist_snapshot(snapshot, require_complete=True)
+        save_snapshot(snapshot, snapshot_path)
+        emit("limit_applied", status="running", stage="snapshot",
+             requested_track_limit=limit, source_track_count=source_track_count,
+             track_count=snapshot["track_count"], snapshot_id=snapshot["snapshot_id"],
+             message=f"已确定处理数量 · 前 {snapshot['track_count']} 首")
+        emit("task_completed", status="running", stage="snapshot", task_kind="track_limit",
+             task_id="track-limit", task_index=1, task_total=1, task_status="validated",
+             completed=1, total=1, track_count=snapshot["track_count"],
+             message=f"处理数量已确定 · 前 {snapshot['track_count']} 首")
 
     taxonomy_path = (ROOT / "styles" / "style_taxonomy.json").resolve()
     analysis_research_dir = runtime_dir / "analysis_research"
@@ -342,6 +464,8 @@ def run_web_workflow(args: argparse.Namespace) -> int:
             "analysis_id": packet["analysis_id"],
             "analysis_parallelism": args.analysis_parallelism,
             "recommendation_parallelism": args.recommendation_parallelism,
+            "source_track_count": source_track_count,
+            "requested_track_limit": (snapshot.get("reader") or {}).get("requested_track_limit"),
             "prompt_characters": len(prompt),
             "prompt_size": prompt_size_telemetry(prompt),
             "budget_report": budget_report,
@@ -371,6 +495,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--playlist-name", default=None)
     parser.add_argument("--platform", default=None)
     parser.add_argument("--expected-count", type=int, default=None)
+    parser.add_argument("--await-track-limit", action="store_true",
+                        help="歌单读取完成后暂停，等待网页提交处理数量再继续")
+    parser.add_argument("--await-limit-timeout", type=int, default=DEFAULT_AWAIT_LIMIT_TIMEOUT_SECONDS)
     parser.add_argument("--analysis-command", default=None)
     parser.add_argument("--recommendation-command", default=None)
     parser.add_argument("--analysis-parallelism", type=int, default=5)

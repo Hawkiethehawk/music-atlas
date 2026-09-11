@@ -113,6 +113,27 @@ const RECOMMENDATION_TIMEOUT_SECONDS = Number(WORKFLOW_CONFIG.recommendation_tim
 if (!Number.isInteger(RECOMMENDATION_TIMEOUT_SECONDS) || RECOMMENDATION_TIMEOUT_SECONDS < 1 || RECOMMENDATION_TIMEOUT_SECONDS > 86400) {
   throw new Error("workflow.recommendation_timeout_seconds 必须是 1 到 86400 的整数");
 }
+// 网页端档位：歌单读取完成后才允许选择处理数量，选项与默认值都来自项目配置。
+const TRACK_LIMIT_OPTIONS = (() => {
+  const raw = WORKFLOW_CONFIG.track_limit_options ?? [30, 100, 200, 500, 1000];
+  if (!Array.isArray(raw) || !raw.length) throw new Error("workflow.track_limit_options 必须是非空的整数数组");
+  const options = [];
+  for (const value of raw) {
+    if (!Number.isInteger(value) || value < 1) throw new Error("workflow.track_limit_options 只能包含正整数");
+    if (!options.includes(value)) options.push(value);
+  }
+  return options.sort((left, right) => left - right);
+})();
+const TRACK_LIMIT_DEFAULT = WORKFLOW_CONFIG.track_limit_default ?? TRACK_LIMIT_OPTIONS[0];
+if (!Number.isInteger(TRACK_LIMIT_DEFAULT) || TRACK_LIMIT_DEFAULT < 1) {
+  throw new Error("workflow.track_limit_default 必须是正整数");
+}
+const AWAIT_LIMIT_TIMEOUT_SECONDS = Number(WORKFLOW_CONFIG.await_limit_timeout_seconds ?? 1800);
+if (!Number.isInteger(AWAIT_LIMIT_TIMEOUT_SECONDS) || AWAIT_LIMIT_TIMEOUT_SECONDS < 1 || AWAIT_LIMIT_TIMEOUT_SECONDS > 86400) {
+  throw new Error("workflow.await_limit_timeout_seconds 必须是 1 到 86400 的整数");
+}
+// 与 web_workflow.py 的 LIMIT_REQUEST_FILENAME 保持一致：网页写请求，工作流读请求。
+const LIMIT_REQUEST_FILENAME = "requested_track_limit.json";
 const ANALYSIS_EXECUTOR = configureExecutor(EXECUTOR_CONFIG.analysis, "executors.analysis", PYTHON);
 const RECOMMENDATION_EXECUTOR = configureExecutor(EXECUTOR_CONFIG.recommendation, "executors.recommendation", PYTHON);
 const ANALYSIS_COMMAND = ANALYSIS_EXECUTOR.command;
@@ -199,6 +220,17 @@ function readJsonBody(req, limit = 32 * 1024) {
   });
 }
 
+/* 等待选择处理数量时，上限来自工作流已读取到的真实曲目数（awaiting_limit 事件）。 */
+function trackLimitMaximum(job) {
+  for (let index = job.events.length - 1; index >= 0; index -= 1) {
+    const event = job.events[index];
+    if (event && event.event === "awaiting_limit" && Number.isInteger(event.track_count)) {
+      return event.track_count;
+    }
+  }
+  return null;
+}
+
 function publicJob(job) {
   return {
     id: job.id,
@@ -222,6 +254,7 @@ function recordJobEvent(job, event) {
   if (typeof safeEvent.stage === "string") job.stage = safeEvent.stage;
   if (safeEvent.status === "completed" || safeEvent.event === "failed") job.status = safeEvent.status === "completed" ? "completed" : "failed";
   else if (safeEvent.status === "running") job.status = "running";
+  else if (safeEvent.status === "awaiting_limit") job.status = "awaiting_limit";
   job.updated_at = safeEvent.at;
   const subscribers = jobSubscribers.get(job.id) || new Set();
   for (const res of subscribers) {
@@ -289,6 +322,8 @@ async function startWorkflowJob(config) {
     "--recommendation-timeout", String(RECOMMENDATION_TIMEOUT_SECONDS),
   ];
   args.push("--analysis-command", ANALYSIS_COMMAND, "--recommendation-command", RECOMMENDATION_COMMAND);
+  // 歌单先读完再选数量：工作流在 snapshot 阶段后暂停，等网页写回处理数量。
+  args.push("--await-track-limit", "--await-limit-timeout", String(AWAIT_LIMIT_TIMEOUT_SECONDS));
   if (config.source_url) args.push("--source-url", config.source_url);
   if (config.input) args.push("--input", config.input);
   if (config.playlist_id) args.push("--playlist-id", config.playlist_id);
@@ -445,6 +480,9 @@ const server = http.createServer(async (req, res) => {
         analysis_parallelism: ANALYSIS_PARALLELISM,
         recommendation_parallelism: RECOMMENDATION_PARALLELISM,
         recommendation_parallelism_options: [3, 4],
+        track_limit_options: TRACK_LIMIT_OPTIONS,
+        track_limit_default: TRACK_LIMIT_DEFAULT,
+        await_limit_timeout_seconds: AWAIT_LIMIT_TIMEOUT_SECONDS,
         analysis_timeout_seconds: ANALYSIS_TIMEOUT_SECONDS,
         recommendation_timeout_seconds: RECOMMENDATION_TIMEOUT_SECONDS,
         apple_requires_expected_count: false,
@@ -468,6 +506,57 @@ const server = http.createServer(async (req, res) => {
       const message = error && error.message ? error.message : "无法创建网页工作流";
       sendJson(res, message.includes("已有网页工作流") ? 409 : 400, { ok: false, error: message });
     }
+    return;
+  }
+
+  const limitMatch = urlPath.match(/^\/api\/jobs\/([^/]+)\/limit$/);
+  if (limitMatch && req.method === "POST") {
+    const job = jobs.get(decodeURIComponent(limitMatch[1]));
+    if (!job) {
+      sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" });
+      return;
+    }
+    if (job.status !== "awaiting_limit") {
+      sendJson(res, 409, { ok: false, error: "当前任务未在等待选择处理数量" });
+      return;
+    }
+    const maximum = trackLimitMaximum(job);
+    try {
+      const body = await readJsonBody(req);
+      const limit = body.limit;
+      if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
+        sendJson(res, 400, { ok: false, error: "处理数量必须是正整数" });
+        return;
+      }
+      if (maximum !== null && limit > maximum) {
+        sendJson(res, 400, { ok: false, error: `处理数量不能超过歌单曲目数 ${maximum}` });
+        return;
+      }
+      const requestPath = path.join(job.runtime_dir, LIMIT_REQUEST_FILENAME);
+      const temporary = `${requestPath}.${process.pid}.tmp`;
+      await fs.promises.writeFile(temporary, JSON.stringify({ limit }), "utf8");
+      await fs.promises.rename(temporary, requestPath);
+      sendJson(res, 202, { ok: true, job: publicJob(job), limit });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error && error.message ? error.message : "无法提交处理数量" });
+    }
+    return;
+  }
+
+  const cancelMatch = urlPath.match(/^\/api\/jobs\/([^/]+)\/cancel$/);
+  if (cancelMatch && req.method === "POST") {
+    const job = jobs.get(decodeURIComponent(cancelMatch[1]));
+    if (!job) {
+      sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" });
+      return;
+    }
+    if (!job.child) {
+      sendJson(res, 409, { ok: false, error: "当前任务已经结束" });
+      return;
+    }
+    job.child.kill();
+    recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: "任务已取消" });
+    sendJson(res, 200, { ok: true, job: publicJob(job) });
     return;
   }
 

@@ -209,7 +209,7 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .workflow-panel{border:1px solid var(--line2);background:var(--bg2);padding:26px;margin:26px 0 18px}
 .workflow-panel h3{font-family:var(--serif);font-size:24px;font-weight:500;margin-bottom:6px}
 .workflow-panel .hint{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
-.wf-form{display:grid;grid-template-columns:1fr 1.6fr 130px;gap:12px;align-items:end}
+.wf-form{display:grid;grid-template-columns:1fr;gap:14px}
 .wf-field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .wf-field label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
 .wf-field input,.wf-field select{font:inherit;font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:10px 12px;min-height:42px;outline:none}
@@ -219,8 +219,17 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .wf-error{display:none;border-left:2px solid var(--acc);background:rgba(200,98,47,.08);color:#d99a5b;font-family:var(--mono);font-size:12px;letter-spacing:.08em;line-height:1.5;padding:6px 10px}
 .wf-field.has-error .wf-error{display:block}
 .wf-field.hidden{display:none}
-.wf-actions{display:flex;gap:10px;align-items:end;align-self:start;margin-top:23px}
+.wf-limit-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wf-limit-row input{width:150px}
+.wf-chips{display:flex;gap:8px;flex-wrap:wrap}
+.wf-limit-note{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;line-height:1.7}
+.chip{font-family:var(--mono);font-size:12px;letter-spacing:.14em;padding:8px 12px;border:1px solid var(--line);color:var(--dim);cursor:pointer;background:none}
+.chip:hover:not(:disabled){border-color:var(--line2);color:var(--ink)}
+.chip.on{border-color:var(--acc);color:var(--acc)}
+.chip:disabled{opacity:.35;cursor:not-allowed}
+.wf-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .wf-actions .btn{min-height:42px;white-space:nowrap}
+.wf-actions .btn.hidden{display:none}
 .wf-actions .btn:disabled{opacity:.45;cursor:not-allowed}
 .wf-meta{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;margin-top:14px;line-height:1.8}
 .wf-events{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
@@ -297,7 +306,7 @@ footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px}
 .big-sec-title{font-family:var(--serif);font-weight:500;font-size:40px;margin:14px 0 8px}
 .axis-duo{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:18px}
 @media (max-width:1000px){.trow{grid-template-columns:44px 70px 1fr;gap:16px}.trow>*{padding:16px 0}.trow .info{padding:16px 0}.trow .info::after,.trow .ol::after{display:none}.trow .ol,.trow .plcol{display:none}.collage{display:none}.dgrid{grid-template-columns:1fr}.islands,.cards3,.outgrid{grid-template-columns:1fr}.chain{grid-template-columns:1fr}.axis-duo{grid-template-columns:1fr}}
-@media (max-width:760px){.wf-form{grid-template-columns:1fr}.wf-actions{align-items:stretch;margin-top:0}.wf-actions .btn{width:100%}}
+@media (max-width:760px){.wf-actions{align-items:stretch}.wf-actions .btn{width:100%}}
 </style>
 </head>
 <body>
@@ -312,14 +321,18 @@ let RECS=[];
 let ARTISTS={};
 let ALBUMS={};
 let SOURCES=[];
-let WORKFLOW={analysis_executor_configured:false,recommendation_executor_configured:false,analysis_parallelism:5,recommendation_parallelism:4};
+let WORKFLOW={analysis_executor_configured:false,recommendation_executor_configured:false,analysis_parallelism:5,recommendation_parallelism:4,track_limit_options:[30,100,200,500,1000],track_limit_default:30,await_limit_timeout_seconds:1800};
 let ACTIVE_JOB_ID=null;
+let workflowCancelledJobId=null;
 let workflowPollTimer=null;
 let workflowEventSource=null;
 let workflowStreamId=null;
 let workflowClockTimer=null;
 let workflowFinishedJobId=null;
 
+/* 任务活跃状态：awaiting_limit 表示歌单已读取、正在等用户选择处理数量，不能当终态。 */
+const WORKFLOW_ACTIVE_STATUSES=["queued","running","awaiting_limit"];
+const workflowActive=status=>WORKFLOW_ACTIVE_STATUSES.includes(status);
 /* ================= HELPERS ================= */
 const hueFor=s=>{let h=0;for(const c of String(s))h=(h*31+c.charCodeAt(0))%360;return h;};
 const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -398,7 +411,7 @@ const tasteHTML=t=>`<div class="tconn">${t.map((v,i)=>{const last=i===t.length-1
   ARTISTS=payload.artists||{};ALBUMS=payload.albums||{};SOURCES=payload.sources||[];
   if(ISSUE.title)document.title="Music Atlas · "+ISSUE.title;
  }
- function applyWorkflowConfig(payload){WORKFLOW=payload&&payload.workflow?payload.workflow:WORKFLOW;if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;}
+ function applyWorkflowConfig(payload){const incoming=payload&&payload.workflow?payload.workflow:null;if(incoming)WORKFLOW=Object.assign({},WORKFLOW,incoming);if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;}
  async function bootAtlas(){
   const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
   const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
@@ -571,7 +584,11 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   if(event.event==="queued")return"已加入处理队列";
   if(event.event==="failed")return event.error?`本次处理未完成 · ${event.error}`:"本次处理未完成";
   if(event.event==="stage_detail")return event.message||"正在准备当前阶段";
+  if(event.event==="awaiting_limit")return`歌单已读取 · ${event.track_count||0} 首，等待选择处理数量`;
+  if(event.event==="limit_applied")return`已确定处理数量 · 前 ${event.track_count||0} 首`;
+  if(event.event==="limit_rejected")return`处理数量未被接受 · ${event.error||"请重新选择"}`;
   if(event.task_kind==="snapshot_import")return event.event==="task_completed"?`歌单已整理 · ${event.track_count||event.track_completed||0} 首`:"正在识别平台并拉取歌单";
+  if(event.task_kind==="track_limit")return event.task_status==="validated"?`处理数量已确定 · 前 ${event.track_count||0} 首`:"等待选择处理数量";
   if(event.task_kind==="analysis_batch"){
    const index=event.task_index||0,total=event.task_total||0,count=event.track_count||0;
    if(event.event==="task_started")return`第 ${index}/${total} 批进入分析 · ${count} 首`;
@@ -695,8 +712,8 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  function workflowUpdateClock(job){
   clearInterval(workflowClockTimer);workflowClockTimer=null;const flow=document.getElementById("flow");if(!flow||!flow.classList.contains("on"))return;const tick=()=>{const node=flow.querySelector("[data-wf-elapsed]");if(node)node.textContent=workflowElapsed(job);};tick();workflowClockTimer=setInterval(tick,1000);}
  function renderWorkflowJob(job){
-  const flow=document.getElementById("flow");if(!flow||!job)return;const running=job.status==="queued"||job.status==="running";
-  if(!running){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
+  const flow=document.getElementById("flow");if(!flow||!job)return;const active=workflowActive(job.status);syncLimitControls(job);
+  if(!active){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
   flow.classList.add("on");const jobId=String(job.id||"");let step=flow.querySelector(".fstep");
   if(!step||flow.dataset.jobId!==jobId){
    flow.innerHTML=`<div class="wf-dashboard"><div class="fstep"></div><div class="wf-stagebar" role="list">${WORKFLOW_STAGE_ORDER.map((stage,index)=>`<div class="wf-stage" data-stage="${stage}" role="listitem"><span class="wf-stage-index">0${index+1}</span><span class="wf-stage-label">${workflowStageLabel(stage)}</span><span class="wf-stage-state">等待</span></div>`).join("")}</div><div class="wf-summary"><span class="wf-summary-main" data-wf-summary>正在处理歌单</span><span data-wf-elapsed>00:00</span><span class="wf-summary-count" data-wf-count>准备中</span></div><div class="wf-detail-grid"><section class="wf-task-panel"><div class="wf-panel-head"><h4>第二步 · 歌单分析</h4><span class="wf-panel-stat" data-wf-stat="analysis">0/0 批</span></div><p class="wf-panel-note" data-wf-note="analysis">等待分析任务启动。</p><div class="wf-task-list" data-wf-tasks="analysis"></div></section><section class="wf-task-panel"><div class="wf-panel-head"><h4>第三步 · 生成推荐</h4><span class="wf-panel-stat" data-wf-stat="recommendation">等待</span></div><p class="wf-panel-note" data-wf-note="recommendation">等待第二步分析包校验。</p><div class="wf-task-list" data-wf-tasks="recommendation"></div></section></div><div class="wf-events"><div class="wf-events-title">最近事件 · 北京时间</div><div data-wf-events></div></div></div>`;
@@ -705,8 +722,9 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   const view=workflowProgressView(job),events=view.events,stepText=`正在处理歌单 · ${workflowStageLabel(job.stage)}`;if(step.textContent!==stepText)step.textContent=stepText;
   WORKFLOW_STAGE_ORDER.forEach(stage=>{const node=flow.querySelector(`[data-stage="${stage}"]`);if(!node)return;const state=workflowStageState(stage,job,events);node.className=`wf-stage ${state}`;const label=node.querySelector(".wf-stage-label"),stateNode=node.querySelector(".wf-stage-state");if(label)label.textContent=workflowStageLabel(stage);if(stateNode)stateNode.textContent=state==="done"?"已完成":state==="current"?"进行中":"等待";});
   const summary=flow.querySelector("[data-wf-summary]"),count=flow.querySelector("[data-wf-count]"),analysisNote=flow.querySelector('[data-wf-note="analysis"]'),recommendationNote=flow.querySelector('[data-wf-note="recommendation"]');
-  if(summary)summary.textContent=`${job.status==="queued"?"排队中":"正在处理"} · ${workflowStageLabel(job.stage)}`;
-  if(count)count.textContent=`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
+  if(summary)summary.textContent=`${job.status==="queued"?"排队中":job.status==="awaiting_limit"?"等待选择处理数量":"正在处理"} · ${workflowStageLabel(job.stage)}`;
+  const limitView=workflowLimitView(job);
+  if(count)count.textContent=limitView?`歌单已读取 ${limitView.maximum} 首`:`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
   const analysisStat=flow.querySelector('[data-wf-stat="analysis"]');
   if(analysisStat)analysisStat.textContent=view.analysisMode==="taste_summary"?"品味摘要 · 单任务":view.analysisMode==="artist_summary"?"歌手摘要 · 单任务":`${view.analysisCompleted}/${view.analysisTotal} 批 · ${view.analysisTrackCompleted}/${view.analysisTrackTotal} 首`;
   if(analysisNote)analysisNote.textContent=view.analysisMode!=="track_research"?"按歌单规模采用整体分析（单任务），完成后进入第三步":view.analysisAggregateDone?"分析包已校验，第三步已获得启动条件":`${WORKFLOW.analysis_parallelism||5} 个并行槽位 · 所有批次完成后才进入第三步`;
@@ -722,18 +740,78 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  async function refreshAtlas(){
   try{const response=await fetch("/api/atlas",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){applyAtlasPayload(payload);render();}}catch{}
  }
- function setWorkflowButtonBusy(busy){const form=document.getElementById("workflow-form"),button=form&&form.querySelector("button[type=submit]");if(button)button.disabled=Boolean(busy)||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);}
+ function setWorkflowButtonBusy(busy){const form=document.getElementById("workflow-form"),button=form&&form.querySelector('button[type="submit"]');if(button)button.disabled=Boolean(busy)||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);}
+/* ---------------- 处理数量档位（歌单已读取后选择） ---------------- */
+function workflowLimitOptions(){
+ const options=WORKFLOW&&Array.isArray(WORKFLOW.track_limit_options)?WORKFLOW.track_limit_options:[];
+ return options.filter(value=>Number.isInteger(value)&&value>0);
+}
+function workflowLimitDefault(){const value=Number(WORKFLOW&&WORKFLOW.track_limit_default);return Number.isInteger(value)&&value>0?value:(workflowLimitOptions()[0]||30);}
+/* 只有歌单真实读完后工作流才会进入 awaiting_limit；上限来自该事件携带的曲目数。 */
+function workflowLimitView(job){
+ if(!job||job.status!=="awaiting_limit")return null;
+ const events=Array.isArray(job.events)?job.events:[];
+ for(let index=events.length-1;index>=0;index--){
+  const event=events[index];
+  if(event&&event.event==="awaiting_limit"&&Number.isInteger(event.track_count)&&event.track_count>0){
+   return{maximum:event.track_count,timeout:Number(event.timeout_seconds)||Number(WORKFLOW.await_limit_timeout_seconds)||0};
+  }
+ }
+ return null;
+}
+function renderLimitChips(maximum){
+ const chips=document.getElementById("wf-limit-chips");if(!chips)return;
+ const signature=workflowLimitOptions().join(",")+"|"+maximum;if(chips.dataset.signature===signature)return;
+ chips.dataset.signature=signature;
+ chips.innerHTML=workflowLimitOptions().map(value=>`<button type="button" class="chip" data-limit="${value}"${value>maximum?" disabled":""}>${value}</button>`).join("");
+}
+function limitFieldError(message){
+ const field=document.getElementById("wf-limit-field"),input=document.getElementById("wf-limit"),error=document.getElementById("wf-limit-error");if(!field||!input||!error)return;
+ const active=Boolean(message);field.classList.toggle("has-error",active);input.setAttribute("aria-invalid",active?"true":"false");error.textContent=message||"";
+}
+function currentLimitValue(){
+ const input=document.getElementById("wf-limit");if(!input)return{ok:false,message:"请输入处理数量。"};
+ const raw=String(input.value||"").trim();
+ if(!/^\d+$/.test(raw))return{ok:false,message:"处理数量必须是整数。"};
+ const value=Number(raw);if(value<1)return{ok:false,message:"处理数量至少为 1 首。"};
+ const maximum=Number(input.max);
+ if(Number.isInteger(maximum)&&maximum>0&&value>maximum)return{ok:false,message:`不能超过歌单曲目数 ${maximum} 首。`};
+ return{ok:true,value};
+}
+function syncLimitChipHighlight(){
+ const input=document.getElementById("wf-limit"),chips=document.getElementById("wf-limit-chips");if(!input||!chips)return;
+ const raw=String(input.value||"").trim();
+ chips.querySelectorAll("[data-limit]").forEach(chip=>chip.classList.toggle("on",chip.dataset.limit===raw));
+}
+function syncLimitControls(job){
+ const panel=document.getElementById("wf-limit-field"),submit=document.getElementById("wf-submit"),confirm=document.getElementById("wf-limit-confirm"),cancel=document.getElementById("wf-cancel"),input=document.getElementById("wf-limit");
+ if(!panel||!submit||!confirm||!cancel)return;
+ const view=workflowLimitView(job);
+ if(!view){
+  panel.classList.add("hidden");confirm.classList.add("hidden");cancel.classList.add("hidden");submit.classList.remove("hidden");limitFieldError("");return;
+ }
+ panel.classList.remove("hidden");confirm.classList.remove("hidden");cancel.classList.remove("hidden");submit.classList.add("hidden");
+ const maximumNode=document.getElementById("wf-limit-max"),note=document.getElementById("wf-limit-note");
+ if(input)input.max=String(view.maximum);
+ if(maximumNode)maximumNode.textContent=String(view.maximum);
+ if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。选择前 N 首继续处理；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择前 N 首继续处理。`;
+ renderLimitChips(view.maximum);
+ if(input&&input.dataset.jobId!==job.id){
+  input.dataset.jobId=job.id;input.value=String(Math.min(workflowLimitDefault(),view.maximum));limitFieldError("");
+ }
+ syncLimitChipHighlight();
+}
  function stopWorkflowStream(){if(workflowEventSource){workflowEventSource.close();workflowEventSource=null;}workflowStreamId=null;}
  async function finishWorkflowJob(job){
-  clearTimeout(workflowPollTimer);workflowPollTimer=null;stopWorkflowStream();if(ACTIVE_JOB_ID===job.id)ACTIVE_JOB_ID=null;setWorkflowButtonBusy(false);
+  clearTimeout(workflowPollTimer);workflowPollTimer=null;stopWorkflowStream();if(ACTIVE_JOB_ID===job.id)ACTIVE_JOB_ID=null;setWorkflowButtonBusy(false);syncLimitControls(null);
   if(workflowFinishedJobId===job.id)return;workflowFinishedJobId=job.id;
   if(job.status==="completed"){await refreshAtlas();toast("歌单分析与推荐已完成，网页数据已更新");}
-  else if(job.status==="failed")toast("歌单处理未完成，请检查本机运行日志。");
+  else if(job.status==="failed"){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else toast("歌单处理未完成，请检查本机运行日志。");}
  }
  function startWorkflowStream(id){
   if(typeof EventSource!=="function")return false;if(workflowStreamId===id&&workflowEventSource)return true;stopWorkflowStream();
   const source=new EventSource(`/api/jobs/${encodeURIComponent(id)}/events`);workflowEventSource=source;workflowStreamId=id;
-  source.onmessage=message=>{try{const payload=JSON.parse(message.data);if(!payload.ok||!payload.job)return;renderWorkflowJob(payload.job);if(payload.job.status!=="queued"&&payload.job.status!=="running")finishWorkflowJob(payload.job);}catch{}};
+  source.onmessage=message=>{try{const payload=JSON.parse(message.data);if(!payload.ok||!payload.job)return;renderWorkflowJob(payload.job);if(!workflowActive(payload.job.status))finishWorkflowJob(payload.job);}catch{}};
   source.onerror=()=>{if(workflowEventSource!==source)return;stopWorkflowStream();clearTimeout(workflowPollTimer);workflowPollTimer=setTimeout(()=>pollWorkflowJob(id),1000);};return true;
  }
  async function pollWorkflowJob(id){
@@ -742,7 +820,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
    const response=await fetch(`/api/jobs/${encodeURIComponent(id)}`,{cache:"no-store"});const payload=await response.json();
    if(!response.ok||!payload.ok)throw new Error(payload.error||"任务状态不可用");
    const job=payload.job;renderWorkflowJob(job);
-   if(job.status==="queued"||job.status==="running"){
+   if(workflowActive(job.status)){
     if(!startWorkflowStream(id))workflowPollTimer=setTimeout(()=>pollWorkflowJob(id),1000);
    }else await finishWorkflowJob(job);
   }catch(error){toast(error.message||"无法读取工作流状态");if(ACTIVE_JOB_ID===id)workflowPollTimer=setTimeout(()=>pollWorkflowJob(id),1500);}
@@ -766,16 +844,56 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
    try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");ACTIVE_JOB_ID=payload.job.id;workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
    catch(error){if(button)button.disabled=false;toast(error.message||"无法启动工作流");}
   });
-  setWorkflowButtonBusy(Boolean(ACTIVE_JOB_ID));if(ACTIVE_JOB_ID)pollWorkflowJob(ACTIVE_JOB_ID);
+  const limitChips=document.getElementById("wf-limit-chips");
+  if(limitChips)limitChips.addEventListener("click",event=>{
+   const chip=event.target.closest("[data-limit]");if(!chip||chip.disabled)return;
+   const target=document.getElementById("wf-limit");if(!target)return;
+   target.value=chip.getAttribute("data-limit");limitFieldError("");syncLimitChipHighlight();
+  });
+  const limitValueInput=document.getElementById("wf-limit");
+  if(limitValueInput)limitValueInput.addEventListener("input",()=>{limitFieldError("");syncLimitChipHighlight();});
+  const limitConfirm=document.getElementById("wf-limit-confirm");
+  if(limitConfirm)limitConfirm.addEventListener("click",async()=>{
+   if(!ACTIVE_JOB_ID){toast("当前没有等待处理数量的任务");return;}
+   const state=currentLimitValue();
+   if(!state.ok){limitFieldError(state.message);if(limitValueInput)limitValueInput.focus();return;}
+   limitFieldError("");limitConfirm.disabled=true;
+   try{
+    const response=await fetch(`/api/jobs/${encodeURIComponent(ACTIVE_JOB_ID)}/limit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:state.value})});
+    const payload=await response.json();
+    if(!response.ok||!payload.ok)throw new Error(payload.error||"无法提交处理数量");
+    toast(`已提交处理数量：前 ${state.value} 首`);pollWorkflowJob(ACTIVE_JOB_ID);
+   }catch(error){limitFieldError(error.message||"无法提交处理数量");if(limitValueInput)limitValueInput.focus();}
+   finally{limitConfirm.disabled=false;}
+  });
+  const limitCancel=document.getElementById("wf-cancel");
+  if(limitCancel)limitCancel.addEventListener("click",async()=>{
+   if(!ACTIVE_JOB_ID)return;
+   const jobId=ACTIVE_JOB_ID;limitCancel.disabled=true;
+   try{
+    const response=await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`,{method:"POST"});
+    const payload=await response.json();
+    if(!response.ok||!payload.ok)throw new Error(payload.error||"无法取消任务");
+    workflowCancelledJobId=jobId;toast("已请求取消任务");
+   }catch(error){toast(error.message||"无法取消任务");}
+   finally{limitCancel.disabled=false;}
+  });
+  setWorkflowButtonBusy(Boolean(ACTIVE_JOB_ID));if(ACTIVE_JOB_ID)pollWorkflowJob(ACTIVE_JOB_ID);else syncLimitControls(null);
  }
  function vSources(){const configured=WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured;
   return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 推荐源</div>
   <h1 class="big-sec-title">推荐源</h1>
   <p class="lede" style="max-width:620px">粘贴一个公开歌单链接，系统会自动识别平台，完成整理、分析与推荐。</p>
-  <section class="workflow-panel"><h3>生成新的推荐</h3><p class="hint">支持 Apple Music、网易云音乐和 QQ 音乐公开歌单。处理完成后，新的结果会更新到当前 Atlas。</p>
+  <section class="workflow-panel"><h3>生成新的推荐</h3><p class="hint">支持 Apple Music、网易云音乐和 QQ 音乐公开歌单。系统先读取歌单，再由你选择处理数量，随后自动完成分析与推荐。</p>
    <form id="workflow-form" class="wf-form" novalidate>
     <div class="wf-field" id="wf-source-field"><label for="wf-source-url">歌单链接</label><input id="wf-source-url" type="url" placeholder="粘贴 Apple Music、网易云音乐或 QQ 音乐链接" autocomplete="off" required aria-describedby="wf-source-error" aria-invalid="false"><p class="wf-error" id="wf-source-error" role="alert" aria-live="polite"></p></div>
-    <div class="wf-actions"><button class="btn primary" type="submit" ${configured?"":"disabled"}>生成推荐 ↗</button></div>
+    <div class="wf-field hidden" id="wf-limit-field">
+     <label for="wf-limit">处理数量（最多 <b id="wf-limit-max">—</b> 首）</label>
+     <div class="wf-limit-row"><input id="wf-limit" type="number" inputmode="numeric" min="1" step="1" autocomplete="off" aria-describedby="wf-limit-note wf-limit-error"><div class="wf-chips" id="wf-limit-chips"></div></div>
+     <p class="wf-limit-note" id="wf-limit-note"></p>
+     <p class="wf-error" id="wf-limit-error" role="alert" aria-live="polite"></p>
+    </div>
+    <div class="wf-actions"><button class="btn primary" type="submit" id="wf-submit" ${configured?"":"disabled"}>生成推荐 ↗</button><button class="btn primary hidden" type="button" id="wf-limit-confirm">按所选数量继续 ↗</button><button class="btn hidden" type="button" id="wf-cancel">取消任务</button></div>
    </form>
    ${configured?"":`<div class="wf-meta">当前暂不可运行。</div>`}
   </section>

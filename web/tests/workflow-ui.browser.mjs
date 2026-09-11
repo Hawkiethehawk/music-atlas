@@ -15,7 +15,7 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { createIsolatedServer } from "./helpers.mjs";
+import { createIsolatedServer, waitFor } from "./helpers.mjs";
 
 let server;
 let browser;
@@ -58,6 +58,7 @@ function nextEvent(job, partial) {
   if (partial.status === "completed" || partial.event === "failed") {
     job.status = partial.event === "failed" ? "failed" : "completed";
   } else if (partial.status === "running") job.status = "running";
+  else if (partial.status === "awaiting_limit") job.status = "awaiting_limit";
   if (typeof partial.stage === "string") job.stage = partial.stage;
   return event;
 }
@@ -72,6 +73,24 @@ function addSnapshotStage(job, trackCount = 4) {
   nextEvent(job, { event: "task_completed", status: "running", stage: "snapshot", task_kind: "snapshot_import",
     task_id: "snapshot-import", task_index: 1, task_total: 1, task_status: "validated", completed: 1, total: 1,
     track_completed: trackCount, track_total: trackCount, message: `歌单已整理 · ${trackCount} 首` });
+}
+
+function addAwaitingLimitStage(job, trackCount = 120) {
+  nextEvent(job, { event: "awaiting_limit", status: "awaiting_limit", stage: "snapshot",
+    track_count: trackCount, snapshot_id: "snap-test", timeout_seconds: 1800,
+    message: `歌单已读取 · ${trackCount} 首，等待选择处理数量` });
+  nextEvent(job, { event: "task_started", status: "awaiting_limit", stage: "snapshot", task_kind: "track_limit",
+    task_id: "track-limit", task_index: 1, task_total: 1, task_status: "running",
+    track_count: trackCount, message: "等待选择处理数量" });
+}
+
+function addLimitAppliedStage(job, { limit = 100, sourceTrackCount = 120 } = {}) {
+  nextEvent(job, { event: "limit_applied", status: "running", stage: "snapshot",
+    requested_track_limit: limit, source_track_count: sourceTrackCount, track_count: limit,
+    snapshot_id: `snap-test-limit${limit}`, message: `已确定处理数量 · 前 ${limit} 首` });
+  nextEvent(job, { event: "task_completed", status: "running", stage: "snapshot", task_kind: "track_limit",
+    task_id: "track-limit", task_index: 1, task_total: 1, task_status: "validated", completed: 1, total: 1,
+    track_count: limit, message: `处理数量已确定 · 前 ${limit} 首` });
 }
 
 function addAnalysisStage(job, { batches = 2, tracksPerBatch = 2, completedBatches = batches } = {}) {
@@ -148,13 +167,27 @@ const MINIMAL_ATLAS = {
 };
 
 async function installRoutes(page, job, counters) {
+  counters.limits = counters.limits || [];
+  counters.cancels = counters.cancels || [];
   await page.route("**/api/config", (route) => route.fulfill({
     json: { ok: true, workflow: { analysis_executor_configured: true, recommendation_executor_configured: true,
-      analysis_parallelism: 5, recommendation_parallelism: 4 } },
+      analysis_parallelism: 5, recommendation_parallelism: 4,
+      track_limit_options: [30, 100, 200, 500, 1000], track_limit_default: 30,
+      await_limit_timeout_seconds: 1800 } },
   }));
   await page.route("**/api/atlas", (route) => {
     counters.atlas += 1;
     return route.fulfill({ json: MINIMAL_ATLAS });
+  });
+  await page.route(/\/api\/jobs\/ui-test-job\/limit$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    counters.limits.push(JSON.parse(route.request().postData() || "{}"));
+    return route.fulfill({ status: 202, json: { ok: true, job } });
+  });
+  await page.route(/\/api\/jobs\/ui-test-job\/cancel$/, (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    counters.cancels.push(true);
+    return route.fulfill({ status: 200, json: { ok: true, job } });
   });
   await page.route(/\/api\/jobs\/ui-test-job$/, (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -471,6 +504,90 @@ test("失败终态：隐藏详情并提示失败文案", async () => {
     await page.waitForFunction(() => document.getElementById("toast").textContent.includes("未完成"), undefined, { timeout: 3000 });
     await page.waitForTimeout(200);
     assert.equal(counters.atlas, atlasBefore, "失败不应刷新 Atlas 数据");
+  } finally {
+    await context.close();
+  }
+});
+
+test("档位选择：歌单读完后才可选数量，上限为曲目数，提交后继续处理", async () => {
+  const job = makeJob();
+  const counters = { create: 0, poll: 0, atlas: 0, limits: [], cancels: [] };
+  const { context, page, consoleErrors } = await openWorkflowPage(browser, job, counters);
+  try {
+    await submitForm(page);
+    // 歌单读取中：数量控件仍隐藏
+    addSnapshotStage(job, 120);
+    await pushJob(page, job);
+    assert.ok(await page.locator("#wf-limit-field").evaluate((node) => node.classList.contains("hidden")),
+      "歌单未读取完成前不应出现数量控件");
+
+    // 歌单读取完成：出现数量控件，上限为真实曲目数
+    addAwaitingLimitStage(job, 120);
+    await pushJob(page, job);
+    await page.waitForFunction(() => !document.getElementById("wf-limit-field").classList.contains("hidden"));
+    assert.equal(await page.locator("#wf-limit-max").textContent(), "120");
+    assert.equal(await page.locator("#wf-limit").getAttribute("max"), "120");
+    assert.equal(await page.locator("#wf-limit").inputValue(), "30", "默认档位为 30");
+    assert.ok(await page.locator("#wf-submit").evaluate((node) => node.classList.contains("hidden")),
+      "等待选择数量时隐藏“生成推荐”按钮");
+    assert.ok(await page.locator("#flow").evaluate((node) => node.classList.contains("on")),
+      "等待期间进度面板保持显示");
+    assert.match(await page.locator("[data-wf-summary]").textContent(), /等待选择处理数量/);
+
+    // 档位快捷键：超过上限的档位禁用
+    const chipStates = await page.locator("#wf-limit-chips .chip").evaluateAll((nodes) =>
+      nodes.map((node) => `${node.dataset.limit}:${node.disabled ? "disabled" : "enabled"}`));
+    assert.deepEqual(chipStates, ["30:enabled", "100:enabled", "200:disabled", "500:disabled", "1000:disabled"]);
+
+    // 点档位快捷键：填值并高亮（识别并自动分档）
+    await page.click('#wf-limit-chips .chip[data-limit="100"]');
+    assert.equal(await page.locator("#wf-limit").inputValue(), "100");
+    assert.equal(await page.locator("#wf-limit-chips .chip.on").getAttribute("data-limit"), "100");
+
+    // 超上限：报错并阻止提交
+    await page.fill("#wf-limit", "999");
+    await page.click("#wf-limit-confirm");
+    await page.waitForFunction(() => document.getElementById("wf-limit-error").textContent.length > 0);
+    assert.match(await page.locator("#wf-limit-error").textContent(), /不能超过歌单曲目数 120 首/);
+    await page.waitForTimeout(200);
+    assert.equal(counters.limits.length, 0, "超上限不应提交请求");
+
+    // 合法值：提交后工作流继续，控件回落
+    await page.fill("#wf-limit", "100");
+    await page.click("#wf-limit-confirm");
+    await waitFor(() => counters.limits.length === 1, { message: "处理数量请求未发出" });
+    assert.deepEqual(counters.limits, [{ limit: 100 }]);
+
+    addLimitAppliedStage(job, { limit: 100, sourceTrackCount: 120 });
+    addAnalysisStage(job);
+    addAnalysisAggregate(job);
+    await pushJob(page, job);
+    await page.waitForFunction(() => document.getElementById("wf-limit-field").classList.contains("hidden"));
+    assert.ok(await page.locator("#flow").evaluate((node) => node.classList.contains("on")),
+      "确定数量后进度面板继续显示");
+    assert.deepEqual(consoleErrors, [], "不应有控制台错误或警告");
+  } finally {
+    await context.close();
+  }
+});
+
+test("等待选择数量时可以取消任务", async () => {
+  const job = makeJob();
+  const counters = { create: 0, poll: 0, atlas: 0, limits: [], cancels: [] };
+  const { context, page } = await openWorkflowPage(browser, job, counters);
+  try {
+    await submitForm(page);
+    addSnapshotStage(job, 60);
+    addAwaitingLimitStage(job, 60);
+    await pushJob(page, job);
+    await page.waitForFunction(() => !document.getElementById("wf-limit-field").classList.contains("hidden"));
+    // 上限 60 时默认档位仍为 30，且超出上限的档位已禁用
+    assert.equal(await page.locator("#wf-limit").inputValue(), "30");
+    assert.equal(await page.locator("#wf-limit-chips .chip[data-limit=\"100\"]").isDisabled(), true);
+
+    await page.click("#wf-cancel");
+    await waitFor(() => counters.cancels.length === 1, { message: "取请求未发出" });
+    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("取消"));
   } finally {
     await context.close();
   }

@@ -2,6 +2,20 @@
 
 本机固定端口服务：**http://127.0.0.1:8420**
 
+## 安装
+
+仓库根目录提供一键部署脚本，其内部只做一件事：执行 `atlas setup`（检查依赖 → 安装缺失依赖 → 注册 `atlas` 命令）：
+
+```powershell
+pwsh -File install.ps1        # Windows
+```
+
+```bash
+./install.sh                  # Linux / macOS
+```
+
+只检查不安装：`python atlas.py setup --check-only`。完整参数与行为见仓库根 `README.md` 的「安装（一键部署）」。
+
 ```
 music-atlas-web/
 ├── editorial-atlas.html          # Editorial Atlas 页面（服务根路径返回它）
@@ -27,10 +41,23 @@ music-atlas-web/
 Apple Music 不再要求用户手动填写歌曲数量；后台仍记录导出完整性状态。没有独立数量依据时，
 结果会标记为“待确认”，不会把导出行数包装成独立确认的歌单总数。
 
+## 档位选择：歌单读完后才确定处理数量
+
+网页端不在提交前填写数量：**歌单读取完成后**才出现「处理数量」控件，上限为实际读到的曲目数，
+不会超过歌单真实规模。可以输入任意整数，也可直接点 `30 / 100 / 200 / 500 / 1000` 档位快捷键
+（超过上限的档位自动禁用）；输入值精确生效，等于某个档位时该档位高亮。默认档位 `30`。
+
+确定后工作流按歌单原顺序取前 N 首继续分析：截断结果自身满足 Step 1 契约
+（`declared_track_count == track_count == len(tracks)`），截断前的曲目总数保留在
+`snapshot.reader.source_track_count`，`snapshot.reader.requested_track_limit` 记录生效数量，
+快照 ID 追加 `-limitN` 后缀，避免与未截断运行共用分析缓存。等待期间可点「取消任务」；超过
+`workflow.await_limit_timeout_seconds` 未提交则本次任务失败。
+
 任务顺序固定为：
 
 ```text
 Step 1 歌单拉取与解析
+  -> 等待选择处理数量（网页端，超时 30 分钟）
   -> Step 2 分析研究（5 个内部并行任务）
   -> Step 2 全部完成并校验
   -> Step 3 候选研究（4 个内部并行任务，可配置为 3）
@@ -53,7 +80,10 @@ Node 服务只读取项目根目录的 `config/web.json`，不依赖系统环境
     "analysis_parallelism": 5,
     "recommendation_parallelism": 4,
     "analysis_timeout_seconds": 7200,
-    "recommendation_timeout_seconds": 3600
+    "recommendation_timeout_seconds": 3600,
+    "track_limit_options": [30, 100, 200, 500, 1000],
+    "track_limit_default": 30,
+    "await_limit_timeout_seconds": 1800
   }
 }
 ```
@@ -61,7 +91,9 @@ Node 服务只读取项目根目录的 `config/web.json`，不依赖系统环境
 当前项目内的两个执行器是 `executors/` 下的本机 Codex 桥接脚本：它们从标准输入读取任务，
 调用本机已安装的 Codex CLI，再只把最终 JSON 转发到 Music Atlas。Codex 的登录、模型和供应商
 继续使用本机已有配置，不复制密钥，也不修改系统配置。若本机找不到 Codex CLI，页面会保持禁用，
-不会以示例结果冒充真实分析。任务状态可通过 `GET /api/jobs/:id` 或页面事件面板查看。
+不会以示例结果冒充真实分析。任务状态可通过 `GET /api/jobs/:id` 或页面事件面板查看。任务在等待选择处理数量时状态为
+`awaiting_limit`：`POST /api/jobs/:id/limit` 提交数量（`{"limit": N}`，越界返回 400），
+`POST /api/jobs/:id/cancel` 取消等待中的任务。
 
 ## 从当前 Music Atlas 运行目录启动
 
@@ -121,6 +153,9 @@ systemctl status music-atlas-web
 | `executors.recommendation` | 空 | 项目内 Step 3 Python 执行器脚本 |
 | `workflow.analysis_timeout_seconds` | `600` | Step 2 总执行预算；大歌单可在项目配置中提高 |
 | `workflow.recommendation_parallelism` | `4` | Step 3 内部并行数，只接受 `3` 或 `4` |
+| `workflow.track_limit_options` | `[30, 100, 200, 500, 1000]` | 页面档位快捷键；只接受递增正整数，超过曲目数的档位自动禁用 |
+| `workflow.track_limit_default` | `30` | 数量控件默认档位；大于上限时按上限取值 |
+| `workflow.await_limit_timeout_seconds` | `1800` | 等待选择处理数量的秒数，超时任务失败（1 到 86400） |
 | `workflow.recommendation_timeout_seconds` | `600` | Step 3 总执行预算 |
 
 配置文件位于项目内并纳入 Git；运行产物和本地输入仍写入项目内的 `runtime/`、`input/` 目录，
@@ -129,6 +164,7 @@ systemctl status music-atlas-web
 ## 说明
 
 - 页面沿用 Editorial Atlas 的视觉原型，但展示内容来自当前 Music Atlas 运行产物。
+- 兴趣组名字由程序从该组主导风格总结生成（3–5 个汉字，同期内不重复，素材不足时回退 `兴趣组 NN`）；人工 `--editorial` 配置的名字优先。命名不调用 Agent，也不改变 Step 1–3 契约。
 - 页面显示研究草稿、证据待核验或画像覆盖不足等状态，不把这些状态提升为正式推荐。
 - 无播放器；所有“打开”操作为跳转外部平台（Apple Music / 网易云 / QQ 音乐）。
 - 不提供歌单 CRUD、账号登录或平台个性化推荐；`POST /api/jobs` 仅用于启动受控的本地 Music Atlas 工作流，页面数据仍由工作流原子导出。

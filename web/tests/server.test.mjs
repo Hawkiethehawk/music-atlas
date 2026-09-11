@@ -37,6 +37,9 @@ test("元数据接口：/api/config 与 /api/health", { concurrency: false }, as
   assert.equal(config.ok, true);
   assert.equal(config.workflow.analysis_parallelism, 5);
   assert.equal(config.workflow.recommendation_parallelism, 4);
+  assert.deepEqual(config.workflow.track_limit_options, [30, 100, 200, 500, 1000]);
+  assert.equal(config.workflow.track_limit_default, 30);
+  assert.equal(config.workflow.await_limit_timeout_seconds, 1800);
   assert.equal(config.workflow.analysis_executor_configured, true);
   assert.equal(config.workflow.recommendation_executor_configured, true);
   assert.ok(config.paths.published.includes("runtime"), "发布路径应位于 runtime 隔离目录");
@@ -94,6 +97,27 @@ test("任务接口错误路径：非法提交与未知任务", { concurrency: fa
   assert.equal(unknownJob.status, 404);
   const unknownEvents = await fetch(`${baseUrl}/api/jobs/does-not-exist/events`);
   assert.equal(unknownEvents.status, 404);
+});
+
+test("档位与取消接口：未知任务返回 404", { concurrency: false }, async (t) => {
+  const server = await createIsolatedServer({ label: "tracklimit" });
+  t.after(() => server.stop());
+  const { baseUrl } = server;
+
+  const unknownLimit = await fetch(`${baseUrl}/api/jobs/does-not-exist/limit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ limit: 10 }),
+  });
+  assert.equal(unknownLimit.status, 404);
+  assert.match((await unknownLimit.json()).error, /找不到/);
+
+  const unknownCancel = await fetch(`${baseUrl}/api/jobs/does-not-exist/cancel`, { method: "POST" });
+  assert.equal(unknownCancel.status, 404);
+
+  // 普通路径不应被新增的档位路由误伤。
+  const unknownJob = await fetch(`${baseUrl}/api/jobs/does-not-exist`);
+  assert.equal(unknownJob.status, 404);
 });
 
 test("执行器未配置时拒绝创建任务（503）", { concurrency: false }, async (t) => {

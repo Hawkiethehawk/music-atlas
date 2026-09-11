@@ -143,6 +143,52 @@ def _editorial_interests(editorial: dict[str, Any]) -> dict[str, dict[str, Any]]
     raise ContractError("网页 editorial.interests 必须是对象或数组")
 
 
+INTEREST_NAME_MIN_CHARS = 3
+INTEREST_NAME_MAX_CHARS = 5
+
+
+def _short_style_label(label: Any) -> str:
+    """把 taxonomy 标签裁成可用作兴趣组名的中文词。
+
+    去掉英文与分隔符号（`渐进/ djent 金属核` → `渐进金属核`）；超长时保留
+    结尾的核心词（`现代另类金属核` → `另类金属核`）。
+    """
+
+    text = re.sub(r"[A-Za-z]+", "", _text(label))
+    text = re.sub(r"[\s/\\|·、,，&+—–-]+", "", text)
+    if len(text) > INTEREST_NAME_MAX_CHARS:
+        text = text[-INTEREST_NAME_MAX_CHARS:]
+    return text
+
+
+def _derive_interest_name(
+    profile: dict[str, Any],
+    definitions: dict[str, dict[str, Any]],
+    used: set[str],
+) -> str:
+    """按该组风格构成总结出 3-5 字名字；素材不足时返回空串。
+
+    名字由程序从本次歌单实际聚合出的主导风格派生，与聚类同层，不再依赖
+    可选的人工 editorial 配置；长度不符合或与已用名字重复时依次尝试下一个
+    风格。
+    """
+
+    entries = [item for item in profile.get("style_mix", []) if isinstance(item, dict)]
+    entries.sort(key=lambda item: float(item.get("weight", 0) or 0), reverse=True)
+    for entry in entries:
+        definition = definitions.get(_text(entry.get("style_ref"))) or {}
+        label = _short_style_label(definition.get("label"))
+        if INTEREST_NAME_MIN_CHARS <= len(label) <= INTEREST_NAME_MAX_CHARS and label not in used:
+            return label
+    return ""
+
+
+def _editorial_names(editorial_by_id: dict[str, dict[str, Any]]) -> set[str]:
+    """人工 editorial 提供的名字先占位，避免自动名字与之撞车。"""
+
+    return {_text(item.get("name")) for item in editorial_by_id.values() if _text(item.get("name"))}
+
+
 def _interest_entries(
     analysis: dict[str, Any],
     editorial: dict[str, Any],
@@ -150,6 +196,7 @@ def _interest_entries(
     style_analysis = analysis.get("style_analysis", {})
     definitions = _style_definitions(style_analysis)
     editorial_by_id = _editorial_interests(editorial)
+    used_names = _editorial_names(editorial_by_id)
     result: list[dict[str, Any]] = []
     for index, profile in enumerate(style_analysis.get("interest_profiles", [])):
         if not isinstance(profile, dict):
@@ -157,7 +204,10 @@ def _interest_entries(
         interest_id = _text(profile.get("interest_id"), f"interest-{index + 1:02d}")
         custom = editorial_by_id.get(interest_id, {})
         code = _text(custom.get("code"), f"{index + 1:02d}")
-        name = _text(custom.get("name"), f"兴趣组 {code}")
+        name = _text(custom.get("name"))
+        if not name:
+            name = _derive_interest_name(profile, definitions, used_names) or f"兴趣组 {code}"
+        used_names.add(name)
         representatives = [
             item for item in profile.get("representative_tracks", []) if isinstance(item, dict)
         ]
