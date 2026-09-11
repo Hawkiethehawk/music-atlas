@@ -194,6 +194,7 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
 - `web_view_model.py` + `workflow.py web-export`：将已校验的运行产物转换为网页专用、只读的脱敏数据。
 - `config/web.json`：网页服务默认配置；端口、稳定发布文件、运行目录和并行度均由项目内文件决定。
 - `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。
+- `atlas.py` + `web_service.py`：统一 CLI 入口与面板服务管理。`atlas start [--port N] [--no-open] [--force]` 启动面板（已运行则复用），`atlas stop` / `atlas restart` / `atlas status [--json]` / `atlas logs`；其余子命令透传 workflow.py（如 `atlas run ...`）。停止与替换有身份防护：`/api/health` 携带 `service/pid/web_root`，只有本项目面板会被停止；端口被其他服务占用时默认拒绝，`--force` 才替换；状态文件 PID 存活但健康端点不可用时拒绝覆盖。日志在 `runtime/web/service.log`。Windows 下可将项目根加入 PATH 后用 `atlas` 直呼（`atlas.bat`）。
 
 Apple 自动导出入口为 `python workflow.py export-apple-playlist --url <分享链接> --expected-count <独立确认的歌曲数>`。下载先进入临时目录，经 UTF-8、标准 CSV 解析与数量检查后才替换目标文件；失败保留原文件。不提供 `--expected-count` 时输出 `completeness_status: "unconfirmed"`，不能仅凭 CSV 行数宣称完整。安装与浏览器验收见 [tools/README.md](tools/README.md)。
 

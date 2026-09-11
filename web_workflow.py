@@ -27,6 +27,7 @@ from musician_analyzer import analyze_and_validate, write_coverage_report
 from source_adapters import build_snapshot, save_snapshot
 from workflow import ROOT, export_apple_playlist_file
 from skill_runner import run_skill
+from taste_summary import TASTE_BATCH_SIZE, resolve_analysis_mode, run_taste_analysis
 from web_view_model import export_web_payload
 
 
@@ -216,36 +217,53 @@ def run_web_workflow(args: argparse.Namespace) -> int:
 
     taxonomy_path = (ROOT / "styles" / "style_taxonomy.json").resolve()
     analysis_research_dir = runtime_dir / "analysis_research"
+    # 按歌单规模选择分析分辨率：≤30 首逐曲研究（每批默认 10 首），
+    # 31-500 首品味摘要，≥501 首歌手摘要；后两者为单任务分析。
+    analysis_mode = resolve_analysis_mode(snapshot["track_count"])
     emit("started", status="running", stage="analysis", parallelism=args.analysis_parallelism,
-         message="Step 2：5 个分析任务并行，全部完成后才进入 Step 3")
-    research_bundle_path = execute_analysis_research(
-        snapshot_path,
-        taxonomy_path,
-        analysis_research_dir,
-        command=analysis_command,
-        batch_size=args.analysis_batch_size,
-        context_budget=args.analysis_context_budget,
-        timeout=args.analysis_timeout,
-        parallelism=args.analysis_parallelism,
-        progress=emit_progress,
-    )
-    analysis_path = runtime_dir / "musician_analysis.json"
-    analysis_markdown_path = runtime_dir / "musician_analysis.md"
-    analysis_manifest_path = runtime_dir / "analysis_manifest.json"
-    emit("task_started", status="running", stage="analysis", task_kind="analysis_aggregate",
-         task_id="analysis-aggregate", task_index=1, task_total=1, task_status="running",
-         message="所有批次已返回，正在合并兴趣、关系与覆盖率")
-    packet = analyze_and_validate(
-        snapshot_path,
-        preferred_path=ROOT / "preferred_artists.txt",
-        relation_path=ROOT / "relations" / "artist_relations.json",
-        output_path=analysis_path,
-        markdown_path=analysis_markdown_path,
-        manifest_path=analysis_manifest_path,
-        style_taxonomy_path=taxonomy_path,
-        style_profile_path=ROOT / "styles" / "artist_style_profiles.json",
-        research_bundle_path=research_bundle_path,
-    )
+         analysis_mode=analysis_mode,
+         message="Step 2：逐曲并行研究，全部完成后才进入 Step 3" if analysis_mode == "track_research"
+         else "Step 2：按歌单规模采用整体品味分析（单任务）")
+    if analysis_mode == "track_research":
+        research_bundle_path = execute_analysis_research(
+            snapshot_path,
+            taxonomy_path,
+            analysis_research_dir,
+            command=analysis_command,
+            batch_size=args.analysis_batch_size or TASTE_BATCH_SIZE,
+            context_budget=args.analysis_context_budget,
+            timeout=args.analysis_timeout,
+            parallelism=args.analysis_parallelism,
+            progress=emit_progress,
+        )
+        analysis_path = runtime_dir / "musician_analysis.json"
+        analysis_markdown_path = runtime_dir / "musician_analysis.md"
+        analysis_manifest_path = runtime_dir / "analysis_manifest.json"
+        emit("task_started", status="running", stage="analysis", task_kind="analysis_aggregate",
+             task_id="analysis-aggregate", task_index=1, task_total=1, task_status="running",
+             message="所有批次已返回，正在合并兴趣、关系与覆盖率")
+        packet = analyze_and_validate(
+            snapshot_path,
+            preferred_path=ROOT / "preferred_artists.txt",
+            relation_path=ROOT / "relations" / "artist_relations.json",
+            output_path=analysis_path,
+            markdown_path=analysis_markdown_path,
+            manifest_path=analysis_manifest_path,
+            style_taxonomy_path=taxonomy_path,
+            style_profile_path=ROOT / "styles" / "artist_style_profiles.json",
+            research_bundle_path=research_bundle_path,
+        )
+    else:
+        analysis_path = runtime_dir / "musician_analysis.json"
+        packet, _ = run_taste_analysis(
+            snapshot_path,
+            taxonomy_path,
+            analysis_research_dir,
+            command=analysis_command,
+            timeout=args.analysis_timeout,
+            progress=emit_progress,
+        )
+        write_json(analysis_path, packet)
     coverage_report_path: Path | None = None
     if packet["style_analysis"]["profile_coverage"]["degraded"]:
         write_coverage_report(packet, runtime_dir / "coverage_report.json")
@@ -253,8 +271,9 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     emit("completed", status="running", stage="analysis", analysis_id=packet["analysis_id"],
          classified_track_count=packet["style_analysis"]["classified_track_count"],
          source_track_count=packet["source_track_count"],
-          parallelism=args.analysis_parallelism,
-          coverage_report_path=str(coverage_report_path) if coverage_report_path else None)
+         analysis_mode=analysis_mode,
+         parallelism=args.analysis_parallelism,
+         coverage_report_path=str(coverage_report_path) if coverage_report_path else None)
     emit("task_completed", status="running", stage="analysis", task_kind="analysis_aggregate",
          task_id="analysis-aggregate", task_index=1, task_total=1, task_status="validated",
          completed=1, total=1, track_completed=packet["source_track_count"],

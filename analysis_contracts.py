@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from contracts import (
-    ContractError, SCHEMA_VERSION, STYLE_AXIS_IDS, _source_is_forbidden_personalization,
+    ContractError, SCHEMA_VERSION, STYLE_AXIS_IDS, TASTE_MODES, _source_is_forbidden_personalization,
     _validate_http_url, _validate_style_axes, _validate_style_mix, normalized_name,
     parse_timestamp, stable_hash, track_key, validate_playlist_snapshot,
 )
@@ -190,3 +190,146 @@ def validate_research_bundle(value: Any, snapshot: dict, taxonomy: dict, taxonom
     for result, request in zip(value["batches"], requests):
         validate_research_result(result, request, taxonomy)
     return value
+
+
+def _validate_score_or_absent(value: Any, label: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
+        raise ContractError(f"{label} 必须是 0 到 100 的数值或 null")
+
+
+def validate_taste_summary_result(value: Any, *, snapshot: dict, taxonomy: dict, mode: str) -> dict:
+    """品味摘要契约（中/大歌单）。
+
+    Agent 只提供场景归属、风格标签、语义主题与锐评文案；
+    艺人与歌名必须逐字来自当前快照，风格引用必须来自风格本体；
+    任何推荐、评分、策略字段都会被拒绝。"""
+    if mode not in TASTE_MODES:
+        raise ContractError(f"未知的品味摘要模式：{mode}")
+    fields = {"schema_version", "bundle_type", "request_id", "source_snapshot_id", "generated_at",
+              "analysis_mode", "knowledge_basis", "artist_clusters", "style_tags", "taste_profile",
+              "editorial_review", "limitations", "uncertainties"}
+    optional: set[str] = {"semantic_themes"}
+    _object(value, fields, "TasteSummaryResult", optional=optional)
+    if value["schema_version"] != SCHEMA_VERSION or value["bundle_type"] != "taste_summary_result":
+        raise ContractError("TasteSummaryResult 类型/schema 无效")
+    if value["analysis_mode"] != mode:
+        raise ContractError(f"analysis_mode 必须是 {mode}")
+    if value["source_snapshot_id"] != snapshot["snapshot_id"]:
+        raise ContractError("品味摘要不属于当前快照")
+    parse_timestamp(value["generated_at"], "品味摘要 generated_at")
+
+    artist_keys = {normalized_name(track["artist"]) for track in snapshot["tracks"]}
+    for track in snapshot["tracks"]:
+        for name in track.get("artists", []) or []:
+            artist_keys.add(normalized_name(name))
+    title_keys = {normalized_name(track["title"]) for track in snapshot["tracks"]}
+    known_refs = set(taxonomy["known_style_refs"])
+
+    basis = _object(value["knowledge_basis"], {"model_internal", "web_verified", "inference"}, "knowledge_basis")
+    for key, text in basis.items():
+        _text(text, f"knowledge_basis.{key}", 600)
+
+    clusters = value["artist_clusters"]
+    if not isinstance(clusters, list) or not clusters:
+        raise ContractError("artist_clusters 必须是非空数组")
+    seen_artists: set[str] = set()
+    cluster_refs_by_artist: dict[str, list[str]] = {}
+    cluster_fields = {"artist", "scene", "confidence", "style_refs", "reference_url"}
+    if mode == "artist_summary":
+        cluster_fields.add("layer")
+    for index, item in enumerate(clusters):
+        cluster = _object(item, cluster_fields, f"artist_clusters[{index}]")
+        marker = normalized_name(cluster["artist"])
+        if marker not in artist_keys:
+            raise ContractError(f"artist_clusters[{index}] 引用了清单之外的艺人：{cluster['artist']}")
+        if marker in seen_artists:
+            raise ContractError(f"artist_clusters[{index}] 重复艺人：{cluster['artist']}")
+        seen_artists.add(marker)
+        _text(cluster["scene"], f"artist_clusters[{index}].scene", 200)
+        _confidence(cluster["confidence"])
+        if mode == "artist_summary" and cluster["layer"] not in ("core", "active", "longtail"):
+            raise ContractError(f"artist_clusters[{index}].layer 必须是 core、active 或 longtail")
+        refs = cluster["style_refs"]
+        if not isinstance(refs, list) or not refs or any(ref not in known_refs for ref in refs):
+            raise ContractError(f"artist_clusters[{index}].style_refs 必须是风格本体引用")
+        url = cluster["reference_url"]
+        if url not in ("", None):
+            _validate_http_url(url, f"artist_clusters[{index}].reference_url")
+        cluster_refs_by_artist[marker] = list(refs)
+
+    tags = value["style_tags"]
+    if not isinstance(tags, list) or not 1 <= len(tags) <= 12:
+        raise ContractError("style_tags 必须是 1 到 12 个元素")
+    seen_tag_refs: set[str] = set()
+    for index, item in enumerate(tags):
+        tag = _object(item, {"tag", "weight", "matched_artists"}, f"style_tags[{index}]")
+        if tag["tag"] not in known_refs:
+            raise ContractError(f"style_tags[{index}].tag 必须来自风格本体：{tag['tag']}")
+        if tag["tag"] in seen_tag_refs:
+            raise ContractError(f"style_tags[{index}] 重复风格引用")
+        seen_tag_refs.add(tag["tag"])
+        weight = tag["weight"]
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not 0 <= weight <= 100:
+            raise ContractError(f"style_tags[{index}].weight 必须是 0 到 100")
+        matched = tag["matched_artists"]
+        if not isinstance(matched, list) or any(normalized_name(name) not in artist_keys for name in matched):
+            raise ContractError(f"style_tags[{index}].matched_artists 引用了清单之外的艺人")
+
+    if mode == "taste_summary":
+        if "semantic_themes" not in value:
+            raise ContractError("taste_summary 模式必须提供 semantic_themes")
+        themes = value["semantic_themes"]
+        if not isinstance(themes, list) or not 2 <= len(themes) <= 6:
+            raise ContractError("semantic_themes 必须是 2 到 6 个主题")
+
+    if mode == "artist_summary" and "semantic_themes" in value:
+        raise ContractError("artist_summary 模式没有歌名清单，不得提交 semantic_themes")
+
+    if mode == "taste_summary":
+        seen_themes: set[str] = set()
+        for index, item in enumerate(value["semantic_themes"]):
+            theme = _object(item, {"theme", "tracks", "note"}, f"semantic_themes[{index}]")
+            marker = normalized_name(theme["theme"])
+            if marker in seen_themes:
+                raise ContractError(f"semantic_themes[{index}] 重复主题")
+            seen_themes.add(marker)
+            _text(theme["theme"], f"semantic_themes[{index}].theme", 120)
+            tracks = theme["tracks"]
+            if not isinstance(tracks, list) or len(tracks) < 3:
+                raise ContractError(f"semantic_themes[{index}].tracks 至少需要 3 首支撑曲目")
+            if any(normalized_name(title) not in title_keys for title in tracks):
+                raise ContractError(f"semantic_themes[{index}].tracks 引用了清单之外的歌名")
+            _text(theme["note"], f"semantic_themes[{index}].note", 600)
+
+    profile = _object(value["taste_profile"], {"dominant_styles", "secondary_styles",
+                                              "exploration_appetite", "mood_axes"}, "taste_profile")
+    for field in ("dominant_styles", "secondary_styles"):
+        styles = profile[field]
+        if not isinstance(styles, list) or any(ref not in known_refs for ref in styles):
+            raise ContractError(f"taste_profile.{field} 必须是风格本体引用数组")
+    if profile["exploration_appetite"] not in ("high", "medium", "low"):
+        raise ContractError("taste_profile.exploration_appetite 必须是 high、medium 或 low")
+    mood = _validate_style_axes(profile["mood_axes"], "taste_profile.mood_axes", allow_unknown=False)
+    profile["mood_axes"] = mood
+
+    review = _object(value["editorial_review"],
+                     {"headline", "review", "inner_world", "humor_notes"}, "editorial_review")
+    _text(review["headline"], "editorial_review.headline", 120)
+    _text(review["review"], "editorial_review.review", 2000)
+    _text(review["inner_world"], "editorial_review.inner_world", 2000)
+    notes = review["humor_notes"]
+    if not isinstance(notes, list) or any(
+        not isinstance(note, dict) or set(note) != {"note", "speculation"}
+        or not isinstance(note["speculation"], bool) or not note["speculation"]
+        or not isinstance(note["note"], str) or not note["note"].strip()
+        for note in notes
+    ):
+        raise ContractError("humor_notes 每项必须含 note 与 speculation: true")
+
+    for field in ("limitations", "uncertainties"):
+        items = value[field]
+        if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
+            raise ContractError(f"{field} 必须是字符串数组")
+    return deepcopy(value)

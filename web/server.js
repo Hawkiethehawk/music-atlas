@@ -90,7 +90,8 @@ const RUNTIME_CONFIG = WEB_CONFIG.runtime || {};
 const EXECUTOR_CONFIG = WEB_CONFIG.executors || {};
 const HOST = typeof SERVER_CONFIG.host === "string" && SERVER_CONFIG.host.trim()
   ? SERVER_CONFIG.host.trim() : "127.0.0.1";
-const PORT = Number(SERVER_CONFIG.port) || 8420;
+// ATLAS_WEB_PORT 供服务管理器（atlas start）与测试覆盖端口；默认仍读 config/web.json。
+const PORT = Number(process.env.ATLAS_WEB_PORT) || Number(SERVER_CONFIG.port) || 8420;
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("server.port 必须是 1 到 65535 的整数");
 const DATA_PATH = resolveProjectPath(PATH_CONFIG.published || "runtime/web/current.json", "paths.published");
 const JOB_ROOT = resolveProjectPath(PATH_CONFIG.jobs || "runtime/web-jobs", "paths.jobs");
@@ -523,7 +524,18 @@ const server = http.createServer(async (req, res) => {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
     });
-    res.end(JSON.stringify({ ok: dataAvailable, data_available: dataAvailable }));
+    // 身份字段（service/pid/web_root）供 atlas start/stop 防护模型使用：
+    // 只有身份匹配的本项目面板才会被复用或停止，不误伤同端口的其他服务。
+    res.end(JSON.stringify({
+      ok: dataAvailable,
+      data_available: dataAvailable,
+      service: "music-atlas-web",
+      pid: process.pid,
+      host: HOST,
+      port: PORT,
+      web_root: PROJECT_ROOT,
+      config_file: path.relative(PROJECT_ROOT, CONFIG_PATH),
+    }));
     return;
   }
 

@@ -615,8 +615,20 @@ def build_web_payload(
         "artists": _artist_entries(analysis, recommendations),
         "albums": _release_entries(snapshot, recommendations),
         "sources": _source_entries(snapshot, analysis, ranked_bundle, evidence_audit),
+        "taste_review": _taste_review(analysis),
     }
     return payload
+
+
+def _taste_review(analysis: dict[str, Any]) -> dict[str, Any] | None:
+    """品味摘要模式的锐评投影；逐曲研究模式返回 None。"""
+    if analysis.get("analysis_mode") not in ("taste_summary", "artist_summary"):
+        return None
+    bundle = analysis.get("taste_summary")
+    if not isinstance(bundle, dict):
+        return None
+    from taste_summary import summarize_review
+    return summarize_review(bundle)
 
 
 def export_web_payload(

@@ -81,6 +81,10 @@ DEFAULT_RECALL_MIX = (
     ("exploration", 0.15),
 )
 
+# 大歌单品味摘要模式（taste_summary/artist_summary）没有逐曲关系研究，
+# 召回配额与候选校验在此模式下不含 musician_relation。
+TASTE_MODES = ("taste_summary", "artist_summary")
+
 
 class ContractError(ValueError):
     """Raised when a pipeline artifact does not satisfy its contract."""
@@ -288,7 +292,7 @@ def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
         style_analysis.get("profile_catalog_mode"),
         "style_analysis.profile_catalog_mode",
     )
-    if catalog_mode not in {"private", "explicit", "example_fallback", "agent_research"}:
+    if catalog_mode not in {"private", "explicit", "example_fallback", "agent_research", "taste_summary"}:
         raise ContractError("style_analysis.profile_catalog_mode 无效")
     coverage = _require_dict(
         style_analysis.get("profile_coverage"),
@@ -750,7 +754,8 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
                 "primary_distribution 总数与 source_track_count 不一致："
                 f"{total} != {source_count}"
             )
-    validate_recommendation_policy(packet.get("recommendation_policy"))
+    validate_recommendation_policy(packet.get("recommendation_policy"),
+                                   analysis_mode=packet.get("analysis_mode"))
     ref_ids = packet.get("analysis_ref_ids")
     if not isinstance(ref_ids, list) or any(not isinstance(ref, str) or not ref for ref in ref_ids):
         raise ContractError("analysis_ref_ids 必须是非空字符串数组")
@@ -770,7 +775,7 @@ def require_analysis_coverage(packet: dict[str, Any]) -> None:
         raise ContractError(f"画像覆盖不足：{classified}/{total} 首已分类，要求至少 {minimum:.0%}；请补齐画像并重新 analyze，未调用 Agent")
 
 
-def validate_recommendation_policy(value: Any) -> dict[str, Any]:
+def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = None) -> dict[str, Any]:
     policy = _require_dict(value, "recommendation_policy")
     quality = policy.get("analysis_quality", {"min_classified_share": 0.5})
     if not isinstance(quality, dict) or set(quality) != {"min_classified_share"}:
@@ -821,8 +826,12 @@ def validate_recommendation_policy(value: Any) -> dict[str, Any]:
             ratios[candidate_type] = ratio
         if abs(sum(ratios.values()) - 1.0) > 0.001:
             raise ContractError("recommendation_policy.recall_mix 权重总和必须为 1")
-        if set(ratios) != CANDIDATE_TYPES:
-            raise ContractError("recommendation_policy.recall_mix 必须完整覆盖四类候选")
+        required_candidate_types = set(CANDIDATE_TYPES)
+        if analysis_mode in TASTE_MODES:
+            # 品味/歌手摘要没有关系研究：召回配额只覆盖有依据的候选类型。
+            required_candidate_types -= {"musician_relation"}
+        if set(ratios) != required_candidate_types:
+            raise ContractError("recommendation_policy.recall_mix 必须完整覆盖当前模式的召回类型")
     ranking_weights = policy.get("ranking_weights")
     if ranking_weights is not None:
         _validate_weight_map(ranking_weights, "recommendation_policy.ranking_weights")
@@ -970,6 +979,7 @@ def _validate_candidate_pool(
     known_style_refs: set[str],
     label: str = "candidate_pool",
     require_all_types: bool = True,
+    required_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ContractError(f"{label} 必须是数组")
@@ -1063,9 +1073,12 @@ def _validate_candidate_pool(
         forbidden_scores = PROGRAM_RANKING_FIELDS & set(candidate)
         if forbidden_scores:
             raise ContractError(f"{label}[{index}] 不得提交程序评分字段：{sorted(forbidden_scores)}")
-    if require_all_types and value and set(type_counts) != CANDIDATE_TYPES:
-        missing = sorted(CANDIDATE_TYPES - set(type_counts))
-        raise ContractError(f"{label} 必须覆盖四类召回，缺少：{missing}")
+    if require_all_types and value:
+        # 召回覆盖要求来自策略配额（taste/artist 模式可能不含 musician_relation）。
+        required = required_types or set(CANDIDATE_TYPES)
+        missing = sorted(required - set(type_counts))
+        if missing:
+            raise ContractError(f"{label} 必须覆盖全部召回类型，缺少：{missing}")
     return value
 
 
@@ -1109,6 +1122,7 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
         candidate_pool,
         known_refs=known_refs,
         known_style_refs=known_style_refs,
+        required_types={candidate_type for candidate_type, _ in recall_mix_ratios(analysis)},
     )
     from candidate_routes import resolve_candidate_route
     for candidate in candidate_pool:

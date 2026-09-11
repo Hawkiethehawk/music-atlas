@@ -381,6 +381,7 @@ const tasteHTML=t=>`<div class="tconn">${t.map((v,i)=>{const last=i===t.length-1
  const evHTML=evs=>`<div class="evgrid">${evs.map(e=>`<div class="evcard"><div class="ek">${e.kind} · ${esc(e.provider)}</div><div class="ed">${esc(e.detail)}</div><div class="evmeta"><span>获取于 ${e.retrieved}</span><span>等级 ${e.grade}</span><span class="badge ${badgeCls(e.status)}">${badgeTxt(e.status)}</span></div></div>`).join("")}</div>`;
 
  let ATLAS=null;
+ let TASTE=null;
  const statusText=s=>({complete:"已完成",completed:"已完成",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"研究草稿",pending_verification:"待独立核验",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知"}[s]||s||"未知");
  function statusBanner(){
   if(!ATLAS||!ATLAS.status)return"";
@@ -393,7 +394,7 @@ const tasteHTML=t=>`<div class="tconn">${t.map((v,i)=>{const last=i===t.length-1
   return`<div class="atlas-status"><div class="wrap">状态：${notes.map(esc).join(" · ")}</div></div>`;
  }
  function applyAtlasPayload(payload){
-  ATLAS=payload;ISSUE=payload.issue||{};AXES=payload.axes||AXES;INTERESTS=payload.interests||[];RECS=payload.recommendations||[];
+  ATLAS=payload;ISSUE=payload.issue||{};AXES=payload.axes||AXES;INTERESTS=payload.interests||[];RECS=payload.recommendations||[];TASTE=payload.taste_review||null;
   ARTISTS=payload.artists||{};ALBUMS=payload.albums||{};SOURCES=payload.sources||[];
   if(ISSUE.title)document.title="Music Atlas · "+ISSUE.title;
  }
@@ -431,6 +432,17 @@ function vDiscover(){
  <p class="lede">${esc(ISSUE.lede||"本期 Atlas 数据尚未提供编辑摘要。")}</p>
  <div class="collage">${collage}</div>
 </div></section>
+${TASTE?`<div class="wrap"><section class="sec" id="taste-review">
+  <div class="sec-hd"><h2>品味锐评</h2><span class="sub">${TASTE.mode==="artist_summary"?"歌手分布 · 整体分析":"歌名与歌手 · 整体分析"}</span></div>
+  <div style="border:1px solid var(--line2);background:var(--bg2,#15120d);padding:22px 24px">
+   <p class="kicker" style="margin-bottom:8px">${esc(TASTE.headline)}</p>
+   <p class="lede" style="font-size:16px">${esc(TASTE.review)}</p>
+   <p class="kicker" style="margin:18px 0 8px">内心世界</p>
+   <p class="lede" style="font-size:16px">${esc(TASTE.inner_world)}</p>
+   ${(TASTE.humor_notes||[]).map(note=>`<p class="lede" style="font-size:15px;color:var(--dim);margin-top:10px">◈ ${esc(note.note)} <span style="font-size:12px">（幽默化推演，非心理学判断）</span></p>`).join("")}
+   <p style="margin-top:14px;font-size:12px;color:var(--dim)">以上为基于清单整体推断的描述性锐评，不代表事实核验结果；研究草稿边界不变。</p>
+  </div>
+ </section></div>`:""}
 <div class="wrap">
  <section class="sec">
   <div class="sec-hd"><h2>Atlas</h2><span class="sub">${n} 首 · 按综合排序</span></div>
@@ -620,9 +632,10 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   return Array.from(records.values()).sort((a,b)=>{const stateRank={running:0,done:1,failed:2};const stateDiff=stateRank[workflowTaskState(a)]-stateRank[workflowTaskState(b)];return stateDiff||b._order-a._order;});
  }
  function workflowTaskMarkup(task,key,kind,waiting){
-  const state=waiting?"waiting":workflowTaskState(task);const name=waiting?"等待下一个任务":kind==="analysis_batch"?`第 ${task.task_index||"—"}/${task.task_total||"—"} 批分析`:`第 ${task.round||"—"}/${task.round_total||"—"} 轮 · 任务 ${task.worker_index||"—"}`;
-  const detail=waiting?"并行槽位空闲":kind==="analysis_batch"?`${task.track_count||0} 首${task.reused_result?" · 复用已完成结果":""}`:"候选研究分片";
-  const status=waiting?"等待":state==="running"?"进行中":state==="failed"?"失败":kind==="analysis_batch"?"已完成":"已返回";
+  const state=waiting?"waiting":workflowTaskState(task);
+  const name=waiting?"等待下一个任务":kind==="taste"?(task.task_kind==="artist_summary"?"歌手分布分析 · 单任务":"品味摘要分析 · 单任务"):kind==="analysis_batch"?`第 ${task.task_index||"—"}/${task.task_total||"—"} 批分析`:`第 ${task.round||"—"}/${task.round_total||"—"} 轮 · 任务 ${task.worker_index||"—"}`;
+  const detail=waiting?"并行槽位空闲":kind==="taste"?"按歌单规模采用整体分析":kind==="analysis_batch"?`${task.track_count||0} 首${task.reused_result?" · 复用已完成结果":""}`:"候选研究分片";
+  const status=waiting?"等待":state==="running"?"进行中":state==="failed"?"失败":kind==="taste"?"已完成":kind==="analysis_batch"?"已完成":"已返回";
   return`<div class="wf-task-row ${state}" data-task-key="${esc(key)}"><div><span class="wf-task-name">${esc(name)}</span><span class="wf-task-detail">${esc(detail)}</span></div><span class="wf-task-state">${esc(status)}</span></div>`;
  }
  function updateWorkflowTaskNode(node,task,kind,waiting){
@@ -666,7 +679,10 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
     if(Number.isFinite(Number(event.candidate_target)))candidateTarget=Math.max(candidateTarget,Number(event.candidate_target));
    }
   });
-  const currentRound=recommendationRound||undefined;return{events,analysisTotal,analysisCompleted,analysisTrackTotal,analysisTrackCompleted,analysisAggregateDone,recommendationRound,recommendationRoundTotal,acceptedCandidates,candidateTarget,analysisTasks:workflowTaskRecords(events,"analysis_batch"),recommendationTasks:workflowTaskRecords(events,"recommendation_worker",currentRound)};
+  const currentRound=recommendationRound||undefined;
+  const tasteEvent=events.find(e=>e.task_kind==="taste_summary"||e.task_kind==="artist_summary");
+  const analysisMode=tasteEvent?tasteEvent.task_kind:"track_research";
+  return{events,analysisMode,analysisTotal,analysisCompleted,analysisTrackTotal,analysisTrackCompleted,analysisAggregateDone,recommendationRound,recommendationRoundTotal,acceptedCandidates,candidateTarget,analysisTasks:analysisMode==="track_research"?workflowTaskRecords(events,"analysis_batch"):workflowTaskRecords(events,analysisMode),recommendationTasks:workflowTaskRecords(events,"recommendation_worker",currentRound)};
  }
  function workflowStageState(stage,job,events){
   const completed=events.some(event=>event.stage===stage&&event.event==="completed");if(completed)return"done";
@@ -691,11 +707,13 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   const summary=flow.querySelector("[data-wf-summary]"),count=flow.querySelector("[data-wf-count]"),analysisNote=flow.querySelector('[data-wf-note="analysis"]'),recommendationNote=flow.querySelector('[data-wf-note="recommendation"]');
   if(summary)summary.textContent=`${job.status==="queued"?"排队中":"正在处理"} · ${workflowStageLabel(job.stage)}`;
   if(count)count.textContent=`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
-  const analysisStat=flow.querySelector('[data-wf-stat="analysis"]');if(analysisStat)analysisStat.textContent=`${view.analysisCompleted}/${view.analysisTotal} 批 · ${view.analysisTrackCompleted}/${view.analysisTrackTotal} 首`;
-  if(analysisNote)analysisNote.textContent=view.analysisAggregateDone?"分析包已校验，第三步已获得启动条件":`${WORKFLOW.analysis_parallelism||5} 个并行槽位 · 所有批次完成后才进入第三步`;
+  const analysisStat=flow.querySelector('[data-wf-stat="analysis"]');
+  if(analysisStat)analysisStat.textContent=view.analysisMode==="taste_summary"?"品味摘要 · 单任务":view.analysisMode==="artist_summary"?"歌手摘要 · 单任务":`${view.analysisCompleted}/${view.analysisTotal} 批 · ${view.analysisTrackCompleted}/${view.analysisTrackTotal} 首`;
+  if(analysisNote)analysisNote.textContent=view.analysisMode!=="track_research"?"按歌单规模采用整体分析（单任务），完成后进入第三步":view.analysisAggregateDone?"分析包已校验，第三步已获得启动条件":`${WORKFLOW.analysis_parallelism||5} 个并行槽位 · 所有批次完成后才进入第三步`;
   const recommendationStat=flow.querySelector('[data-wf-stat="recommendation"]');if(recommendationStat)recommendationStat.textContent=view.recommendationRound?`第 ${view.recommendationRound}/${view.recommendationRoundTotal||"—"} 轮 · ${view.acceptedCandidates}/${view.candidateTarget||"—"} 候选`:"等待分析包";
   if(recommendationNote)recommendationNote.textContent=view.recommendationRound?`${WORKFLOW.recommendation_parallelism||4} 个并行槽位 · 仅在第二步完成并校验后启动第三步`:`等待第二步分析包校验。`;
-  workflowSyncTaskList(flow.querySelector('[data-wf-tasks="analysis"]'),view.analysisTasks,"analysis_batch",Number(WORKFLOW.analysis_parallelism)||5);
+  const analysisKind=view.analysisMode==="track_research"?"analysis_batch":"taste";
+  workflowSyncTaskList(flow.querySelector('[data-wf-tasks="analysis"]'),view.analysisTasks,analysisKind,view.analysisMode==="track_research"?(Number(WORKFLOW.analysis_parallelism)||5):1);
   workflowSyncTaskList(flow.querySelector('[data-wf-tasks="recommendation"]'),view.recommendationTasks,"recommendation_worker",Number(WORKFLOW.recommendation_parallelism)||4);
   const eventsContainer=flow.querySelector("[data-wf-events]"),visibleStart=Math.max(0,events.length-12),visible=events.slice(visibleStart),visibleKeys=new Set(visible.map((event,index)=>workflowEventKey(event,visibleStart+index)));
   if(eventsContainer){Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).forEach(node=>{if(!visibleKeys.has(node.dataset.eventKey))node.remove();});if(!visible.length){if(!eventsContainer.querySelector("[data-placeholder]"))eventsContainer.insertAdjacentHTML("beforeend",'<div class="wf-event" data-placeholder>正在准备…</div>');}else{const placeholder=eventsContainer.querySelector("[data-placeholder]");if(placeholder)placeholder.remove();visible.forEach((event,offset)=>{const index=visibleStart+offset,key=workflowEventKey(event,index);let node=Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).find(candidate=>candidate.dataset.eventKey===key);const eventView=workflowEventView(event);if(node)updateWorkflowEventNode(node,eventView,index);else{eventsContainer.insertAdjacentHTML("beforeend",workflowEventMarkup(event,index));node=Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).find(candidate=>candidate.dataset.eventKey===key);}});}}

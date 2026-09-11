@@ -110,6 +110,12 @@ def _role_instruction(role: str) -> str:
             "candidate_pool 阶段，只提交有逐项公开证据的候选事实；不要提交最终十首、"
             "排序、评分或程序说明。"
         )
+    if role == "taste":
+        return (
+            "你负责 Music Atlas 的品味摘要分析。完整任务书已嵌入任务文本，"
+            "严格按任务书中的输出 JSON 结构返回一个对象；艺人、歌名与风格引用"
+            "必须来自任务文本中的清单与风格表，不要编造。"
+        )
     raise ValueError(f"未知执行器类型：{role}")
 
 

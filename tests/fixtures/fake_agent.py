@@ -21,18 +21,19 @@ def main() -> int:
     style_refs = packet["style_analysis"]["active_style_refs"]
     if not style_refs:
         raise SystemExit("active style refs missing")
-    candidate_types = (
+    candidate_types = [
         "artist_continuation",
         "musician_relation",
         "style_neighbor",
         "exploration",
-    )
+    ]
     candidate_pool = []
     anchors = [item["artist"] for item in packet["primary_distribution"]]
     projects = sorted({item["name"] for entity in packet["entities"] for item in entity.get("related_projects", [])
                        if item.get("sources") and item.get("confidence") in {"high", "medium"}})
     if not projects:
-        raise SystemExit("fixture needs catalog relation targets")
+        # 品味摘要模式没有关系研究：跳过 musician_relation 候选，而非退出。
+        candidate_types = [item for item in candidate_types if item != "musician_relation"]
     for index in range(int(policy["candidate_pool_min"])):
         number = index + 1 + (packet.get("research_request", {}).get("round", 1) - 1) * int(policy["candidate_pool_min"])
         source_url = f"https://musicbrainz.org/recording/00000000-0000-4000-8000-{number:012d}"

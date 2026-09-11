@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-09-11（规模分档品味摘要与 atlas CLI，维护标签 patch-20260911-153225）
+
+- 新增规模分档分析：≤30 首逐曲研究（每批默认 10 首，批次并发），31-500 首品味摘要（taste_summary），≥501 首歌手摘要（artist_summary）；后两者为单任务分析，基于程序统计的歌名/歌手清单与整体锐评，不再逐曲研究。
+- 新增 `taste_summary.py` 与两份 prompt 模板：程序预计算统计（唯一曲目、重复、歌手计数），分析 Agent 按三层方法论（乐派知识 / 歌名语义与艺人聚类 / 重复频率）返回结构化品味画像与锐评文案；艺人、歌名、风格引用逐字绑定清单与风格本体，幽默推演强制 speculation 标注，禁止推荐/评分/策略字段。
+- 契约扩展：`taste_summary_result` 校验（analysis_contracts.py）、`profile_catalog_mode` 新增 `taste_summary`、候选池召回覆盖按策略派生类型校验；品味模式下程序独占调整策略副本——召回配额三类化（剔除 musician_relation）与覆盖门槛降为 30%（用户批准，真实验证覆盖率约 43-44%，50% 的逐曲门槛对摘要模式过严）。
+- 只有带可检索来源的场景归属才驱动风格分配，无来源归属仅展示且艺人保持 unclassified；分析包保持 `packet_type: musician_analysis` 兼容，逐曲分配标记 `origin: taste_summary`。
+- 新增 `atlas` 统一 CLI（`atlas.py` + `web_service.py` + `atlas.bat`）：`atlas start|stop|restart|status|logs` 管理网页面板，防护模型移植自 nocap console-service——`/api/health` 携带 service/pid/web_root 身份，只有本项目面板会被复用或停止；端口被其他服务占用默认拒绝（--force 才替换）；状态文件 PID 存活但健康不可用时拒绝覆盖。其余子命令透传 workflow.py。
+- 网页面板适配：发现页新增品味锐评模块（含幽默推演标注与草稿边界提示）；工作流面板对品味摘要单任务模式的槽位与统计展示；server.js 健康端点扩展身份字段并支持 ATLAS_WEB_PORT 覆盖。
+- 真实验证（codex-cli 0.153.4，--sandbox read-only，未联网）：100 首品味摘要 55.6 秒通过全部契约校验（9 风格标签、20 聚类、4 语义主题、覆盖 43%）；1923 首歌手摘要通过校验（55 聚类、覆盖 846/1923）；修复真实数据暴露的同名艺人变体重复 entity_ref 问题（按 artist_key 归并计数）。验证产物在 runtime/taste-validate-20260911（Git 忽略）。
+- 修复 fake_agent 夹具在无关系目录时跳过 musician_relation 候选而非退出。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：227 项通过（含 16 项品味摘要、8 项服务管理测试）。
+- `python -m compileall -q .`：通过。
+- `node --check web/server.js`：通过。
+- `node --test tests/*.test.mjs`（web/）：7 项通过；`node --test tests/*.browser.mjs`（web/）：11 项通过。
+- 真实 8420 冒烟：`atlas start --no-open` → 重复 start 复用（同 PID）→ `atlas stop` → `atlas status` 全链路通过。
+- 未部署；真实检索执行器与在线事实核验仍未完成。
+
 ## 2026-09-11（网页端工作流与验收基础设施，维护标签 patch-20260911-100253）
 
 - 新增网页端受控工作流：`web_workflow.py` 将整理、分析、推荐、发布四阶段通过 JSON 事件流提供给 `web/server.js`；浏览器只提交公开歌单链接，Skill 执行器由服务端配置；`web_view_model.py` 生成只读脱敏发布数据，`config/web.json` 固定端口、发布路径与并行度；`executors/` 提供项目内 Codex 执行器入口。

@@ -14,6 +14,7 @@ from typing import Any
 from agent_prompt import prepare_agent_context, prompt_slot_manifest, prompt_size_telemetry
 from agent_runner import run_agent
 from analysis_agent import execute_analysis_research, prepare_analysis_research
+from taste_summary import TASTE_BATCH_SIZE, resolve_analysis_mode, run_taste_analysis, summarize_review
 from channels import render_for_channel
 from channel_delivery import (
     resolve_weixin_target,
@@ -114,7 +115,8 @@ def command_snapshot(args: argparse.Namespace) -> int:
     return 0 if snapshot["reader_status"] == "complete" else 2
 
 
-def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, output_path: Path) -> tuple[Path | None, dict | None]:
+def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, output_path: Path) -> tuple[Path | None, dict | None, dict | None]:
+    """按歌单规模分档：≤30 首逐曲研究（返回 research_path），31+ 首品味摘要（返回 packet）。"""
     # Reject configuration errors before making any external Skill call.
     load_recommendation_policy(_path(args.policy_file, None))
     if args.as_of_date is not None:
@@ -133,22 +135,45 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
     if args.analysis_mode == "catalog":
         if args.analysis_command or args.research_bundle or args.import_analysis_results:
             raise ContractError("catalog 模式不能同时使用 Skill 研究参数")
-        return None, None
+        return None, None, None
     if args.style_profiles or args.relations or args.preferred:
         raise ContractError("Skill 分析不读取预置画像、关系目录或偏好名单；离线兼容请显式指定 --analysis-mode catalog")
     if research_path is not None:
-        return research_path, None
+        return research_path, None, None
     directory = _path(args.analysis_research_dir, output_path.parent / "analysis_research")
     if any(path.resolve().is_relative_to(directory.resolve()) for path in (*inputs, *outputs)):
         raise ContractError("分析研究目录不能包含分析输入或输出文件")
-    if args.analysis_command or args.import_analysis_results:
+    # 规模分档：31+ 首的 Skill 分析改用品味/歌手摘要单任务，不再准备逐曲批次。
+    analysis_scale_mode = resolve_analysis_mode(read_json(snapshot_path)["track_count"])
+    if args.import_analysis_results:
+        if analysis_scale_mode != "track_research":
+            raise ContractError("歌单超过 30 首，应使用品味摘要模式（--analysis-command），不支持分批结果导入")
         result = execute_analysis_research(snapshot_path, taxonomy_path, directory, command=args.analysis_command,
                                            batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget,
                                            timeout=args.analysis_timeout,
                                            parallelism=args.analysis_parallelism)
-        return result, None
+        return result, None, None
+    if analysis_scale_mode != "track_research":
+        if args.analysis_command is None:
+            return None, {
+                "status": "taste_analysis_required", "analysis_mode": analysis_scale_mode,
+                "source_track_count": read_json(snapshot_path)["track_count"],
+                "analysis_written": False, "recommendation_count": 0, "send_performed": False,
+                "next_action": "歌单超过 30 首：提供 --analysis-command 以运行品味摘要分析（单任务）。",
+            }, None
+        packet, _bundle_path = run_taste_analysis(
+            snapshot_path, taxonomy_path, directory, command=args.analysis_command,
+            timeout=args.analysis_timeout, policy_path=_path(args.policy_file, None))
+        return None, {"status": "taste_analysis_written"}, packet
+    if args.analysis_command:
+        result = execute_analysis_research(snapshot_path, taxonomy_path, directory, command=args.analysis_command,
+                                           batch_size=args.analysis_batch_size or TASTE_BATCH_SIZE,
+                                           context_budget=args.analysis_context_budget,
+                                           timeout=args.analysis_timeout,
+                                           parallelism=args.analysis_parallelism)
+        return result, None, None
     manifest = prepare_analysis_research(snapshot_path, taxonomy_path, directory,
-                                         batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget)
+                                         batch_size=args.analysis_batch_size or TASTE_BATCH_SIZE, context_budget=args.analysis_context_budget)
     return None, {
         "status": "analysis_agent_required", "analysis_mode": args.analysis_mode, "skill_name": "music-atlas-analysis",
         "executor_kind": "generic_external_executor", "source_snapshot_id": manifest["source_snapshot_id"],
@@ -157,31 +182,46 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
         "analysis_research_dir": str(directory), "research_manifest_path": str(directory / "manifest.json"),
         "analysis_written": False, "recommendation_count": 0, "send_performed": False,
         "next_action": "使用任意模型或工具执行 Skill：提供 --analysis-command，或完成各批 result 文件后用 --import-analysis-results 汇总；不要重新抓取快照。",
-    }
-
+    }, None
 
 def command_analyze(args: argparse.Namespace) -> int:
     snapshot_path = _path(args.snapshot, ROOT / "runtime" / "snapshot.json")
     output_path = _path(args.output, ROOT / "runtime" / "musician_analysis.json")
     markdown_path = _path(args.markdown, output_path.with_name("musician_analysis.md"))
     manifest_path = _path(args.manifest, output_path.with_name("analysis_manifest.json"))
-    research_path, pending = _analysis_research_input(args, snapshot_path, output_path)
+    research_path, pending, prepared_packet = _analysis_research_input(args, snapshot_path, output_path)
     if pending is not None:
-        _print_summary(pending)
-        return 0
-    packet = analyze_and_validate(
-        snapshot_path,
-        preferred_path=_path(args.preferred, ROOT / "preferred_artists.txt"),
-        relation_path=_path(args.relations, ROOT / "relations" / "artist_relations.json"),
-        output_path=output_path,
-        markdown_path=markdown_path,
-        manifest_path=manifest_path,
-        style_taxonomy_path=_path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json"),
-        style_profile_path=_path(args.style_profiles, ROOT / "styles" / "artist_style_profiles.json"),
-        policy_path=_path(args.policy_file, None),
-        as_of_date=args.as_of_date,
-        research_bundle_path=research_path,
-    )
+        if pending.get("status") == "taste_analysis_required":
+            _print_summary(pending)
+            return 2
+        if pending.get("status") != "taste_analysis_written":
+            _print_summary(pending)
+            return 0
+    if prepared_packet is not None:
+        # 品味/歌手摘要模式：分析包已生成，写盘与锐评摘要，不走逐曲聚合。
+        packet = prepared_packet
+        write_json(output_path, packet)
+        review = summarize_review(packet["taste_summary"])
+        output_path.with_name("musician_analysis.md").write_text(
+            "# 品味摘要\n\n## {headline}\n\n{review}\n\n## 内心世界\n\n{inner}\n\n"
+            "- 局限：{limits}\n".format(
+                headline=review["headline"], review=review["review"], inner=review["inner_world"],
+                limits="；".join(review["limitations"]) or "无"),
+            encoding="utf-8")
+    else:
+        packet = analyze_and_validate(
+            snapshot_path,
+            preferred_path=_path(args.preferred, ROOT / "preferred_artists.txt"),
+            relation_path=_path(args.relations, ROOT / "relations" / "artist_relations.json"),
+            output_path=output_path,
+            markdown_path=markdown_path,
+            manifest_path=manifest_path,
+            style_taxonomy_path=_path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json"),
+            style_profile_path=_path(args.style_profiles, ROOT / "styles" / "artist_style_profiles.json"),
+            policy_path=_path(args.policy_file, None),
+            as_of_date=args.as_of_date,
+            research_bundle_path=research_path,
+        )
     coverage_report = None
     if packet["style_analysis"]["profile_coverage"]["degraded"]:
         coverage_report = write_coverage_report(packet, output_path.with_name("coverage_report.json"))
@@ -704,27 +744,40 @@ def command_run(args: argparse.Namespace) -> int:
     save_snapshot(snapshot, paths["snapshot"])
     validate_playlist_snapshot(snapshot, require_complete=True)
 
-    research_path, pending = _analysis_research_input(args, paths["snapshot"], paths["analysis"])
+    research_path, pending, prepared_packet = _analysis_research_input(args, paths["snapshot"], paths["analysis"])
     if pending is not None:
-        write_json(paths["pipeline_manifest"], {
-            "schema_version": "2.0", "manifest_type": "local_pipeline_manifest", **pending,
-            "snapshot_path": str(paths["snapshot"]), "policy": {"file": args.policy_file},
-        })
-        _print_summary({**pending, "runtime_dir": str(runtime_dir)})
-        return 0
-    packet = analyze_and_validate(
-        paths["snapshot"],
-        preferred_path=_path(args.preferred, ROOT / "preferred_artists.txt"),
-        relation_path=_path(args.relations, ROOT / "relations" / "artist_relations.json"),
-        output_path=paths["analysis"],
-        markdown_path=paths["analysis_markdown"],
-        manifest_path=paths["analysis_manifest"],
-        style_taxonomy_path=_path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json"),
-        style_profile_path=_path(args.style_profiles, ROOT / "styles" / "artist_style_profiles.json"),
-        policy_path=_path(args.policy_file, None),
-        as_of_date=args.as_of_date,
-        research_bundle_path=research_path,
-    )
+        if pending.get("status") == "taste_analysis_required":
+            write_json(paths["pipeline_manifest"], {
+                "schema_version": "2.0", "manifest_type": "local_pipeline_manifest", **pending,
+                "snapshot_path": str(paths["snapshot"]), "policy": {"file": args.policy_file},
+            })
+            _print_summary({**pending, "runtime_dir": str(runtime_dir)})
+            return 2
+        if pending.get("status") != "taste_analysis_written":
+            write_json(paths["pipeline_manifest"], {
+                "schema_version": "2.0", "manifest_type": "local_pipeline_manifest", **pending,
+                "snapshot_path": str(paths["snapshot"]), "policy": {"file": args.policy_file},
+            })
+            _print_summary({**pending, "runtime_dir": str(runtime_dir)})
+            return 0
+    if prepared_packet is not None:
+        # 品味/歌手摘要模式：分析包已生成，直接写盘并进入推荐准备。
+        packet = prepared_packet
+        write_json(paths["analysis"], packet)
+    else:
+        packet = analyze_and_validate(
+            paths["snapshot"],
+            preferred_path=_path(args.preferred, ROOT / "preferred_artists.txt"),
+            relation_path=_path(args.relations, ROOT / "relations" / "artist_relations.json"),
+            output_path=paths["analysis"],
+            markdown_path=paths["analysis_markdown"],
+            manifest_path=paths["analysis_manifest"],
+            style_taxonomy_path=_path(args.style_taxonomy, ROOT / "styles" / "style_taxonomy.json"),
+            style_profile_path=_path(args.style_profiles, ROOT / "styles" / "artist_style_profiles.json"),
+            policy_path=_path(args.policy_file, None),
+            as_of_date=args.as_of_date,
+            research_bundle_path=research_path,
+        )
     coverage_report = None
     if packet["style_analysis"]["profile_coverage"]["degraded"]:
         coverage_report = write_coverage_report(packet, runtime_dir / "coverage_report.json")
