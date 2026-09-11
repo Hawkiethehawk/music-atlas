@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-11（生产执行器切 glm-5.3-flash、完成实时试运行与在线档位冒烟，维护标签 patch-20260911-175634）
+
+- 新增 `executors/openai_compat_executor.py` 与三个薄入口（`openai_analysis.py` / `openai_recommendation.py` / `openai_taste.py`）：按 OpenAI Chat Completions 协议直连本机供应商，与 Codex 桥接执行器共用同一 stdin/stdout 契约（标准输入读任务、标准输出只生成一个 JSON、失败返回码与错误语义一致）。配置来自 `config/web.json` 的 `runtime.openai_compat`（非密钥）；API key 只从 `api_key_env` 指定的环境变量读取，不进仓库；5xx/429 重试 3 次、4xx 不重试；reasoning 占满预算导致空内容时给出明确错误。
+- `config/web.json` 生产配置切到新执行器，模型为 `glm-5.3-flash`（密钥环境变量 `ZH_GLM_API_KEY`）；原因：新版 Codex CLI 只支持 Responses API，而该供应商只提供 Chat Completions。原 Codex 桥接执行器保留可用，把 `executors` 指回即可切回。
+- `executors/local_codex_executor.py` 的配置覆盖扩展为可读 `codex_model` / `codex_model_provider`（原仅 `codex_reasoning_effort`），仍通过 `-c` 传给 Codex，不修改本机全局配置；未配置时行为不变。
+- 新增测试：`tests/test_openai_compat_executor.py` 12 项（配置解析与缺字段/缺 key 报错、payload 与角色指令、代码围栏解析、4xx 不重试、5xx 重试至上限、空内容报错、main 的 JSON/退出码契约、薄入口存在性）；`tests/test_local_codex_executor.py` 新增 3 项覆盖模型/provider 覆盖与空值/缺配置。
+- 文档：`README.md`「生产就绪前置条件」记录已完成的实时试运行与仍缺的在线核验适配器；`web/README.md` 执行器说明与配置表补充 `runtime.openai_compat`。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：281 项通过（本次新增 15 项）。
+- `python -m compileall -q .`：通过；`node --check web/server.js`：通过。
+- `npm --prefix web test`：8 项通过；`npm --prefix web run test:browser`：13 项通过。
+- 执行器真实连通：`executors/openai_recommendation.py` 直跑返回 `{"ok":true,"executor":"openai_compat"}`。
+- **在线档位冒烟（真实平台）**：真实网易云短链解析 → 1925 首完整读取（`reader_status=complete`）→ 提交档位 30 → 截断后 `track_count == declared_track_count == len(tracks) == 30`、`position` 连续、`snapshot_id` 带 `-limit30`、`reader.source_track_count=1925`。
+- **全链路实时试运行（生产 HTTP 接口 + 真实模型）**：网页面板 `POST /api/jobs` 提交上述歌单，`awaiting_limit` 事件携带真实上限 1925，`POST /api/jobs/:id/limit` 提交 30 后由 glm-5.3-flash 完成 Step 2/3，产出 29 个候选、10 首推荐，结果原子发布到 `runtime/web/current.json`；推荐携带 30 条证据（A 级 1 首、B 级 9 首）、候选携带 84 条，来源为 last.fm / Wikipedia 等可核验公开页面；真实数据下兴趣组命名为「流行朋克」「旋律金属核」「暗黑流行」。
+- **面板部署**：`atlas restart --no-open` 后 `/api/health` 的 `running` 与 `data_available` 均为 true，`/api/atlas` 返回新发布的 10 首推荐与 3 个兴趣组；面板以生产方式（`runtime/web/service.log`）运行中。
+- 未做：可信在线事实核验适配器（`evidence_audit` 仍为 `not_available`，结果保持 `draft`）、微信实际发送、Gitee 归档远端同步。
+
 ## 2026-09-11（网页档位选择、一键部署 setup 与兴趣组命名，维护标签 patch-20260911-165642）
 
 - 网页端新增「处理数量」档位：歌单读取完成前控件不可用，读完后才解锁，上限为实际读到的曲目数，不会超过歌单真实规模。可输入任意整数，或点 `30 / 100 / 200 / 500 / 1000` 快捷档位（超过上限的档位自动禁用）；输入值精确生效，等于某个档位时该档位高亮，默认档位 30。选项与默认值来自 `config/web.json` 的 `workflow.track_limit_options` / `workflow.track_limit_default`（旧配置缺字段时前端按合并语义保留默认，`server.js` 有同值兜底）。

@@ -119,17 +119,33 @@ def _role_instruction(role: str) -> str:
     raise ValueError(f"未知执行器类型：{role}")
 
 
-def _reasoning_effort() -> str | None:
-    """Read only the project-local batch setting; credentials stay in Codex."""
+def _codex_overrides() -> list[str]:
+    """Read project-local Codex overrides; credentials stay in Codex config.
+
+    支持三个可选键（config/web.json 的 runtime 段）：
+    - ``codex_reasoning_effort``：推理级别；
+    - ``codex_model`` / ``codex_model_provider``：生产执行模型与 provider。
+    只在配置存在时通过 ``-c`` 覆盖，不修改本机 Codex 全局配置。
+    """
 
     config_path = PROJECT_ROOT / "config" / "web.json"
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, JSONDecodeError):
-        return None
+        return []
     runtime = config.get("runtime") if isinstance(config, dict) else None
-    effort = runtime.get("codex_reasoning_effort") if isinstance(runtime, dict) else None
-    return effort if isinstance(effort, str) and effort in SUPPORTED_REASONING_EFFORTS else None
+    runtime = runtime if isinstance(runtime, dict) else {}
+    overrides: list[str] = []
+    effort = runtime.get("codex_reasoning_effort")
+    if isinstance(effort, str) and effort in SUPPORTED_REASONING_EFFORTS:
+        overrides.extend(["-c", f'model_reasoning_effort="{effort}"'])
+    model = runtime.get("codex_model")
+    if isinstance(model, str) and model.strip():
+        overrides.extend(["-c", f'model="{model.strip()}"'])
+    provider = runtime.get("codex_model_provider")
+    if isinstance(provider, str) and provider.strip():
+        overrides.extend(["-c", f'model_provider="{provider.strip()}"'])
+    return overrides
 
 
 def run(role: str, task: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
@@ -147,9 +163,7 @@ def run(role: str, task: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict
         "--- END TASK ---\n"
     )
     argv = command + ["exec"]
-    effort = _reasoning_effort()
-    if effort:
-        argv.extend(["-c", f'model_reasoning_effort="{effort}"'])
+    argv.extend(_codex_overrides())
     argv.extend([
         "--ephemeral",
         "--sandbox",

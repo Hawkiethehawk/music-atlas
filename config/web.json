@@ -10,11 +10,18 @@
   },
   "runtime": {
     "python": "python",
-    "codex_reasoning_effort": "low"
+    "codex_reasoning_effort": "low",
+    "openai_compat": {
+      "base_url": "https://sshzyu.com/v1",
+      "model": "glm-5.3-flash",
+      "api_key_env": "ZH_GLM_API_KEY",
+      "timeout_seconds": 1800,
+      "max_tokens": 60000
+    }
   },
   "executors": {
-    "analysis": "executors/analysis_runner.py",
-    "recommendation": "executors/recommendation_runner.py"
+    "analysis": "executors/openai_analysis.py",
+    "recommendation": "executors/openai_recommendation.py"
   },
   "workflow": {
     "analysis_parallelism": 5,

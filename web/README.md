@@ -70,11 +70,18 @@ Node 服务只读取项目根目录的 `config/web.json`，不依赖系统环境
 {
   "runtime": {
     "python": "python",
-    "codex_reasoning_effort": "low"
+    "codex_reasoning_effort": "low",
+    "openai_compat": {
+      "base_url": "https://sshzyu.com/v1",
+      "model": "glm-5.3-flash",
+      "api_key_env": "ZH_GLM_API_KEY",
+      "timeout_seconds": 1800,
+      "max_tokens": 60000
+    }
   },
   "executors": {
-    "analysis": "executors/analysis_runner.py",
-    "recommendation": "executors/recommendation_runner.py"
+    "analysis": "executors/openai_analysis.py",
+    "recommendation": "executors/openai_recommendation.py"
   },
   "workflow": {
     "analysis_parallelism": 5,
@@ -88,10 +95,18 @@ Node 服务只读取项目根目录的 `config/web.json`，不依赖系统环境
 }
 ```
 
-当前项目内的两个执行器是 `executors/` 下的本机 Codex 桥接脚本：它们从标准输入读取任务，
-调用本机已安装的 Codex CLI，再只把最终 JSON 转发到 Music Atlas。Codex 的登录、模型和供应商
-继续使用本机已有配置，不复制密钥，也不修改系统配置。若本机找不到 Codex CLI，页面会保持禁用，
-不会以示例结果冒充真实分析。任务状态可通过 `GET /api/jobs/:id` 或页面事件面板查看。任务在等待选择处理数量时状态为
+当前生产配置使用 `executors/` 下的 **OpenAI 兼容执行器**（`openai_analysis.py` /
+`openai_recommendation.py`）：它们从标准输入读取任务，调用 `runtime.openai_compat` 声明的
+Chat Completions 端点（当前为 `glm-5.3-flash`），只把最终 JSON 转发给 Music Atlas。
+API key 只从 `api_key_env` 指定的环境变量读取，不写入仓库，也不修改本机 Codex 配置。
+原有的本机 Codex 桥接脚本（`analysis_runner.py` / `recommendation_runner.py`）仍然保留，
+把 `executors` 指回它们即可切回 Codex（新版 Codex CLI 仅支持 Responses API，
+因此只支持 Chat Completions 的供应商需用 OpenAI 兼容执行器）。
+
+模型 API 本身不提供联网检索：执行器提示词明确要求只凭既有知识给出可事后核验的公开来源，
+不确定就留空；事实核验与证据分级仍由程序（`evidence.py`）与契约层负责，页面不会因流程
+跑通就标注为已核验。执行器文件缺失或 key 未配置时任务会失败并如实报错，不会以示例结果
+冒充真实分析。任务状态可通过 `GET /api/jobs/:id` 或页面事件面板查看。任务在等待选择处理数量时状态为
 `awaiting_limit`：`POST /api/jobs/:id/limit` 提交数量（`{"limit": N}`，越界返回 400），
 `POST /api/jobs/:id/cancel` 取消等待中的任务。
 
@@ -149,6 +164,7 @@ systemctl status music-atlas-web
 | `paths.input` | `input` | 本地 JSON/CSV 输入目录；网页只接受其相对路径 |
 | `runtime.python` | `python` | 启动网页工作流的 Python 命令；路径形式必须位于项目内 |
 | `runtime.codex_reasoning_effort` | `low` | 本机 Codex 批处理推理级别；模型、登录和供应商仍读取本机配置 |
+| `runtime.openai_compat` | 无 | OpenAI 兼容执行器的 `base_url` / `model` / `api_key_env`（密钥所在环境变量名），以及可选 `timeout_seconds` / `max_tokens` / `temperature`；密钥不进仓库 |
 | `executors.analysis` | 空 | 项目内 Step 2 Python 执行器脚本 |
 | `executors.recommendation` | 空 | 项目内 Step 3 Python 执行器脚本 |
 | `workflow.analysis_timeout_seconds` | `600` | Step 2 总执行预算；大歌单可在项目配置中提高 |
