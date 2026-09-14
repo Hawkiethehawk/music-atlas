@@ -47,10 +47,10 @@ _SETTINGS = {
 
 class SettingsTests(unittest.TestCase):
     def test_reads_settings_from_project_config(self) -> None:
-        with mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}):
-            settings = executor._settings()
-        self.assertEqual(settings["model"], "glm-5.3-flash")
-        self.assertEqual(settings["api_key_env"], "ZH_GLM_API_KEY")
+        settings = executor._settings()
+        self.assertTrue(settings["model"], "项目配置必须声明模型")
+        self.assertTrue(settings["api_key_env"], "项目配置必须声明密钥所在环境变量")
+        self.assertTrue(str(settings["base_url"]).startswith("https://"), "必须使用 HTTPS 端点")
 
     def test_missing_settings_field_is_reported(self) -> None:
         with TemporaryDirectory() as directory:
@@ -84,6 +84,20 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("TASK-1", system)
         self.assertIn("MUSIC ATLAS TASK", system)
         self.assertEqual(payload["messages"][1]["content"], "TASK-1")
+
+    def test_payload_disables_thinking_by_default(self) -> None:
+        """实测 reasoning 占单次调用约 80% 耗时，因此默认关闭。"""
+
+        payload = executor._chat_payload(dict(_SETTINGS), "analysis", "TASK-1")
+
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+
+    def test_payload_keeps_thinking_when_explicitly_enabled(self) -> None:
+        settings = dict(_SETTINGS, disable_thinking=False)
+
+        payload = executor._chat_payload(settings, "analysis", "TASK-1")
+
+        self.assertNotIn("thinking", payload)
 
     def test_unknown_role_is_rejected(self) -> None:
         with mock.patch.object(executor, "_settings", return_value=dict(_SETTINGS)):

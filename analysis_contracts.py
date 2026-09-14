@@ -9,9 +9,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 from contracts import (
-    ContractError, SCHEMA_VERSION, STYLE_AXIS_IDS, TASTE_MODES, _source_is_forbidden_personalization,
-    _validate_http_url, _validate_style_axes, _validate_style_mix, normalized_name,
-    parse_timestamp, stable_hash, track_key, validate_playlist_snapshot,
+    ContractError, SCHEMA_VERSION, STYLE_AXIS_IDS, TASTE_MODES, _STYLE_REF_TYPO,
+    _source_is_forbidden_personalization, _validate_http_url, _validate_style_axes, _validate_style_mix,
+    canonical_style_ref, normalized_name, parse_timestamp, stable_hash, track_key,
+    validate_playlist_snapshot,
 )
 from evidence import require_usable_evidence
 
@@ -97,7 +98,24 @@ def build_research_requests(snapshot: dict, taxonomy: dict, taxonomy_sha256: str
     return requests
 
 
+def _repair_style_refs(value: Any, known_style_refs: set[str]) -> Any:
+    """递归修复模型输出里的 style_ref 笔误（style.pop_punk → style:pop_punk）。
+
+    关闭 reasoning 后模型偶尔写错分隔符或大小写；这是笔误而不是未知风格，
+    统一在批次校验入口修好，避免整批研究因单个字符失败。
+    """
+
+    if isinstance(value, dict):
+        return {key: _repair_style_refs(item, known_style_refs) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_repair_style_refs(item, known_style_refs) for item in value]
+    if isinstance(value, str) and _STYLE_REF_TYPO.match(value.strip()):
+        return canonical_style_ref(value, known_style_refs)
+    return value
+
+
 def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
+    value = _repair_style_refs(value, set(taxonomy.get("known_style_refs") or []))
     _object(value, {"schema_version", "bundle_type", "request_id", "source_snapshot_id", "generated_at",
                     "track_profiles", "artist_relations"}, "MusicianResearchResult")
     if value["schema_version"] != SCHEMA_VERSION or value["bundle_type"] != "musician_research_result":

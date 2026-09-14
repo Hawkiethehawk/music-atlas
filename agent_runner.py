@@ -229,8 +229,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；--timeout 为研究总预算")
     parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
     parser.add_argument("--max-candidates", type=int, default=80, help="本次研究的候选数量上限，最大 200")
-    parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
-                        help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
+    parser.add_argument("--recommendation-parallelism", type=int, choices=tuple(range(1, 9)), default=4,
+                        help="Step 3 同时执行的候选研究任务数，默认 4；允许 1 到 8")
     return parser
 
 

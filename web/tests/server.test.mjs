@@ -40,6 +40,9 @@ test("元数据接口：/api/config 与 /api/health", { concurrency: false }, as
   assert.deepEqual(config.workflow.track_limit_options, [30, 100, 200, 500, 1000]);
   assert.equal(config.workflow.track_limit_default, 30);
   assert.equal(config.workflow.await_limit_timeout_seconds, 1800);
+  // 隔离配置未声明研究预算时应回落到默认值。
+  assert.equal(config.workflow.max_research_rounds, 2);
+  assert.equal(config.workflow.max_candidates, 80);
   assert.equal(config.workflow.analysis_executor_configured, true);
   assert.equal(config.workflow.recommendation_executor_configured, true);
   assert.ok(config.paths.published.includes("runtime"), "发布路径应位于 runtime 隔离目录");

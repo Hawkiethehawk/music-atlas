@@ -73,8 +73,8 @@ Node 服务只读取项目根目录的 `config/web.json`，不依赖系统环境
     "codex_reasoning_effort": "low",
     "openai_compat": {
       "base_url": "https://sshzyu.com/v1",
-      "model": "glm-5.3-flash",
-      "api_key_env": "ZH_GLM_API_KEY",
+      "model": "deepseek-v4.1-flash",
+      "api_key_env": "MUSIC_ATLAS_API_KEY",
       "timeout_seconds": 1800,
       "max_tokens": 60000
     }
@@ -97,7 +97,7 @@ Node 服务只读取项目根目录的 `config/web.json`，不依赖系统环境
 
 当前生产配置使用 `executors/` 下的 **OpenAI 兼容执行器**（`openai_analysis.py` /
 `openai_recommendation.py`）：它们从标准输入读取任务，调用 `runtime.openai_compat` 声明的
-Chat Completions 端点（当前为 `glm-5.3-flash`），只把最终 JSON 转发给 Music Atlas。
+Chat Completions 端点（当前为 `deepseek-v4.1-flash`），只把最终 JSON 转发给 Music Atlas。
 API key 只从 `api_key_env` 指定的环境变量读取，不写入仓库，也不修改本机 Codex 配置。
 原有的本机 Codex 桥接脚本（`analysis_runner.py` / `recommendation_runner.py`）仍然保留，
 把 `executors` 指回它们即可切回 Codex（新版 Codex CLI 仅支持 Responses API，
@@ -164,6 +164,9 @@ systemctl status music-atlas-web
 | `paths.input` | `input` | 本地 JSON/CSV 输入目录；网页只接受其相对路径 |
 | `runtime.python` | `python` | 启动网页工作流的 Python 命令；路径形式必须位于项目内 |
 | `runtime.codex_reasoning_effort` | `low` | 本机 Codex 批处理推理级别；模型、登录和供应商仍读取本机配置 |
+| `runtime.openai_compat.disable_thinking` | `true` | 关闭模型思维链；实测 reasoning 占单次调用约 80% 耗时（真实批次 65s → 15.8s） |
+| `workflow.max_research_rounds` | `2` | 候选研究轮数上限；第 2 轮只补缺失类型 |
+| `workflow.max_candidates` | `60` | 候选池上限；过小会导致探索类型产出不足 |
 | `runtime.openai_compat` | 无 | OpenAI 兼容执行器的 `base_url` / `model` / `api_key_env`（密钥所在环境变量名），以及可选 `timeout_seconds` / `max_tokens` / `temperature`；密钥不进仓库 |
 | `executors.analysis` | 空 | 项目内 Step 2 Python 执行器脚本 |
 | `executors.recommendation` | 空 | 项目内 Step 3 Python 执行器脚本 |

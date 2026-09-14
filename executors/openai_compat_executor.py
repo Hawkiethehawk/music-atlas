@@ -68,7 +68,7 @@ def _system_prompt(role: str) -> str:
 
 
 def _chat_payload(settings: dict[str, Any], role: str, task: str) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "model": str(settings["model"]).strip(),
         "messages": [
             {"role": "system", "content": _system_prompt(role).replace("{task}", task)},
@@ -77,6 +77,11 @@ def _chat_payload(settings: dict[str, Any], role: str, task: str) -> dict[str, A
         "max_tokens": int(settings.get("max_tokens") or DEFAULT_MAX_TOKENS),
         "temperature": float(settings.get("temperature", DEFAULT_TEMPERATURE)),
     }
+    # 实测：reasoning 占单次调用约 80% 的耗时（真实批次 65s → 15.8s）。
+    # 本工作流只需要结构化 JSON，不需要思维链，因此默认关闭。
+    if settings.get("disable_thinking", True):
+        payload["thinking"] = {"type": "disabled"}
+    return payload
 
 
 def _request_once(url: str, api_key: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:

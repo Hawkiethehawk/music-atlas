@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-11（执行提速约 80%：关闭思维链与受限研究预算，维护标签 patch-20260911-193500）
+
+- 生产模型切到 `deepseek-v4.1-flash`（同一 sshzyu 端点，密钥改用与模型无关的 `MUSIC_ATLAS_API_KEY`）；`tests/test_openai_compat_executor.py` 不再硬编码模型名与密钥变量名，换模型不需要改测试。
+- **速度优化（实测 4-6 分钟 → 70-90 秒）**：
+  - `runtime.openai_compat.disable_thinking`（默认 `true`）：实测真实批次单次调用从 **65.1s**（reasoning 14973 tokens）降到 **15.8s**（reasoning 0），输出仍是合法 JSON。这是本次提速的主要来源。
+  - 研究预算收紧：`max_research_rounds` = 2（第 2 轮只补缺失类型）、`max_candidates` = 60、`recommendation_parallelism` = 8；候选池下限（20 首）与推荐数量（10 首）契约不变。
+  - 并行度限制从「只接受 3 或 4」放宽到 1–8（`web/server.js`、`web_workflow.py`、`workflow.py`、`agent_runner.py` 四处），并把研究预算从项目配置透传到工作流。
+- **关闭思维链后的输出容错**：新增 `contracts.canonical_style_ref()` 修复模型笔误（`style.pop_punk`、`style/ pop_punk`、大小写差异），在批次校验入口 `validate_research_result` 递归应用所有字段，`musician_analyzer` 复用同一实现。笔误不再让整批研究失败，真正的未知风格仍被拒绝。
+- prompt 强化：`candidate_recall.md` 明确探索候选必须与本次歌单有可辨识差异（不同子流派/年代/语种），否则会被程序重判为风格邻近、不计入探索配额。
+- 文档：README 新增「运行耗时」章节与分阶段实测；`web/README.md` 配置表补充 `disable_thinking` / `max_research_rounds` / `max_candidates`。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：287 项通过（新增 8 项 style_ref 规范化与 2 项 thinking 测试）。
+- `npm --prefix web test`：8 项通过；`node --check web/server.js`、`python -m compileall -q .`：通过。
+- **真实全流程计时**（真实网易云歌单 1925 首、档位 30、`deepseek-v4.1-flash`）：
+  - 首轮命中：读取 6.2s + 分析 19s + 推荐 42s + 导出 2s = **70.8s**；候选 29 个、推荐 10 首（探索 1 / 关系 3 / 同艺人 3 / 风格 3）、证据 23 条，面板发布 3 个兴趣组。
+  - 需要补缺时：**89.0s**（第 2 轮只补缺失类型）。
+  - 对照：同一链路关闭思维链前为 4–6 分钟。
+- 未做：可信在线事实核验适配器（`evidence_audit` 仍为 `not_available`）。
+
 ## 2026-09-11（移除发送途径、网页档位限位与候选容错，维护标签 patch-20260911-191520）
 
 - **移除全部消息发送途径**：删除 `channel_delivery.py`（OpenClaw CLI / Pi wechatbot over SSH / 本地包装器）、`channels.py`（微信/飞书/Telegram 渲染适配器）、`visualization_interface.py`（微信图文卡片）与 `tests/test_channel_delivery.py`；`workflow.py` 删除 `send-weixin` / `send-weixin-pi` / `send-weixin-pi-agent` 三个子命令及相关参数；`agent_runner.py` 去掉渠道参数与图片产物。流程只在网页端展示结果。

@@ -500,7 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analysis-command", default=None)
     parser.add_argument("--recommendation-command", default=None)
     parser.add_argument("--analysis-parallelism", type=int, default=5)
-    parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4)
+    parser.add_argument("--recommendation-parallelism", type=int, choices=tuple(range(1, 9)), default=4)
     parser.add_argument("--analysis-batch-size", type=int, default=None)
     parser.add_argument("--analysis-context-budget", type=int, default=None)
     parser.add_argument("--analysis-timeout", type=int, default=600)

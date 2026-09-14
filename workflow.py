@@ -885,8 +885,8 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；timeout 为研究总预算")
     agent_parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
     agent_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
-    agent_parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
-                              help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
+    agent_parser.add_argument("--recommendation-parallelism", type=int, choices=tuple(range(1, 9)), default=4,
+                              help="Step 3 同时执行的候选研究任务数，默认 4；允许 1 到 8")
     agent_parser.set_defaults(func=command_agent)
 
     skill_parser = subparsers.add_parser("skill", help="Step 3: 执行通用 Recommendation Skill 并校验结果")
@@ -904,8 +904,8 @@ def build_parser() -> argparse.ArgumentParser:
     skill_parser.add_argument("--max-research-rounds", type=int, default=2, help="含首轮，最多 3 轮；timeout 为研究总预算")
     skill_parser.add_argument("--candidate-target", type=int, default=None, help="目标候选数，默认使用策略最小值")
     skill_parser.add_argument("--max-candidates", type=int, default=80, help="本次候选数上限，最大 200")
-    skill_parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
-                              help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
+    skill_parser.add_argument("--recommendation-parallelism", type=int, choices=tuple(range(1, 9)), default=4,
+                              help="Step 3 同时执行的候选研究任务数，默认 4；允许 1 到 8")
     skill_parser.set_defaults(func=command_skill)
 
     run_parser = subparsers.add_parser("run", help="快照 + 分析 Skill 研究 + 程序聚合 + 推荐上下文准备；未配置 Skill 时停在研究准备")
@@ -917,8 +917,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--as-of-date", default=None, help="评分基准 YYYY-MM-DD；默认快照的 UTC 日期")
     run_parser.add_argument("--prompt-dir", default=None, help="可编辑提示词插槽目录")
     run_parser.add_argument("--context-budget", type=int, default=None, help="Agent 提示词字符预算")
-    run_parser.add_argument("--recommendation-parallelism", type=int, choices=(3, 4), default=4,
-                            help="Step 3 同时执行的候选研究任务数，默认 4；允许 3 或 4")
+    run_parser.add_argument("--recommendation-parallelism", type=int, choices=tuple(range(1, 9)), default=4,
+                            help="Step 3 同时执行的候选研究任务数，默认 4；允许 1 到 8")
     _add_style_options(run_parser)
     _add_analysis_options(run_parser)
     run_parser.set_defaults(func=command_run)

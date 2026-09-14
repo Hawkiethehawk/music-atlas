@@ -13,10 +13,11 @@
     "codex_reasoning_effort": "low",
     "openai_compat": {
       "base_url": "https://sshzyu.com/v1",
-      "model": "glm-5.3-flash",
-      "api_key_env": "ZH_GLM_API_KEY",
+      "model": "deepseek-v4.1-flash",
+      "api_key_env": "MUSIC_ATLAS_API_KEY",
       "timeout_seconds": 1800,
-      "max_tokens": 60000
+      "max_tokens": 60000,
+      "disable_thinking": true
     }
   },
   "executors": {
@@ -25,11 +26,19 @@
   },
   "workflow": {
     "analysis_parallelism": 5,
-    "recommendation_parallelism": 4,
+    "recommendation_parallelism": 8,
     "analysis_timeout_seconds": 7200,
     "recommendation_timeout_seconds": 3600,
-    "track_limit_options": [30, 100, 200, 500, 1000],
+    "track_limit_options": [
+      30,
+      100,
+      200,
+      500,
+      1000
+    ],
     "track_limit_default": 30,
-    "await_limit_timeout_seconds": 1800
+    "await_limit_timeout_seconds": 1800,
+    "max_research_rounds": 2,
+    "max_candidates": 60
   }
 }

@@ -102,8 +102,8 @@ if (!Number.isInteger(ANALYSIS_PARALLELISM) || ANALYSIS_PARALLELISM < 1 || ANALY
   throw new Error("workflow.analysis_parallelism 必须是 1 到 16 的整数");
 }
 const RECOMMENDATION_PARALLELISM = Number(WORKFLOW_CONFIG.recommendation_parallelism ?? 4);
-if (![3, 4].includes(RECOMMENDATION_PARALLELISM)) {
-  throw new Error("workflow.recommendation_parallelism 只接受 3 或 4");
+if (!Number.isInteger(RECOMMENDATION_PARALLELISM) || RECOMMENDATION_PARALLELISM < 1 || RECOMMENDATION_PARALLELISM > 8) {
+  throw new Error("workflow.recommendation_parallelism 必须是 1 到 8 的整数");
 }
 const ANALYSIS_TIMEOUT_SECONDS = Number(WORKFLOW_CONFIG.analysis_timeout_seconds ?? 600);
 if (!Number.isInteger(ANALYSIS_TIMEOUT_SECONDS) || ANALYSIS_TIMEOUT_SECONDS < 1 || ANALYSIS_TIMEOUT_SECONDS > 86400) {
@@ -131,6 +131,15 @@ if (!Number.isInteger(TRACK_LIMIT_DEFAULT) || TRACK_LIMIT_DEFAULT < 1) {
 const AWAIT_LIMIT_TIMEOUT_SECONDS = Number(WORKFLOW_CONFIG.await_limit_timeout_seconds ?? 1800);
 if (!Number.isInteger(AWAIT_LIMIT_TIMEOUT_SECONDS) || AWAIT_LIMIT_TIMEOUT_SECONDS < 1 || AWAIT_LIMIT_TIMEOUT_SECONDS > 86400) {
   throw new Error("workflow.await_limit_timeout_seconds 必须是 1 到 86400 的整数");
+}
+// 速度优先的研究预算：轮数与候选上限越小，Step 3 越快（策略最小值仍由分析包强制）。
+const MAX_RESEARCH_ROUNDS = Number(WORKFLOW_CONFIG.max_research_rounds ?? 2);
+if (!Number.isInteger(MAX_RESEARCH_ROUNDS) || MAX_RESEARCH_ROUNDS < 1 || MAX_RESEARCH_ROUNDS > 3) {
+  throw new Error("workflow.max_research_rounds 必须是 1 到 3 的整数");
+}
+const MAX_CANDIDATES = Number(WORKFLOW_CONFIG.max_candidates ?? 80);
+if (!Number.isInteger(MAX_CANDIDATES) || MAX_CANDIDATES < 1 || MAX_CANDIDATES > 200) {
+  throw new Error("workflow.max_candidates 必须是 1 到 200 的整数");
 }
 // 与 web_workflow.py 的 LIMIT_REQUEST_FILENAME 保持一致：网页写请求，工作流读请求。
 const LIMIT_REQUEST_FILENAME = "requested_track_limit.json";
@@ -320,6 +329,8 @@ async function startWorkflowJob(config) {
     "--recommendation-parallelism", String(RECOMMENDATION_PARALLELISM),
     "--analysis-timeout", String(ANALYSIS_TIMEOUT_SECONDS),
     "--recommendation-timeout", String(RECOMMENDATION_TIMEOUT_SECONDS),
+    "--max-research-rounds", String(MAX_RESEARCH_ROUNDS),
+    "--max-candidates", String(MAX_CANDIDATES),
   ];
   args.push("--analysis-command", ANALYSIS_COMMAND, "--recommendation-command", RECOMMENDATION_COMMAND);
   // 歌单先读完再选数量：工作流在 snapshot 阶段后暂停，等网页写回处理数量。
@@ -485,7 +496,9 @@ const server = http.createServer(async (req, res) => {
         recommendation_executor_error: RECOMMENDATION_EXECUTOR.error,
         analysis_parallelism: ANALYSIS_PARALLELISM,
         recommendation_parallelism: RECOMMENDATION_PARALLELISM,
-        recommendation_parallelism_options: [3, 4],
+        max_research_rounds: MAX_RESEARCH_ROUNDS,
+        max_candidates: MAX_CANDIDATES,
+        recommendation_parallelism_options: [1, 2, 3, 4, 5, 6, 7, 8],
         track_limit_options: TRACK_LIMIT_OPTIONS,
         track_limit_default: TRACK_LIMIT_DEFAULT,
         await_limit_timeout_seconds: AWAIT_LIMIT_TIMEOUT_SECONDS,

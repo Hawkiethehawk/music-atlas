@@ -228,6 +228,29 @@ def _require_score(value: Any, label: str) -> float:
     return score
 
 
+_STYLE_REF_TYPO = re.compile(r"^style\s*[.:/／]\s*", re.IGNORECASE)
+
+
+def canonical_style_ref(value: Any, known_style_refs: set[str]) -> str:
+    """把模型常见的 ``style_ref`` 笔误规范化（点号/斜杠/空格/大小写）。
+
+    关闭 reasoning 后模型偶发把 ``style:pop_punk`` 写成 ``style.pop_punk``；
+    这类写法不代表风格本身无效，先规范再校验，避免整批研究因笔误失败。
+    """
+
+    text = normalized_text(value)
+    if not text or text in known_style_refs:
+        return text
+    candidate = _STYLE_REF_TYPO.sub("style:", text).replace(" ", "")
+    if candidate in known_style_refs:
+        return candidate
+    folded = candidate.casefold()
+    for known in known_style_refs:
+        if known.casefold() == folded:
+            return known
+    return text
+
+
 def _validate_style_mix(value: Any, label: str, known_style_refs: set[str]) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ContractError(f"{label} 必须是数组")
@@ -235,7 +258,8 @@ def _validate_style_mix(value: Any, label: str, known_style_refs: set[str]) -> l
     result: list[dict[str, Any]] = []
     for index, item in enumerate(value):
         entry = _require_dict(item, f"{label}[{index}]")
-        style_ref = _require_text(entry.get("style_ref"), f"{label}[{index}].style_ref")
+        style_ref = canonical_style_ref(entry.get("style_ref"), known_style_refs)
+        _require_text(style_ref, f"{label}[{index}].style_ref")
         if style_ref not in known_style_refs:
             raise ContractError(f"{label}[{index}] 包含未知风格引用：{style_ref}")
         role = _require_text(entry.get("role"), f"{label}[{index}].role")

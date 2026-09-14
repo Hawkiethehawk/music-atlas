@@ -16,6 +16,7 @@ from preference_model import MODEL_CONFIG, build_interest_profiles
 from analysis_contracts import validate_research_bundle
 
 from contracts import (
+    canonical_style_ref,
     ContractError,
     SCHEMA_VERSION,
     STYLE_AXIS_IDS,
@@ -225,6 +226,10 @@ def _normalize_style_axes(value: Any, label: str) -> dict[str, float]:
     return axes
 
 
+# 与契约层共用同一套笔误规范化，避免两份实现漂移。
+_canonical_style_ref = canonical_style_ref
+
+
 def _normalize_style_mix(
     value: Any,
     label: str,
@@ -237,7 +242,7 @@ def _normalize_style_mix(
     for index, raw_item in enumerate(value):
         if not isinstance(raw_item, dict):
             raise ContractError(f"{label}[{index}] 必须是对象")
-        style_ref = normalized_text(raw_item.get("style_ref"))
+        style_ref = _canonical_style_ref(raw_item.get("style_ref"), known_style_refs)
         if style_ref not in known_style_refs:
             raise ContractError(f"{label}[{index}] 包含未知风格引用：{style_ref}")
         role = normalized_text(raw_item.get("role"))
