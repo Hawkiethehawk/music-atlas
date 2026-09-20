@@ -513,11 +513,10 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
  let ATLAS=null;
  let ATLAS_GROUP_INDEX=0;
  let TASTE=null;
- const statusText=s=>({complete:"已完成",completed:"已完成",confirmed:"已确认",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"研究草稿",pending:"待处理",pending_verification:"待独立核验",completed_with_gaps:"已完成（有资料缺口）",accepted:"已通过",rejected:"未通过",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知",insufficient_evidence:"证据不足",offline:"本地核验",analysis:"程序分析",recommendation:"推荐生成",research:"公开资料研究",lastfm:"音乐资料",lastfm_agent:"公开资料",public_facts_only:"公开资料",csv:"歌单文件",netease_public:"网易云公开歌单",qq_public:"QQ 音乐公开歌单",apple_music:"Apple Music 歌单",PlaylistSnapshot:"歌单快照",ready_for_export:"已准备发布"}[String(s||"").toLowerCase()]||s||"未知");
+ const statusText=s=>({complete:"已完成",completed:"已完成",confirmed:"已确认",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"",pending:"待处理",pending_verification:"待独立核验",completed_with_gaps:"已完成（有资料缺口）",accepted:"已通过",rejected:"未通过",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知",insufficient_evidence:"证据不足",offline:"本地核验",analysis:"程序分析",recommendation:"推荐生成",research:"公开资料研究",lastfm:"音乐资料",lastfm_agent:"公开资料",public_facts_only:"公开资料",csv:"歌单文件",netease_public:"网易云公开歌单",qq_public:"QQ 音乐公开歌单",apple_music:"Apple Music 歌单",PlaylistSnapshot:"歌单快照",ready_for_export:"已准备发布"}[String(s||"").toLowerCase()]||s||"未知");
  function statusBanner(){
-  if(!ATLAS||!ATLAS.status)return"";
+  if(!ATLAS||!ATLAS.status||guestMode())return"";
   const s=ATLAS.status;const notes=[];
-  if(s.publication==="draft")notes.push("研究草稿");
   if(s.review==="completed_with_gaps")notes.push("复核已完成，部分资料缺口留空");
   if(s.review==="rejected")notes.push("复核未通过");
   if(s.evidence_audit==="pending_verification")notes.push("公开事实待独立核验");
@@ -558,9 +557,10 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
  function applyAtlasPayload(payload){
   payload=publicAtlasCopy(payload);const previousSnapshot=ATLAS?.source?.snapshotId;const nextSnapshot=payload?.source?.snapshotId;
   ATLAS=payload;if(previousSnapshot!==nextSnapshot)ATLAS_GROUP_INDEX=0;
-  ISSUE=payload.issue||{};AXES=payload.axes||AXES;INTERESTS=payload.interests?.length?payload.interests:(payload.sourceTags?.length?sourceInterestIslands(payload.sourceTags):[]);TASTE=payload.taste_review||null;
+  ISSUE={...(payload.issue||{})};if(/^本期\s*Atlas$/i.test(String(ISSUE.title||"")))ISSUE.title="";
+  AXES=payload.axes||AXES;INTERESTS=payload.interests?.length?payload.interests:(payload.sourceTags?.length?sourceInterestIslands(payload.sourceTags):[]);TASTE=payload.taste_review||null;
   applyAtlasGroup(ATLAS_GROUP_INDEX);
-  if(ISSUE.title)document.title="Music Atlas · "+ISSUE.title;
+  document.title=ISSUE.title?"Music Atlas · "+ISSUE.title:"Music Atlas";
  }
  function applyWorkflowConfig(payload){const incoming=payload&&payload.workflow?payload.workflow:null;if(incoming)WORKFLOW=Object.assign({},WORKFLOW,incoming);if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;if(!LATEST_JOB_ID)LATEST_JOB_ID=payload&&payload.latest_job_id||storedWorkflowJobId();}
  function authHeader(){return CURRENT_USER?`<span class="auth-user"><span>${esc(CURRENT_USER.username)}</span><button type="button" data-auth-logout>退出</button></span>`:`<button type="button" class="auth-link" data-auth-open>登录</button>`;}
@@ -568,7 +568,7 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
  function closeAuth(){const root=document.getElementById("auth-root");if(root)root.innerHTML="";}
  async function loadAuth(){try{const response=await fetch("/api/auth/me",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){CURRENT_USER=payload.user||null;AUTH_REQUIRED=Boolean(payload.auth_required);}}catch{}refreshAuthChrome();}
  function refreshAuthChrome(){const node=document.querySelector("[data-auth-slot]");if(node)node.innerHTML=authHeader();}
- async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();refreshAuthChrome();renderPlaylistHistory();toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
+ async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();render();renderPlaylistHistory();toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
  async function bootAtlas(){
   const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
   const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
@@ -583,11 +583,19 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
 
 /* ================= HEADER / FOOTER ================= */
 const NAV=[["#/discover","发现"],["#/atlas","Atlas"],["#/taste","音乐版图"],["#/sources","推荐源"]];
-const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav><span data-auth-slot>${authHeader()}</span></div></div></header>${statusBanner()}`;
-const footer=()=>`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span><span>${ATLAS?statusText(ATLAS.status.run||ATLAS.status.publication):"数据加载中"}</span></div></footer>`;
+const header=()=>{const nav=guestMode()?[NAV[0]]:NAV;return`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${nav.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav><span data-auth-slot>${authHeader()}</span></div></div></header>${statusBanner()}`;};
+const footer=()=>guestMode()?`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>登录后开始构建你的音乐版图</span></div></footer>`:`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span></div></footer>`;
 
 /* ================= VIEWS ================= */
+const guestMode=()=>AUTH_REQUIRED&&!CURRENT_USER;
+function vGuest(){return`<section class="hero"><div class="wrap" style="position:relative;min-height:62vh;display:flex;flex-direction:column;justify-content:center">
+ <div class="proto-note">音乐版图</div>
+ <h1>把你的歌单，<br><em>变成一张音乐版图。</em></h1>
+ <p class="lede">登录或注册后，保存你的歌单配置，生成专属的兴趣岛、音乐人路径与推荐。</p>
+ <div class="btnrow" style="margin-top:28px"><button type="button" class="btn primary" data-auth-open>登录</button><button type="button" class="btn" data-auth-open data-auth-open-mode="register">创建账号</button></div>
+ </div></section>`;}
 function vDiscover(){
+ if(guestMode())return vGuest();
  const n=RECS.length;
  const collageSpec=[
   "left:0;top:30px;width:220px;height:220px;transform:rotate(-4deg);z-index:3;",
@@ -604,7 +612,7 @@ function vDiscover(){
  return`
 <section class="hero"><div class="wrap" style="position:relative">
  <h1>十张唱片，<br><em>轨道之外。</em></h1>
- <p class="lede">${esc(ISSUE.lede||"本期 Atlas 数据尚未提供编辑摘要。")}</p>
+ <p class="lede">${esc(ISSUE.lede||"当前 Atlas 数据尚未提供编辑摘要。")}</p>
  <div class="collage">${collage}</div>
 </div></section>
 ${TASTE?`<div class="wrap"><section class="sec" id="taste-review">
@@ -615,7 +623,7 @@ ${TASTE?`<div class="wrap"><section class="sec" id="taste-review">
    <p class="kicker" style="margin:18px 0 8px">内心世界</p>
    <p class="lede" style="font-size:16px">${esc(TASTE.inner_world)}</p>
    ${(TASTE.humor_notes||[]).map(note=>`<p class="lede" style="font-size:15px;color:var(--dim);margin-top:10px">◈ ${esc(note.note)} <span style="font-size:12px">（幽默化推演，非心理学判断）</span></p>`).join("")}
-   <p style="margin-top:14px;font-size:12px;color:var(--dim)">以上为基于清单整体推断的描述性锐评，不代表事实核验结果；研究草稿边界不变。</p>
+   <p style="margin-top:14px;font-size:12px;color:var(--dim)">以上为基于清单整体推断的描述性锐评，不代表事实核验结果。</p>
   </div>
  </section></div>`:""}
 <div class="wrap">
@@ -1313,11 +1321,11 @@ async function resetSettings(){
 }
 
 /* ================= ROUTER ================= */
-function render(){const h=location.hash.replace(/^#/,"")||"/discover";let html=header();
+function render(){const guest=guestMode(),h=guest?"/discover":(location.hash.replace(/^#/,"")||"/discover");let html=header();
  const m=h.split("/").filter(Boolean);
  const map={"/discover":vDiscover,"/atlas":()=>vAtlas(m[1]),"/taste":vTaste,"/sources":vSources,
   "/why":()=>vWhy(m[1]),"/track":()=>vTrack(m[1]),"/album":()=>vAlbum(m[1]),"/artist":()=>vArtist(m[1]),"/interest":()=>vInterest(m[1])};
- html+=(map["/"+(m[0]||"discover")]||(()=>v404()))()+footer();
+ html+=(guest?vGuest():(map["/"+(m[0]||"discover")]||(()=>v404()))())+footer();
  document.body.classList.remove("covers-ready");
  document.getElementById("app").innerHTML=html;window.scrollTo(0,0);
   hydrate(document.getElementById("app"));
@@ -1325,13 +1333,13 @@ function render(){const h=location.hash.replace(/^#/,"")||"/discover";let html=h
 /* global click delegation */
 document.addEventListener("click",async e=>{
  const authOpen=e.target.closest("[data-auth-open]");
- if(authOpen){e.preventDefault();authModal("login");return;}
+ if(authOpen){e.preventDefault();authModal(authOpen.dataset.authOpenMode||"login");return;}
  const authClose=e.target.closest("[data-auth-close]");
  if(authClose&&(authClose===e.target||authClose.classList.contains("auth-close"))){e.preventDefault();closeAuth();return;}
  const authMode=e.target.closest("[data-auth-mode]");
  if(authMode){e.preventDefault();authModal(authMode.dataset.authMode||"login");return;}
  const authLogout=e.target.closest("[data-auth-logout]");
- if(authLogout){e.preventDefault();try{await fetch("/api/auth/logout",{method:"POST"});}catch{}CURRENT_USER=null;refreshAuthChrome();toast("已退出登录");return;}
+ if(authLogout){e.preventDefault();try{await fetch("/api/auth/logout",{method:"POST"});}catch{}CURRENT_USER=null;render();toast("已退出登录");return;}
  const open=e.target.closest("[data-settings-open]");
  if(open){e.preventDefault();openSettings();return;}
  const close=e.target.closest("[data-settings-close]");

@@ -708,7 +708,7 @@ def build_web_payload(
     reader = {key: value for key, value in reader.items() if value}
     lede = custom_lede or (
         f"基于 {source_count} 首完整歌单快照，沿着风格、听感、关系与探索路径，"
-        f"整理 {len(recommendations)} 个本期 Atlas 方向。"
+        f"整理 {len(recommendations)} 个推荐方向。"
     )
     snapshot_status = _text(raw_reader.get("completeness_status"), _text(snapshot.get("reader_status"), "unknown"))
     payload = {
@@ -721,7 +721,7 @@ def build_web_payload(
         "axes": [] if analysis.get("selection_mode") == "lastfm_constraints_v1" else [[code, label] for code, label, _key in WEB_AXES],
         "sourceTags": analysis.get("source_tags", {}).get("records", []),
         "issue": {
-            "title": _text(editorial.get("title"), "本期 Atlas"),
+            "title": _text(editorial.get("title"), ""),
             "lede": lede,
         },
         "status": {

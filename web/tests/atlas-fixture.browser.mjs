@@ -111,7 +111,8 @@ test("Atlas 页面渲染真实夹具产物，控制台无错误", async () => {
     assert.equal(await page.locator("[data-atlas-swap]").count(), 0, "最后一批不再显示换一批");
     assert.equal(await page.locator("[data-atlas-prev]").isDisabled(), false, "最后一批应可返回上一批");
     assert.equal(await page.locator("[data-atlas-new]").count(), 1, "最后一批应显示新 Atlas");
-    assert.match(bodyText, /研究草稿/, "保留研究草稿边界提示");
+    assert.doesNotMatch(bodyText, /研究草稿/, "页面不再显示研究草稿状态");
+    assert.doesNotMatch(await page.title(), /本期\s*Atlas/i, "标题页不应显示本期 Atlas");
     assert.deepEqual(consoleErrors, [], "控制台不应有错误");
 
     // 四个主页面均可访问。

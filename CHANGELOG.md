@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-20（未登录默认入口与页面状态清理，维护标签 patch-20260920-105921）
+
+- 生产环境未登录时显示独立默认入口页，隐藏上一份 Atlas 内容；登录或注册后恢复完整导航与个人工作流。
+- 页面移除“研究草稿”状态展示，标题页不再显示“本期 Atlas”；新生成数据也不再使用该默认标题。
+- 新增未登录默认页、状态清理和标题清理的浏览器验收。
+
+实际验证：
+
+- \`npm --prefix web test\`：15 项通过。
+- \`npm --prefix web run test:browser\`：22 项通过。
+- \`python -m unittest discover -s tests -p "test_*.py"\`：386 项通过。
+- \`python -m compileall -q web_view_model.py\`、\`git diff --check\`：通过。
+
 ## 2026-09-20（云端密钥状态与后台中文界面，维护标签 patch-20260920-103844）
 
 - 云端没有桌面系统密钥库时，管理员后台改为显示环境变量回退状态，不再因 `keyring` 不可用而整页读取失败。
