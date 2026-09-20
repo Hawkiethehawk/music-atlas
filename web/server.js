@@ -367,11 +367,29 @@ function resolveProjectPath(value, fieldName) {
 }
 
 function resolveConfiguredExecutable(value) {
-  const executable = typeof value === "string" && value.trim() ? value.trim() : "python";
+  const configured = typeof value === "string" && value.trim() ? value.trim() : "";
+  const executable = configured || (process.platform === "win32" ? "python" : "python3");
   if (path.isAbsolute(executable) || executable.includes("/") || executable.includes("\\")) {
     return resolveProjectPath(executable, "runtime.python");
   }
+  // Ubuntu 发行版通常只提供 python3；保留配置中的 python 兼容旧配置，
+  // 但在 PATH 中没有 python 时自动切换，避免 systemd 下密钥库和工作流启动失败。
+  if (process.platform !== "win32" && executable === "python" && !commandAvailable("python") && commandAvailable("python3")) {
+    return "python3";
+  }
   return executable;
+}
+
+function commandAvailable(command) {
+  const pathValue = String(process.env.PATH || "");
+  return pathValue.split(path.delimiter).some((directory) => {
+    if (!directory) return false;
+    try {
+      return fs.statSync(path.join(directory, command)).isFile();
+    } catch {
+      return false;
+    }
+  });
 }
 
 function quoteCommandPath(value) {

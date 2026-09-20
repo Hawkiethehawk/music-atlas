@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-20（云端 Python 运行时兼容，维护标签 patch-20260920-103439）
+
+- 当 Linux 环境只有 `python3` 时，保留旧的 `runtime.python: python` 配置并自动回退到 `python3`，修复云端管理员密钥状态和工作流启动时报 `spawn python ENOENT` 的问题。
+
+实际验证：
+
+- `npm --prefix web test`：15 项通过。
+- `npm --prefix web run test:browser`：21 项通过。
+- `node --check web/server.js`：通过。
+
 ## 2026-09-20（用户账号与管理员后台，维护标签 patch-20260920-102531）
 
 - 新增普通用户注册、登录、退出和会话管理；生产环境要求登录后提交工作流，匿名访问仍可浏览公开 Atlas。
