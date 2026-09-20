@@ -574,10 +574,23 @@ function runSecretStore(args, { input } = {}) {
 }
 
 async function secretStatus() {
-  const result = await runSecretStore(["status"]);
-  const value = JSON.parse(result.stdout);
-  if (!value || typeof value !== "object") throw new Error("密钥库状态解析失败");
-  return value;
+  try {
+    const result = await runSecretStore(["status"]);
+    const value = JSON.parse(result.stdout);
+    if (!value || typeof value !== "object") throw new Error("密钥库状态解析失败");
+    return { ...value, writable: true };
+  } catch (error) {
+    // 云服务器可能没有桌面密钥库；环境变量仍是受 systemd 保护的只读回退来源。
+    const configured = Boolean(String(process.env.MUSIC_ATLAS_API_KEY || "").trim());
+    return {
+      configured,
+      backend: configured ? "environment" : "unavailable",
+      writable: false,
+      warning: configured
+        ? "系统密钥库不可用，当前使用服务器环境变量；保存或清除需要先配置安全密钥库"
+        : (error?.message || "系统密钥库不可用"),
+    };
+  }
 }
 
 /* API Key 来源：系统密钥库优先（网页保存，改动立即生效），其次固定环境变量。 */

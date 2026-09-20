@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-20（云端密钥状态与后台中文界面，维护标签 patch-20260920-103844）
+
+- 云端没有桌面系统密钥库时，管理员后台改为显示环境变量回退状态，不再因 `keyring` 不可用而整页读取失败。
+- 后台可见标题与操作文案统一为中文，并修正用户角色切换请求体。
+
+实际验证：
+
+- `npm --prefix web test`：15 项通过。
+- `npm --prefix web run test:browser`：21 项通过。
+- `node --check web/server.js`、`git diff --check`：通过。
+
 ## 2026-09-20（云端 Python 运行时兼容，维护标签 patch-20260920-103439）
 
 - 当 Linux 环境只有 `python3` 时，保留旧的 `runtime.python: python` 配置并自动回退到 `python3`，修复云端管理员密钥状态和工作流启动时报 `spawn python ENOENT` 的问题。
