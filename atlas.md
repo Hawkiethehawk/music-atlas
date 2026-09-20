@@ -4,7 +4,7 @@
 
 ## 一、项目是什么
 
-Music Atlas 是一个**按需触发、不绑定时间**的歌单推荐工作流：对本次输入的**整个歌单做全量解析**，推荐数量固定为 **10 首**，与歌单规模无关。当前结果仅为带公开证据引用的**研究草稿**，不代表事实已核验或正式推荐。
+Music Atlas 是一个**按需触发、不绑定时间**的歌单推荐工作流：对本次输入的**整个歌单做全量解析**，默认推荐目标为 **10 首**，候选不足时按实际可用数量输出 1–10 首。当前结果仅为带公开证据引用的**研究草稿**，不代表事实已核验或正式推荐。
 
 ```
 Step 1 歌单快照 ──▶ Step 2 分析 Skill 研究 + 程序聚合 ──▶ Step 3 候选 Skill + 程序选曲 ──▶ 网页视图
@@ -26,7 +26,7 @@ PlaylistSnapshot      MusicianResearchBundle / MusicianAnalysisPacket       Reco
 - 研究请求默认每批 20 首、每批 100000 字符，所有批次共享 600 秒执行预算。全曲目、全批次校验后才编译分析包；完整快照/词表/提示词摘要绑定，已完成批次可复用，失败留诊断，续跑用 analyze 而不是重新 run。
 - 缺失画像使用 null，研究完成后分类覆盖不到 50% 时保留分析和补全清单，但阻止推荐 Skill 准备和排序。字段来源、置信度与作用范围可审阅；Skill 关系为 researched，全部公开事实继续待独立核验。
 - 最多 3 个确定性兴趣组，保留代表收藏并降低同一艺人批量曲目的影响。候选匹配最近兴趣组，不只依赖总平均；目录端点匹配防止无关候选靠引用获得关系加分。
-- 默认至多 2 轮候选研究，可设 1 至 3 轮及候选/时间/字符预算，缺额按本次约束补充。只对入选的 10 首生成说明，研究报告记录轮次、字符量、耗时和结果摘要；失败不输出不完整推荐。
+- 默认至多 2 轮候选研究，可设 1 至 3 轮及候选/时间/字符预算，缺额按本次约束补充。只对入选的最多 10 首生成说明；候选池最低门槛为 1，不再因缺少召回类型而强制补齐，研究报告记录轮次、字符量、耗时和结果摘要；失败不输出无法通过契约的推荐。
 - prepare-benchmark/benchmark 支持人工试听对照，未知标签不作拒绝，缺标签不下优劣结论，评分不当喜欢概率，反馈仍不自动进入排序。功能已用夹具验收，真实喜欢率与成本收益尚未测得。
 
 ## 三、歌单来源（Step 1 能力矩阵）
@@ -34,28 +34,28 @@ PlaylistSnapshot      MusicianResearchBundle / MusicianAnalysisPacket       Reco
 | 来源 | Reader | 登录要求 | 状态 |
 |------|--------|---------|------|
 | 本地导出 JSON | `local_json` / `apple_music_json` / `netease_json` | 无 | ✅ |
-| 本地 CSV | `csv` | 无 | ✅（已适配 TuneMyMusic 表头归一化） |
+| 本地 CSV | `csv` | 无 | ✅（兼容标准导出表头） |
 | 网易云公开歌单 | `netease_public` | 完全匿名 | ✅ 真实链路验证（热歌榜 200 首） |
 | QQ 音乐公开歌单 | `qq_public` | 完全匿名 | ✅ 真实链路验证（`hasmore` 分页、`mid` 稳定 ID） |
-| Apple Music 个人歌单 | TuneMyMusic 中转 → `csv` | **免登录** | ✅ 全自动导出 + 115 首真实验证 |
+| Apple Music 公开歌单 | Apple 官方网页服务 → `csv` | **免登录** | ✅ 官方分页直读 + 123 首真实验证 |
 | Spotify | — | 需 Premium（2025 政策硬绑定） | ⏸️ 调研归档 |
-| Apple Music 直连 | MusicKit | 需 Developer Program（$99/年） | ⏸️ 调研归档 |
+| Apple Music 开发者 API | MusicKit / Apple Music API | 需开发者令牌 | ⏸️ 非当前路径 |
 
 ### Apple Music 导出链路
 
 ```
 workflow.py export-apple-playlist --url <分享链接> --expected-count <独立确认的歌曲数>
     └─▶ tools/export_apple_playlist.mjs（Playwright 无头）
-        TuneMyMusic URL 加载 → Export to file → CSV → 暂存 → 编码/CSV/数量校验 → 替换目标文件
+        Apple 官方嵌入页 → 官方 API 分页 → CSV → 暂存 → 编码/字段/数量校验 → 替换目标文件
     └─▶ input/apple_favorite_songs.csv
 然后：workflow.py snapshot --reader csv ...
 ```
 
-- 全程无需 TuneMyMusic 注册/登录，也不需要 Apple ID 授权——公开分享链接即可
-- 已知限制：直接抓取 Apple 网页只能拿到约 40 首预渲染曲目（SPA 懒加载），因此必须经 TuneMyMusic 解析；TuneMyMusic 页面改版时脚本会显式报错而非产出坏数据
+- 全程不需要 Apple ID 登录；只读取公开分享歌单，不保存网页临时访问令牌
+- 不解析 Apple HTML 中的预渲染列表；以官方嵌入播放器发出的分页 JSON 为事实来源，分页或字段异常时显式失败
 - 依赖：Node.js、Playwright 与 `csv-parse`，在 `tools/` 下执行 `npm ci` 和 `npx playwright install chromium --only-shell`；主工作流不依赖 Node.js。
-- 未提供独立数量时明确标记 `completeness_status: "unconfirmed"`；失败保留原 CSV，支持带 BOM、转义引号和跨行字段的标准 CSV。
-- 上表平台能力的历史验证与本次工作流重构分开记录。2026-09-06 用户提供的 Apple Music 歌单已在本次对话前段导出为 115 首，页面总数与 CSV 数量一致，115 个非空且唯一的 Apple ID。此次重构只复用已保存快照，没有再次联网导出；Chromium 回归只覆盖本地下载辅助函数，不是线上页面全量兼容性验收。
+- 官方分页完整结束时标记 `completeness_status: "confirmed"`；如提供独立数量则额外核对。失败保留原 CSV，输出支持 BOM、转义引号和跨行字段。
+- 2026-09-18 使用用户当前公开分享链接完成线上验收：Apple 官方接口返回两页共 123 首，歌单名为 `Favorite Songs`，全部曲目经字段校验后写入 CSV；该结果只证明本次链接与当前官方页面可达。
 
 ## 四、代码结构
 

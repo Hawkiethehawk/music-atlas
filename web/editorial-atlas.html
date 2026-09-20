@@ -232,13 +232,10 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .wf-actions .btn.hidden{display:none}
 .wf-actions .btn:disabled{opacity:.45;cursor:not-allowed}
 .wf-meta{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;margin-top:14px;line-height:1.8}
-.wf-events{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
-.wf-event{display:flex;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--dim)}
-.wf-event .stamp{color:var(--faint);min-width:70px}
-.wf-event.done{color:var(--ink)}
-.wf-event.fail{color:#d98a7a}
 .fstep{font-family:var(--mono);font-size:14px;color:var(--faint);padding:9px 0;letter-spacing:.06em}
 .fstep.done{color:var(--ink)}
+.fstep.failed{color:#d98a7a}
+.fstep.failed::before{content:"! ";color:#d98a7a}
 .fstep.done::before{content:"— ";color:var(--acc)}
 .fstep::before{content:"· "}
 .wf-dashboard{display:grid;gap:18px}
@@ -246,18 +243,41 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .wf-stage{min-width:0;border-top:2px solid var(--line2);padding-top:8px;color:var(--faint);font-family:var(--mono);font-size:11px;letter-spacing:.08em}
 .wf-stage.current{border-top-color:var(--acc);color:var(--acc)}
 .wf-stage.done{border-top-color:#70947d;color:var(--ink)}
+.wf-stage.reused{border-top-color:#6f8fa8;color:var(--ink)}
+.wf-stage.failed{border-top-color:#b45f52;color:#d98a7a}
 .wf-stage-index{display:block;font-size:10px;color:var(--faint);margin-bottom:3px}
 .wf-stage.current .wf-stage-index{color:var(--acc)}
 .wf-stage.done .wf-stage-index{color:#8fce9b}
+.wf-stage.reused .wf-stage-index{color:#90b7d0}
+.wf-stage.failed .wf-stage-index{color:#d98a7a}
 .wf-stage-label{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wf-stage-state{display:block;margin-top:3px;color:var(--faint);font-size:10px;letter-spacing:.04em}
 .wf-stage.current .wf-stage-state{color:#d99a5b}
 .wf-stage.done .wf-stage-state{color:#8fce9b}
+.wf-stage.reused .wf-stage-state{color:#90b7d0}
+.wf-stage.failed .wf-stage-state{color:#d98a7a}
 .wf-summary{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:13px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--dim)}
 .wf-summary-main{color:var(--ink)}
 .wf-summary-count{color:var(--acc)}
 .wf-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .wf-task-panel{min-width:0;border:1px solid var(--line);padding:16px 18px;background:rgba(0,0,0,.08)}
+.wf-stage-panels{display:grid;gap:10px}
+.wf-stage-panel{border:1px solid var(--line);background:rgba(0,0,0,.08)}
+.wf-stage-panel>summary{display:flex;align-items:baseline;justify-content:space-between;gap:12px;cursor:pointer;list-style:none;padding:14px 16px;font-family:var(--serif);font-size:18px;color:var(--ink)}
+.wf-stage-panel>summary::-webkit-details-marker{display:none}
+.wf-stage-panel>summary::before{content:"＋";font-family:var(--mono);font-size:13px;color:var(--faint);margin-right:8px}
+.wf-stage-panel[open]>summary::before{content:"－";color:var(--acc)}
+.wf-stage-panel.current{border-color:var(--acc)}
+.wf-stage-panel.done{border-color:#70947d}
+.wf-stage-panel.reused{border-color:#6f8fa8}
+.wf-stage-panel.failed{border-color:#b45f52}
+.wf-stage-panel-body{border-top:1px solid var(--line);padding:14px 16px 16px}
+.wf-stage-panel-state{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap}
+.wf-stage-panel.current .wf-stage-panel-state{color:#d99a5b}
+.wf-stage-panel.done .wf-stage-panel-state{color:#8fce9b}
+.wf-stage-panel.reused .wf-stage-panel-state{color:#90b7d0}
+.wf-stage-panel.failed .wf-stage-panel-state{color:#d98a7a}
+
 .wf-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:9px}
 .wf-panel-head h4{font-family:var(--serif);font-weight:500;font-size:18px;color:var(--ink)}
 .wf-panel-stat{font-family:var(--mono);font-size:11px;color:var(--acc);white-space:nowrap}
@@ -272,7 +292,15 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .wf-task-row.done .wf-task-state{color:#8fce9b}
 .wf-task-row.failed .wf-task-state{color:#d98a7a}
 .wf-task-row.waiting{opacity:.62}
-.wf-events-title{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--faint);margin-bottom:7px}
+.wf-task-row.reused .wf-task-state{color:#90b7d0}
+.wf-terminal-error{display:none;border:1px solid #6d3b34;background:rgba(180,95,82,.08);padding:12px 14px;color:#d98a7a;font-family:var(--mono);font-size:12px;line-height:1.7}
+.wf-terminal-error.on{display:block}
+.wf-log-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wf-log-button{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--dim);border:1px solid var(--line2);background:none;padding:7px 10px;cursor:pointer}
+.wf-log-button:hover{color:var(--ink);border-color:var(--acc)}
+.wf-log-panel{border:1px solid var(--line);background:#17140f;padding:14px;max-height:360px;overflow:auto}
+.wf-log-panel.hidden{display:none}
+.wf-log-panel pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--dim)}
 @media (max-width:900px){.wf-detail-grid{grid-template-columns:1fr}}
 .grp{margin:30px 0}
 .grp h4{font-family:var(--mono);font-size:12px;letter-spacing:.26em;color:var(--faint);text-transform:uppercase;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:8px}
@@ -292,6 +320,43 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .tab{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;padding:8px 14px;border:1px solid var(--line);color:var(--dim);cursor:pointer}
 .tab:hover{border-color:var(--line2);color:var(--ink)}
 .tab.on{border-color:var(--acc);color:var(--acc)}
+/* settings */
+.header-tools{display:flex;align-items:center;gap:22px}
+.settings-trigger{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--dim);background:none;border:1px solid var(--line2);padding:6px 10px;cursor:pointer}
+.settings-trigger:hover{color:var(--ink);border-color:var(--acc)}
+.settings-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:80;display:grid;place-items:center;padding:24px}
+.settings-dialog{width:min(900px,100%);max-height:min(90vh,820px);overflow:hidden;background:var(--bg2);border:1px solid var(--line2);box-shadow:0 24px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}
+.settings-head{flex:none;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding:26px 26px 16px}
+.settings-head h2{font-family:var(--serif);font-weight:500;font-size:30px}
+.settings-head p,.settings-note{color:var(--dim);font-family:var(--mono);font-size:12px;line-height:1.7;letter-spacing:.04em}
+.settings-close{font-family:var(--mono);font-size:18px;color:var(--dim);background:none;border:0;cursor:pointer;padding:0 4px}
+.settings-close:hover{color:var(--acc)}
+.settings-section{border-top:1px solid var(--line);padding:18px 0 4px}
+.settings-section:first-child{border-top:0;padding-top:0}
+.settings-section h3{font-family:var(--serif);font-size:20px;font-weight:500;margin-bottom:12px}
+.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+.settings-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.settings-field.wide{grid-column:1/-1}
+.settings-field label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--faint)}
+.settings-field input,.settings-field textarea{font:inherit;font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:9px 10px;min-height:39px;outline:none}
+.settings-field textarea{resize:vertical;line-height:1.5}
+.settings-field input:focus,.settings-field textarea:focus{border-color:var(--acc)}
+.settings-check{display:flex;align-items:center;gap:9px;min-height:39px;color:var(--dim);font-family:var(--mono);font-size:12px}
+.settings-check input{accent-color:var(--acc)}
+.settings-key-row{display:flex;align-items:center;gap:8px}
+.settings-key-row input{flex:1;min-width:0}
+.settings-key-row .btn{min-height:39px;white-space:nowrap}
+.settings-form{display:flex;flex-direction:column;min-height:0;flex:1}
+.settings-body{flex:1;min-height:0;overflow:auto;padding:18px 26px 4px}
+.settings-actions{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--line);padding:18px 26px;background:var(--bg2)}
+.settings-message{color:var(--acc);font-family:var(--mono);font-size:12px;line-height:1.6;min-height:20px;margin-right:auto}
+.settings-message.error{color:#d98a7a}
+.settings-inline-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-top:14px}
+.settings-inline-actions .btn{min-height:38px;flex:none}
+.settings-inline-actions .settings-note{flex:1 1 100%;min-width:0;word-break:break-word;line-height:1.6}
+.settings-note.ok{color:#8fce9b}
+.settings-note.error{color:#d98a7a}
+@media(max-width:650px){.header-tools{gap:10px}.header-tools nav{gap:12px}.settings-backdrop{padding:10px}.settings-dialog{max-height:94vh}.settings-head{padding:18px 18px 14px}.settings-body{padding:14px 18px 4px}.settings-actions{padding:16px 18px}.settings-grid{grid-template-columns:1fr}.settings-field.wide{grid-column:auto}}
 /* toast */
 #toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:12px;letter-spacing:.08em;padding:13px 22px;transition:.3s;z-index:99;pointer-events:none;max-width:80vw}
 #toast.on{transform:translateX(-50%) translateY(0)}
@@ -311,6 +376,7 @@ footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px}
 </head>
 <body>
 <div id="app"></div>
+<div id="settings-root"></div>
 <div id="toast"></div>
 <script>
 /* ================= DATA (loaded from /api/atlas) ================= */
@@ -321,14 +387,20 @@ let RECS=[];
 let ARTISTS={};
 let ALBUMS={};
 let SOURCES=[];
-let WORKFLOW={analysis_executor_configured:false,recommendation_executor_configured:false,analysis_parallelism:5,recommendation_parallelism:4,track_limit_options:[30,100,200,500,1000],track_limit_default:30,await_limit_timeout_seconds:1800};
+let WORKFLOW={analysis_executor_configured:false,recommendation_executor_configured:false,analysis_parallelism:5,recommendation_parallelism:4,track_percentile_options:[0.25,0.5,1],track_percentile_default:1,await_limit_timeout_seconds:1800};
 let ACTIVE_JOB_ID=null;
+let LATEST_JOB_ID=null;
+const WORKFLOW_LAST_JOB_KEY="music-atlas.workflow.last-job.v1";
+function storedWorkflowJobId(){try{return localStorage.getItem(WORKFLOW_LAST_JOB_KEY)||null;}catch{return null;}}
+function rememberWorkflowJobId(id){if(!id)return;LATEST_JOB_ID=String(id);try{localStorage.setItem(WORKFLOW_LAST_JOB_KEY,LATEST_JOB_ID);}catch{}}
 let workflowCancelledJobId=null;
 let workflowPollTimer=null;
 let workflowEventSource=null;
 let workflowStreamId=null;
 let workflowClockTimer=null;
 let workflowFinishedJobId=null;
+let SETTINGS=null;
+let SECRET_STATUS=null;
 
 /* 任务活跃状态：awaiting_limit 表示歌单已读取、正在等用户选择处理数量，不能当终态。 */
 const WORKFLOW_ACTIVE_STATUSES=["queued","running","awaiting_limit"];
@@ -343,18 +415,38 @@ const metaCache={}; // artist|track → Promise
 function fetchMeta(artist,track){const k=metaKey(artist,track);if(!metaCache[k])metaCache[k]=fetch(`/api/meta?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`).then(r=>r.json()).catch(()=>({ok:false}));return metaCache[k];}
 /* 渲染后扫描封面占位与链接锚点，异步填充真实封面 / 三平台歌曲链接 */
 function hydrate(rootEl){
- const covers=rootEl.querySelectorAll(".cover[data-artist]");
+ // data-cover 是后端实际核验过的公开封面；加载失败时再调用 /api/meta 获取备用来源。
+ const covers=rootEl.querySelectorAll(".cover[data-cover],.cover[data-artist]");
  const links=rootEl.querySelectorAll("a[data-songlink]");
  let pending=covers.length;
  const reveal=()=>{document.body.classList.add("covers-ready");};
+ const attach=(el,src,done)=>{
+  if(!src){done();return;}
+  const img=document.createElement("img");img.className="cover-img";img.alt="";img.referrerPolicy="no-referrer";img.src=src;
+  let settled=false;
+  const finish=()=>{if(settled)return;settled=true;done();};
+  img.onload=()=>{el.classList.add("has-img");finish();};
+  img.onerror=()=>{img.remove();finish();};
+  el.appendChild(img);
+ };
  if(pending===0)reveal();
  covers.forEach(el=>{
   if(el.dataset.done){if(--pending===0)reveal();return;}
   el.dataset.done="1";
-  fetchMeta(el.dataset.artist,el.dataset.track).then(m=>{
-   if(m&&m.ok&&m.cover){const img=document.createElement("img");img.className="cover-img";img.alt="";img.referrerPolicy="no-referrer";img.src=m.cover;img.onload=()=>{el.classList.add("has-img");if(--pending===0)reveal();};img.onerror=()=>{if(--pending===0)reveal();};el.appendChild(img);}
-   else{if(--pending===0)reveal();}
-  }).catch(()=>{if(--pending===0)reveal();});
+  let finished=false;
+  const finish=()=>{if(finished)return;finished=true;if(--pending===0)reveal();};
+  const fallback=()=>fetchMeta(el.dataset.artist,el.dataset.track).then(m=>{
+   const primary=el.dataset.cover||"";
+   if(m&&m.ok&&m.cover&&m.cover!==primary){attach(el,m.cover,finish);}
+   else finish();
+  }).catch(finish);
+  if(el.dataset.cover){
+   const img=document.createElement("img");img.className="cover-img";img.alt="";img.referrerPolicy="no-referrer";img.src=el.dataset.cover;
+   let loaded=false;
+   img.onload=()=>{loaded=true;el.classList.add("has-img");finish();};
+   img.onerror=()=>{img.remove();if(!loaded&&el.dataset.artist&&el.dataset.track)fallback();else finish();};
+   el.appendChild(img);
+  }else if(el.dataset.artist&&el.dataset.track){fallback();}else finish();
  });
  links.forEach(a=>{
   if(a.dataset.done)return;a.dataset.done="1";
@@ -366,12 +458,13 @@ function hydrate(rootEl){
   });
  });
 }
-const cover=(hue,label,o)=>{o=o||{};const data=(o.artist&&o.track)?` data-artist="${esc(o.artist)}" data-track="${esc(o.track)}"`:"";return `<div class="cover ${o.cls||""}" style="${o.style||""}--cover-fallback:linear-gradient(140deg,hsl(${hue} 42% 26%),hsl(${(hue+50)%360} 55% 11%))"${data}>${o.mini?"":'<div class="cl">MA·024</div><div class="frame"></div>'}<span class="ci"${o.ci?` style="${o.ci}"`:""}>${esc(label)}</span></div>`;};
+
+const cover=(hue,label,o)=>{o=o||{};const data=(o.cover?` data-cover="${esc(o.cover)}"`:"")+(o.artist&&o.track?` data-artist="${esc(o.artist)}" data-track="${esc(o.track)}"`:"");return `<div class="cover ${o.cls||""}" style="${o.style||""}--cover-fallback:linear-gradient(140deg,hsl(${hue} 42% 26%),hsl(${(hue+50)%360} 55% 11%))"${data}>${o.mini?"":'<div class="cl">MA·024</div><div class="frame"></div>'}<span class="ci"${o.ci?` style="${o.ci}"`:""}>${esc(label)}</span></div>`;};
 const repKey=i=>{const p=(i.repTracks[0]||"").split(" — ");return {artist:p[0]||"",track:p[1]||""};};
 const tcls=t=>t==="style"?"t-style":t==="ext"?"t-ext":t==="rel"?"t-rel":"t-exp";
 const typeChip=r=>`<span class="typechip ${tcls(r.type)}">${r.typeLabel}</span>`;
 const badgeCls=s=>({confirmed:"b-confirmed",pending:"b-pending","has-source":"b-has-source",speculative:"b-speculative",computed:"b-computed"}[s]||"b-computed");
-const badgeTxt=s=>({confirmed:"已确认",pending:"待二次验证","has-source":"有来源支持",speculative:"推测性关系",computed:"程序计算"}[s]||s);
+const badgeTxt=s=>({confirmed:"已确认",pending:"待二次验证","has-source":"有来源支持",speculative:"推测性关系",computed:"程序计算",ready:"已生成",accepted:"已通过",rejected:"未通过",unknown:"未知"}[s]||statusText(s));
 const PLAT=[
  ["apple","在 Apple Music 打开"],
  ["netease","网易云音乐"],
@@ -391,27 +484,62 @@ function radar(a,color,size){size=size||190;const c=size/2,R=c-26;const pt=(i,v)
 const routeHTML=route=>route.map((s,i)=>{const [k,l,t]=s;const sym={int:"◈",style:"◇",move:"↓",rel:"◉",artist:"▲",track:"●"}[k]||"·";const tZH={int:"你的版图",style:"风格族群",move:"移动",rel:"音乐人关系",artist:"候选艺人",track:"结果"}[k]||t;
  return`<div class="rstep"><div class="rk">${sym}</div><div class="rv"><div class="l2">${tZH}</div><div class="l1">${esc(l)}</div></div></div>`+(i<route.length-1?`<div class="rline">│</div>`:"");}).join("");
 const tasteHTML=t=>`<div class="tconn">${t.map((v,i)=>{const last=i===t.length-1;return`<div class="tnode ${last?"cur":""}"><div class="tk">${["起点","代表曲目","连接","推荐结果"][i]||""}</div><div class="tv">${esc(v)}</div></div>`+(last?"":`<div class="tarrow">→</div>`);}).join("")}</div>`;
- const evHTML=evs=>`<div class="evgrid">${evs.map(e=>`<div class="evcard"><div class="ek">${e.kind} · ${esc(e.provider)}</div><div class="ed">${esc(e.detail)}</div><div class="evmeta"><span>获取于 ${e.retrieved}</span><span>等级 ${e.grade}</span><span class="badge ${badgeCls(e.status)}">${badgeTxt(e.status)}</span></div></div>`).join("")}</div>`;
+const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"风格连接",novelty:"探索价值",listening_tip:"聆听建议"}).map(([key,label])=>d&&d[key]?`<div class="detail-note"><h4 class="kicker" style="margin:18px 0 8px">${label}</h4><p class="explain">${esc(d[key])}</p></div>`:"").join("");
+ const evHTML=evs=>`<div class="evgrid">${evs.map(e=>`<div class="evcard"><div class="ek">${e.kind} · ${esc(e.provider)}</div><div class="ed">${esc(e.detail)}</div><div class="evmeta">${e.retrieved&&e.retrieved!=="—"?`<span>获取于 ${esc(e.retrieved)}</span>`:""}<span>等级 ${esc(e.grade)}</span><span class="badge ${badgeCls(e.status)}">${badgeTxt(e.status)}</span></div>${/^https:\/\//.test(e.url||"")?`<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:12px">查看资料 ↗</a>`:""}</div>`).join("")}</div>`;
 
  let ATLAS=null;
+ let ATLAS_GROUP_INDEX=0;
  let TASTE=null;
- const statusText=s=>({complete:"已完成",completed:"已完成",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"研究草稿",pending_verification:"待独立核验",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知"}[s]||s||"未知");
+ const statusText=s=>({complete:"已完成",completed:"已完成",confirmed:"已确认",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"研究草稿",pending:"待处理",pending_verification:"待独立核验",completed_with_gaps:"已完成（有资料缺口）",accepted:"已通过",rejected:"未通过",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知",insufficient_evidence:"证据不足",offline:"本地核验",analysis:"程序分析",recommendation:"推荐生成",research:"公开资料研究",lastfm:"音乐资料",lastfm_agent:"公开资料",public_facts_only:"公开资料",csv:"歌单文件",netease_public:"网易云公开歌单",qq_public:"QQ 音乐公开歌单",apple_music:"Apple Music 歌单",PlaylistSnapshot:"歌单快照",ready_for_export:"已准备发布"}[String(s||"").toLowerCase()]||s||"未知");
  function statusBanner(){
   if(!ATLAS||!ATLAS.status)return"";
   const s=ATLAS.status;const notes=[];
   if(s.publication==="draft")notes.push("研究草稿");
+  if(s.review==="completed_with_gaps")notes.push("复核已完成，部分资料缺口留空");
+  if(s.review==="rejected")notes.push("复核未通过");
   if(s.evidence_audit==="pending_verification")notes.push("公开事实待独立核验");
   if(s.profile_coverage_degraded)notes.push("画像覆盖不足");
   if(s.recommendation==="insufficient_evidence")notes.push("证据不足，暂无正式推荐");
   if(!notes.length)return"";
   return`<div class="atlas-status"><div class="wrap">状态：${notes.map(esc).join(" · ")}</div></div>`;
  }
+ function sourceInterestIslands(records){
+  const groups=new Map();
+  for(const record of records){
+   const tags=(record.tags||[]).map(t=>t.tag).filter(Boolean);
+   const name=tags[0]||"待补充资料",key=name.trim().toLocaleLowerCase();
+   if(!groups.has(key))groups.set(key,{name,records:[]});
+   groups.get(key).records.push(record);
+  }
+  return [...groups.entries()].sort((a,b)=>b[1].records.length-a[1].records.length||a[0].localeCompare(b[0])).map(([key,g],index)=>{
+   const tracks=g.records.map(r=>{const [title,artist]=(r.track_key||"").split("\u001f");return {title:title||"未知曲目",artist:artist||"未知艺人"};});
+   return {id:"lastfm-"+key,code:String(index+1).padStart(2,"0"),name:g.name,genres:[g.name],summary:`${g.records.length} 首曲目 · 按来源中的首个风格标签整理`,hue:(25+index*37)%360,axes:null,artists:[...new Set(tracks.map(t=>t.artist))],repTracks:tracks.map(t=>t.artist+" — "+t.title),sourceRecords:g.records};
+  });
+ }
+ function islandSources(i){if(!i.sourceRecords)return "";return `<details class="island-sources"><summary>曲目与来源（${i.sourceRecords.length} 首）</summary>${i.sourceRecords.map(r=>{const [title,artist]=(r.track_key||"").split("\u001f");const safe=/^https:\/\/www\.last\.fm\//.test(r.url||"");return `<div class="rep" style="margin-top:16px"><strong>${esc(title)} — ${esc(artist)}</strong><br>${(r.tags||[]).map(t=>esc(t.tag)).join(" · ")||"暂无标签"}<br>${esc(({track:"单曲标签",album:"专辑标签",artist:"艺人标签"})[r.scope]||"待补充资料")}${safe?` · <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">资料来源 ↗</a>`:""}</div>`;}).join("")}</details>`;}
+ function publicAtlasCopy(value){
+  if(Array.isArray(value))return value.map(publicAtlasCopy);
+  if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,publicAtlasCopy(v)]));
+  if(typeof value==="string"&&!/^https?:\/\//i.test(value)){
+   return value.replace(/last[\s.\-]*fm/gi,"音乐资料").replace(/\bFavorite Songs\b/gi,"喜欢的歌曲").replace(/\bAgent\b/gi,"智能助手");
+  }
+  return value;
+ }
+ function atlasGroups(){return ATLAS&&Array.isArray(ATLAS.atlas_groups)&&ATLAS.atlas_groups.length?ATLAS.atlas_groups:[];}
+ function applyAtlasGroup(index){
+  const groups=atlasGroups();ATLAS_GROUP_INDEX=groups.length?Math.max(0,Math.min(index,groups.length-1)):0;
+  const group=groups[ATLAS_GROUP_INDEX]||ATLAS||{};
+  RECS=group.recommendations||ATLAS?.recommendations||[];ARTISTS=group.artists||ATLAS?.artists||{};ALBUMS=group.albums||ATLAS?.albums||{};SOURCES=group.sources||ATLAS?.sources||[];
+ }
+ function atlasGroupTools(){const groups=atlasGroups();if(groups.length<2)return"";const canPrev=ATLAS_GROUP_INDEX>0,canNext=ATLAS_GROUP_INDEX<groups.length-1,isLast=!canNext;return`<div class="wf-actions" style="margin:0"><span class="sub">第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 · 每组 ${RECS.length} 首</span><button type="button" class="btn" data-atlas-prev ${canPrev?"":"disabled"}>返回上一批</button>${canNext?`<button type="button" class="btn" data-atlas-swap>换一批</button>`:""}${isLast?`<button type="button" class="btn primary" data-atlas-new ${ACTIVE_JOB_ID?"disabled":""}>新 Atlas</button>`:""}</div>`;}
  function applyAtlasPayload(payload){
-  ATLAS=payload;ISSUE=payload.issue||{};AXES=payload.axes||AXES;INTERESTS=payload.interests||[];RECS=payload.recommendations||[];TASTE=payload.taste_review||null;
-  ARTISTS=payload.artists||{};ALBUMS=payload.albums||{};SOURCES=payload.sources||[];
+  payload=publicAtlasCopy(payload);const previousSnapshot=ATLAS?.source?.snapshotId;const nextSnapshot=payload?.source?.snapshotId;
+  ATLAS=payload;if(previousSnapshot!==nextSnapshot)ATLAS_GROUP_INDEX=0;
+  ISSUE=payload.issue||{};AXES=payload.axes||AXES;INTERESTS=payload.interests?.length?payload.interests:(payload.sourceTags?.length?sourceInterestIslands(payload.sourceTags):[]);TASTE=payload.taste_review||null;
+  applyAtlasGroup(ATLAS_GROUP_INDEX);
   if(ISSUE.title)document.title="Music Atlas · "+ISSUE.title;
  }
- function applyWorkflowConfig(payload){const incoming=payload&&payload.workflow?payload.workflow:null;if(incoming)WORKFLOW=Object.assign({},WORKFLOW,incoming);if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;}
+ function applyWorkflowConfig(payload){const incoming=payload&&payload.workflow?payload.workflow:null;if(incoming)WORKFLOW=Object.assign({},WORKFLOW,incoming);if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;if(!LATEST_JOB_ID)LATEST_JOB_ID=payload&&payload.latest_job_id||storedWorkflowJobId();}
  async function bootAtlas(){
   const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
   const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
@@ -424,8 +552,8 @@ const tasteHTML=t=>`<div class="tconn">${t.map((v,i)=>{const last=i===t.length-1
 
 /* ================= HEADER / FOOTER ================= */
 const NAV=[["#/discover","发现"],["#/atlas","Atlas"],["#/taste","音乐版图"],["#/sources","推荐源"]];
-const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav></div></header>${statusBanner()}`;
-const footer=()=>`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span><span>${ATLAS?statusText(ATLAS.status.publication):"数据加载中"}</span></div></footer>`;
+const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav><button type="button" class="settings-trigger" data-settings-open>设置</button></div></div></header>${statusBanner()}`;
+const footer=()=>`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span><span>${ATLAS?statusText(ATLAS.status.run||ATLAS.status.publication):"数据加载中"}</span></div></footer>`;
 
 /* ================= VIEWS ================= */
 function vDiscover(){
@@ -436,8 +564,11 @@ function vDiscover(){
   "left:60px;top:170px;width:180px;height:180px;transform:rotate(6deg);z-index:4;",
   "left:280px;top:170px;width:170px;height:170px;transform:rotate(-2deg);z-index:1;",
  ];
- const collage=RECS.slice(0,4).map((r,i)=>cover(r.hue,r.track,{cls:"cc",style:collageSpec[i],ci:"font-size:24px",artist:r.artist,track:r.track})).join("");
- const related=RECS.filter(r=>r.type==="rel")[0];
+ const collage=RECS.slice(0,4).map((r,i)=>cover(r.hue,r.track,{cls:"cc",style:collageSpec[i],ci:"font-size:24px",cover:r.cover,artist:r.artist,track:r.track})).join("");
+  const related=RECS.filter(r=>r.type==="rel")[0];
+  const similarPath=RECS.find(r=>r.type!=="rel"&&Array.isArray(r.route)&&r.route.some(step=>step&&step[1]==="相似艺人"));
+  const chainItem=related||similarPath;
+  const chainIsRelation=Boolean(related);
  const explorers=RECS.filter(r=>r.type==="exp").slice(0,2);
  return`
 <section class="hero"><div class="wrap" style="position:relative">
@@ -458,16 +589,16 @@ ${TASTE?`<div class="wrap"><section class="sec" id="taste-review">
  </section></div>`:""}
 <div class="wrap">
  <section class="sec">
-  <div class="sec-hd"><h2>Atlas</h2><span class="sub">${n} 首 · 按综合排序</span></div>
-  ${n?RECS.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join(""):`<div class="empty-state">当前运行没有可展示的推荐结果。</div>`}
+  <div class="sec-hd"><h2>Atlas</h2>${atlasGroupTools()||`<span class="sub">${n} 首 · 按推荐顺序</span>`}</div>
+  ${n?RECS.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",cover:r.cover,artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join(""):`<div class="empty-state">当前运行没有可展示的推荐结果。</div>`}
  </section>
  <section class="sec">
   <div class="sec-hd"><h2>轨道延伸</h2><span class="sub">从本期兴趣组向外一步</span></div>
-  <div class="cards3">${RECS.slice(0,3).map(r=>`<div class="card" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track,{style:"height:230px;",ci:"font-size:36px",artist:r.artist,track:r.track})}<div class="cbody">${typeChip(r)}<h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)}</div><p>${esc(r.oneLiner)}</p></div></div>`).join("")||`<div class="empty-state">暂无轨道延伸。</div>`}</div>
+  <div class="cards3">${RECS.slice(0,3).map(r=>`<div class="card" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track,{style:"height:230px;",ci:"font-size:36px",cover:r.cover,artist:r.artist,track:r.track})}<div class="cbody">${typeChip(r)}<h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)}</div><p>${esc(r.oneLiner)}</p></div></div>`).join("")||`<div class="empty-state">暂无轨道延伸。</div>`}</div>
  </section>
  <section class="sec">
-  <div class="sec-hd"><h2>音乐人链路</h2><span class="sub">${related?"音乐人关系 · 本期路径":"本期没有音乐人关系推荐"}</span></div>
-  ${related?`<div class="chain"><div><div class="kicker">音乐人关系</div><div class="chainbig">${esc(related.artist)}<br><span style="color:var(--dim);font-size:12px;font-style:normal;margin-bottom:6px;display:inline-block">→ 关系路径</span><br>${esc(related.track)}</div><p class="lede" style="margin-top:14px;font-size:16px">${esc(related.oneLiner)}</p></div><div class="chainstep-col">${related.route.map(s=>`<div class="chainstep"><span class="node"></span><span>${esc(s[1])}</span><span class="ln"></span></div>`).join("")}</div></div>`:`<div class="empty-state">当前推荐包没有音乐人关系路径。</div>`}
+   <div class="sec-hd"><h2>音乐人链路</h2><span class="sub">${chainItem?(chainIsRelation?"真实音乐人关系 · 本期路径":"相似艺人路径 · 公开相似线索"):"本期没有可展示的音乐人路径"}</span></div>
+   ${chainItem?`<div class="chain"><div><div class="kicker">${chainIsRelation?"音乐人关系":"相似艺人路径"}</div><div class="chainbig">${esc(chainItem.artist)}<br><span style="color:var(--dim);font-size:12px;font-style:normal;margin-bottom:6px;display:inline-block">→ ${chainIsRelation?"关系路径":"相似路径"}</span><br>${esc(chainItem.track)}</div><p class="lede" style="margin-top:14px;font-size:16px">${esc(chainItem.oneLiner)}</p></div><div class="chainstep-col">${chainItem.route.map(s=>`<div class="chainstep"><span class="node"></span><span>${esc(s[1])}</span><span class="ln"></span></div>`).join("")}</div></div>`:`<div class="empty-state">当前推荐包没有可展示的音乐人路径。</div>`}
  </section>
  <section class="sec">
   <div class="sec-hd"><h2>更远处</h2><span class="sub">主动离开舒适区 · 探索推荐</span></div>
@@ -477,32 +608,32 @@ ${TASTE?`<div class="wrap"><section class="sec" id="taste-review">
 function vAtlas(f){f=f||"all";const list=RECS.filter(r=>f==="all"||r.type===f);
  const tabs=[["all",`全部 ${RECS.length} 首`],["style","风格邻近"],["ext","艺人延伸"],["rel","音乐人关系"],["exp","探索推荐"]];
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / Atlas</div>
- <h1 class="big-sec-title">Atlas</h1>
+ <div class="sec-hd"><h1 class="big-sec-title">Atlas</h1>${atlasGroupTools()}</div>
  <div class="tabs">${tabs.map(([k,l])=>`<span class="tab ${f===k?"on":""}" data-tab="${k}">${l}</span>`).join("")}</div>
- ${list.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join("")||`<div class="empty-state">当前筛选没有结果。</div>`}
+ ${list.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",cover:r.cover,artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join("")||`<div class="empty-state">当前筛选没有结果。</div>`}
  <div style="height:60px"></div></div>`;}
 function vWhy(id){const r=byId(id);if(!r)return v404();
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / <a href="#/atlas">Atlas</a> / 推荐依据</div>
  <div class="dgrid"><div>
    <div class="dcover">
-   ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",artist:r.artist,track:r.track})}
+   ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",cover:r.cover,artist:r.artist,track:r.track})}
  </div>
    ${openBtns(r)}
  </div><div>
   <div class="proto-note">${r.typeLabel} · 第 ${String(r.rank).padStart(2,"0")} 位</div>
   <h1 class="dtitle">${esc(r.track)}</h1>
-  <div class="dsub"><a href="#/artist/${encodeURIComponent(r.artist)}" style="border-bottom:1px solid var(--line2)">${esc(r.artist)}</a> · <a href="#/album/${encodeURIComponent(r.album)}" style="border-bottom:1px solid var(--line2)">${esc(r.album)}</a> · ${r.year}</div>
+  <div class="dsub"><a href="#/artist/${encodeURIComponent(r.artist)}" style="border-bottom:1px solid var(--line2)">${esc(r.artist)}</a> · <a href="#/album/${encodeURIComponent(r.album)}" style="border-bottom:1px solid var(--line2)">${esc(r.album)}</a>${r.year&&r.year!=="—"?` · ${esc(r.year)}`:""}</div>
   <div class="layer"><div class="lnum">I.</div><h3>这首为什么找到你</h3><p class="quoted">${esc(r.why)}</p></div>
-  <div class="layer"><div class="lnum">II.</div><h3>品味连接</h3>${tasteHTML(r.taste)}</div>
+  <div class="layer"><div class="lnum">II.</div><h3>品味连接</h3>${r.details?detailHTML(r.details):tasteHTML(r.taste)}</div>
   <div class="layer"><div class="lnum">III.</div><h3>发现路径</h3><div class="routelist">${routeHTML(r.route)}</div></div>
   <div class="layer"><div class="lnum">IV.</div><h3>来源与证据</h3>${evHTML(r.evidence)}</div>
-  <div class="layer"><div class="lnum">V.</div><h3>听感轴对照</h3><div class="axis-duo"><div>${axisBars(r.axis)}</div><div>${radar(r.axis,"#c8622f",230)}<div class="disclaim" style="margin-top:10px">描述性画像 · 非实测音频特征</div></div></div></div>
+  ${r.axis?`<div class="layer"><div class="lnum">V.</div><h3>听感轴对照</h3><div class="axis-duo"><div>${axisBars(r.axis)}</div><div>${radar(r.axis,"#c8622f",230)}<div class="disclaim" style="margin-top:10px">描述性画像 · 非实测音频特征</div></div></div></div>`:""}
  </div></div></div>`;}
 function vTrack(id){const r=byId(id);if(!r)return v404();
  const interest=intBy(r.interest);
  return`<div class="wrap"><div class="crumb"><a href="#/atlas">Atlas</a> / 曲目</div>
  <div class="dgrid"><div>
-  ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",artist:r.artist,track:r.track})}
+  ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",cover:r.cover,artist:r.artist,track:r.track})}
   ${openBtns(r)}
  </div><div>
   <div class="proto-note">${r.typeLabel} · 第 ${String(r.rank).padStart(2,"0")} 位</div>
@@ -510,11 +641,11 @@ function vTrack(id){const r=byId(id);if(!r)return v404();
   <div class="dsub">${esc(r.artist)}</div>
   <div class="metatab">
    <div><span>发行项目</span><a href="#/album/${encodeURIComponent(r.album)}">${esc(r.album)}</a></div>
-   <div><span>年份</span>${r.year||"—"}</div>${r.country?`<div><span>地区</span>${esc(r.country)}</div>`:""}
+   ${r.year&&r.year!=="—"?`<div><span>年份</span>${esc(r.year)}</div>`:""}${r.country?`<div><span>地区</span>${esc(r.country)}</div>`:""}
    <div><span>兴趣岛</span>${interest?`<a href="#/interest/${encodeURIComponent(interest.id)}">${esc(interest.code+" · "+interest.name)}</a>`:"—"}</div>
   </div>
   <p class="quoted" style="margin:18px 0">${esc(r.oneLiner)}</p>
-  <p class="explain">${esc(r.why)}</p>
+  ${r.details?detailHTML(r.details):`<p class="explain">${esc(r.why)}</p>`}
   <div style="margin:22px 0"><h3 class="kicker" style="margin-bottom:12px">发现路径</h3><div class="routelist">${routeHTML(r.route)}</div></div>
    <a class="btn primary" href="#/why/${encodeURIComponent(r.id)}">查看推荐依据 ↗</a>
  </div></div></div>`;}
@@ -523,15 +654,16 @@ function vAlbum(name){const al=ALBUMS[decodeURIComponent(name)];if(!al)return v4
  const recsHere=RECS.filter(r=>r.album===nm);const r0=recsHere[0];
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 专辑</div>
  <div class="dgrid"><div>
-  ${cover(r0?r0.hue:220,nm.substring(0,2),{style:"height:320px;",ci:"font-size:56px",artist:al.artist,track:recsHere[0]?recsHere[0].track:al.tracks[0]})}
+  ${cover(r0?r0.hue:220,nm.substring(0,2),{style:"height:320px;",ci:"font-size:56px",cover:al.cover||(r0&&r0.cover),artist:al.artist,track:recsHere[0]?recsHere[0].track:al.tracks[0]})}
   ${r0?openBtns(r0):""}
  </div><div>
    <div class="proto-note">发行项目</div>
   <h1 class="dtitle">${esc(nm)}</h1>
-   <div class="dsub">${al.artist?`<a href="#/artist/${encodeURIComponent(al.artist)}" style="border-bottom:1px solid var(--line2)">${esc(al.artist)}</a> · `:""}${al.year&&al.year!=="—"?al.year:""}${al.label&&al.label!=="—"?" · "+esc(al.label):""}</div>
+   <div class="dsub">${[al.artist?`<a href="#/artist/${encodeURIComponent(al.artist)}" style="border-bottom:1px solid var(--line2)">${esc(al.artist)}</a>`:"",al.year&&al.year!=="—"?esc(al.year):"",al.label&&al.label!=="—"?esc(al.label):""].filter(Boolean).join(" · ")}</div>
+  ${r0&&r0.details?`<h3 class="kicker" style="margin:18px 0 8px">本期发现笔记</h3>`:""}
   <p class="explain" style="margin-bottom:20px">${esc(al.blurb)}</p>
-  <div class="metatab"><div><span>曲目数</span>${al.tracks.length}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>esc(r.track)).join(" · "):"—"}</div></div>
-  <h3 class="kicker" style="margin:14px 0 8px">曲目列表</h3>
+  <div class="metatab"><div><span>本期收录数</span>${al.tracks.length}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>esc(r.track)).join(" · "):"—"}</div></div>
+  <h3 class="kicker" style="margin:14px 0 8px">本期收录曲目</h3>
    ${al.tracks.length?al.tracks.map((t,i)=>{const rec=recsHere.find(r=>r.track===t);return`<div class="trk ${rec?"reco":""}" ${rec?`data-go="#/track/${encodeURIComponent(rec.id)}"`:""}><span class="n">${String(i+1).padStart(2,"0")}</span><span class="t">${esc(t)}</span>${rec?`<span class="why">入选曲目 ↗</span>`:""}</div>`;}).join(""):`<div class="empty-state">当前运行没有该发行项目的曲目清单。</div>`}
  </div></div></div>`;}
 function vArtist(name){const nm=decodeURIComponent(name);const a=ARTISTS[nm];
@@ -548,7 +680,7 @@ function vArtist(name){const nm=decodeURIComponent(name);const a=ARTISTS[nm];
   <div class="proto-note">艺术家档案 · 研究笔记</div>
   <h1 class="dtitle">${esc(nm)}</h1>
   <div class="dsub">${[a.origin,a.years].filter(Boolean).map(esc).join(" · ")}</div>
-  <p class="explain">${esc(a.bio||"本期研究未提供艺人简介。")}</p>
+  ${recsHere[0]&&recsHere[0].details?`<h3 class="kicker" style="margin:18px 0 8px">本期风格连接</h3><p class="explain">${esc(recsHere[0].details.music_fit)}</p><h3 class="kicker" style="margin:18px 0 8px">探索方向</h3><p class="explain">${esc(recsHere[0].details.novelty)}</p>`:`<p class="explain">${esc(a.bio||"本期研究未提供艺人简介。")}</p>`}
   <div class="metatab"><div><span>风格</span>${esc((a.genres||[]).join(" / ")||"—")}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>`<a href="#/track/${encodeURIComponent(r.id)}">${esc(r.track)}</a>`).join(" · "):"—"}</div><div><span>品味连接</span>${anchor?`<a href="#/interest/${encodeURIComponent(anchor.id)}">${esc(anchor.code+" · "+anchor.name)}</a>`:recsHere[0]&&intBy(recsHere[0].interest)?`<a href="#/interest/${encodeURIComponent(recsHere[0].interest)}">${esc(intBy(recsHere[0].interest).code+" · "+intBy(recsHere[0].interest).name)}</a>`:"—"}</div></div>
   ${a.relations&&a.relations.length?`<h3 class="kicker" style="margin:16px 0 8px">艺术家关联</h3>${a.relations.map(([to,ty,note])=>`<div class="metatab" style="border-top:none"><div style="border-bottom:1px solid var(--line)"><span>${esc(ty)}</span><span style="color:var(--ink)">${esc(to)}</span></div><div style="border-bottom:none"><span>备注</span>${esc(note)}</div></div>`).join("")}`:""}
   ${axis?`<h3 class="kicker" style="margin:16px 0 8px">听感画像</h3><div class="axis-duo"><div>${axisBars(axis)}</div><div>${radar(axis,"#c9a227",220)}<div class="disclaim" style="margin-top:8px">描述性画像 · 非实测音频特征</div></div></div>`:""}
@@ -557,8 +689,8 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  <h1 class="big-sec-title">音乐版图</h1>
  <p class="lede" style="max-width:640px">本期歌单被整理为 ${INTERESTS.length} 个兴趣区域，展示熟悉的声音，也标出下一步的延伸方向。</p>
   <div class="islands">${INTERESTS.map(i=>{const ext=RECS.filter(r=>r.interest===i.id).length;
-   return`<div class="island" data-go="#/interest/${encodeURIComponent(i.id)}"><div class="code">${esc(i.code)} ·</div><h3>${esc(i.name)}</h3><div class="genres">${(i.genres||[]).map(esc).join("<br>")||"—"}</div><p>${esc(i.summary)}</p>${radar(i.axes,"hsl("+i.hue+" 45% 55%)",180)}<div class="rep">代表艺人<br>${(i.artists||[]).map(esc).join("<br>")||"—"}<br><br>延伸推荐 ${ext} 条 ↗</div></div>`;}).join("")||`<div class="empty-state">当前运行没有兴趣组。</div>`}</div>
- <div class="disclaim">描述性画像 · 非实测音频特征 · 这些轴是研究得到的描述性估计，不是实际音频分析结果。</div></div>`;}
+   return`<div class="island" data-go="#/interest/${encodeURIComponent(i.id)}"><div class="code">${esc(i.code)} ·</div><h3>${esc(i.name)}</h3><div class="genres">${(i.genres||[]).map(esc).join("<br>")||"—"}</div><p>${esc(i.summary)}</p>${i.axes?radar(i.axes,"hsl("+i.hue+" 45% 55%)",180):""}<div class="rep">代表艺人<br>${(i.artists||[]).slice(0,4).map(esc).join("<br>")||"—"}<br><br>${i.sourceRecords?`查看 ${i.sourceRecords.length} 首曲目与来源`:`延伸推荐 ${ext} 条`} ↗</div></div>`;}).join("")||`<div class="empty-state">当前运行没有兴趣组。</div>`}</div>
+ <div class="disclaim">${ATLAS?.sourceTags?.length?"按来源标签整理兴趣岛；专辑与艺人标签保留其适用范围。":"描述性画像 · 非实测音频特征"}</div></div>`;}
  function vInterest(id){const interestId=decodeURIComponent(id||"");const i=intBy(interestId);if(!i)return v404();const ext=RECS.filter(r=>r.interest===interestId);
  const rep=repKey(i);
  return`<div class="wrap"><div class="crumb"><a href="#/taste">音乐版图</a> / 兴趣岛 ${i.code}</div>
@@ -569,9 +701,9 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   <h1 class="dtitle">${esc(i.name)}</h1>
   <div class="dsub">${(i.genres||[]).map(esc).join(" · ")||"—"}</div>
   <p class="explain">${esc(i.summary)}</p>
-  <div class="metatab"><div><span>核心艺人</span>${(i.artists||[]).map(a=>`<a href="#/artist/${encodeURIComponent(a)}">${esc(a)}</a>`).join(" · ")||"—"}</div><div><span>代表曲目</span>${(i.repTracks||[]).map(esc).join(" · ")||"—"}</div></div>
-  <h3 class="kicker" style="margin:16px 0 8px">听感轮廓</h3>
-  <div class="axis-duo"><div>${axisBars(i.axes)}</div><div>${radar(i.axes,"hsl("+i.hue+" 45% 55%)",220)}</div></div>
+  <div class="metatab"><div><span>核心艺人</span>${(i.artists||[]).map(a=>i.sourceRecords?esc(a):`<a href="#/artist/${encodeURIComponent(a)}">${esc(a)}</a>`).join(" · ")||"—"}</div><div><span>代表曲目</span>${(i.repTracks||[]).slice(0,5).map(esc).join(" · ")||"—"}</div></div>
+  ${i.axes?`<h3 class="kicker" style="margin:16px 0 8px">听感轮廓</h3><div class="axis-duo"><div>${axisBars(i.axes)}</div><div>${radar(i.axes,"hsl("+i.hue+" 45% 55%)",220)}</div></div>`:""}
+  ${islandSources(i)}
   <h3 class="kicker" style="margin:22px 0 8px">延伸自本岛的推荐（${ext.length}）</h3>
   ${ext.map(r=>`<div class="trk reco" data-go="#/why/${encodeURIComponent(r.id)}"><span class="n">${String(r.rank).padStart(2,"0")}</span><span class="t">${esc(r.track)} — ${esc(r.artist)}</span><span class="why">${r.typeLabel} ↗</span></div>`).join("")||`<div class="empty-state">当前兴趣组没有延伸推荐。</div>`}
   <div style="height:60px"></div>
@@ -581,22 +713,30 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  function workflowStageLabel(stage){return WORKFLOW_STAGE_LABELS[stage]||"处理中";}
  function workflowStageRank(stage){return WORKFLOW_STAGE_ORDER.indexOf(stage);}
  function workflowEventText(event){
-  if(event.event==="queued")return"已加入处理队列";
+  if(event.event==="queued")return event.workflow_mode==="recommendation_only"?"新 Atlas 已加入生成队列":"已进入处理队列";
+  if(event.event==="started"&&event.stage==="recommendation"&&event.reused_analysis_id)return"复用当前分析，开始生成新 Atlas";
   if(event.event==="failed")return event.error?`本次处理未完成 · ${event.error}`:"本次处理未完成";
   if(event.event==="stage_detail")return event.message||"正在准备当前阶段";
-  if(event.event==="awaiting_limit")return`歌单已读取 · ${event.track_count||0} 首，等待选择处理数量`;
-  if(event.event==="limit_applied")return`已确定处理数量 · 前 ${event.track_count||0} 首`;
-  if(event.event==="limit_rejected")return`处理数量未被接受 · ${event.error||"请重新选择"}`;
-  if(event.task_kind==="snapshot_import")return event.event==="task_completed"?`歌单已整理 · ${event.track_count||event.track_completed||0} 首`:"正在识别平台并拉取歌单";
-  if(event.task_kind==="track_limit")return event.task_status==="validated"?`处理数量已确定 · 前 ${event.track_count||0} 首`:"等待选择处理数量";
+  if(event.event==="awaiting_limit")return`歌单已读取 · ${event.track_count||0} 首`;
+  if(event.event==="limit_applied")return`已确定分析范围 · 前 ${event.track_count||0} 首`;
+  if(event.event==="limit_rejected")return`分析分位未被接受 · ${event.error||"请重新选择"}`;
+  if(event.task_kind==="snapshot_import")return event.event==="task_completed"?`歌单已读取 · ${event.track_count||event.track_completed||0} 首`:"正在读取歌单";
+  if(event.task_kind==="track_limit")return event.task_status==="validated"?`已确定分析范围 · 前 ${event.track_count||0} 首`:"等待选择分析分位";
   if(event.task_kind==="analysis_batch"){
    const index=event.task_index||0,total=event.task_total||0,count=event.track_count||0;
    if(event.event==="task_started")return`第 ${index}/${total} 批进入分析 · ${count} 首`;
    if(event.event==="task_completed")return`第 ${index}/${total} 批已完成 · 累计 ${event.track_completed||0}/${event.track_total||0} 首`;
    if(event.event==="task_failed")return`第 ${index}/${total} 批未完成 · ${event.error||"请检查任务日志"}`;
   }
-  if(event.task_kind==="analysis_aggregate")return event.event==="task_completed"?"分析包已校验，允许进入推荐阶段":"正在合并分析结果";
+  if(event.task_kind==="analysis_aggregate")return event.event==="task_completed"?"分析内容通过校验":"正在整理分析结果";
   if(event.task_kind==="context_prepare")return event.event==="task_completed"?"推荐研究上下文已准备":"正在准备候选研究上下文";
+  if(event.task_kind==="agent_style_analysis")return event.event==="task_completed"?"已生成兴趣岛":"正在生成兴趣岛";
+  if(event.task_kind==="relationship_collect")return event.event==="task_completed"?"已选出代表歌手":"正在挑选代表歌手";
+  if(event.task_kind==="analysis_packet_validate")return event.event==="task_completed"?"分析内容通过校验":"正在校验分析内容";
+  if(event.task_kind==="platform_discovery")return event.event==="task_completed"?"Atlas 候选已准备":"正在挑选 Atlas";
+  if(event.task_kind==="agent_recommendation_curate")return event.event==="task_completed"?"Atlas 匹配完成":"正在匹配 Atlas";
+  if(event.task_kind==="recommendation_review")return event.event==="task_completed"?"Atlas 校验完成":"正在校验 Atlas";
+  if(event.task_kind==="atlas_export")return event.event==="task_completed"?"迎接你的 Atlas":"正在准备 Atlas";
   if(event.task_kind==="recommendation_worker"){
    const round=event.round||0,roundTotal=event.round_total||0,index=event.worker_index||event.task_index||0,total=event.worker_total||event.task_total||0;
    if(event.event==="task_started")return`第 ${round}/${roundTotal} 轮 · 任务 ${index}/${total} 研究中`;
@@ -608,145 +748,223 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
    if(event.event==="round_completed")return event.message||`第 ${event.round||0} 轮完成 · 已接收 ${event.accepted_candidate_count||0} 个候选`;
    if(event.event==="round_failed")return`第 ${event.round||0} 轮未完成 · ${event.error||"请检查任务日志"}`;
   }
-  if(event.stage==="snapshot"&&event.event==="completed")return`歌单已整理 · ${event.track_count||0} 首`;
+  if(event.stage==="snapshot"&&event.event==="started")return"正在读取歌单";
+  if(event.stage==="snapshot"&&event.event==="completed")return`歌单已读取 · ${event.track_count||0} 首`;
   if(event.stage==="analysis"&&event.event==="started")return"开始分析歌单";
   if(event.stage==="analysis"&&event.event==="completed")return`歌单分析完成 · ${event.classified_track_count||0} 首`;
   if(event.stage==="recommendation"&&event.event==="started")return"开始生成推荐";
   if(event.stage==="recommendation"&&event.event==="completed")return`推荐已生成 · ${event.recommendation_count||0} 首`;
-  if(event.stage==="export"&&event.event==="started")return"正在更新 Atlas";
-  if(event.stage==="export"&&event.event==="completed")return"Atlas 已更新";
+  if(event.stage==="export"&&event.event==="completed")return"迎接你的 Atlas";
   return event.message||"正在处理中";
+ }
+ function workflowDisplayEvents(events){
+  const list=Array.isArray(events)?events:[];
+  const has=predicate=>list.some(predicate),seen=new Set();
+  return list.filter((event,index)=>{
+   if(!event)return false;
+   const key=workflowEventKey(event,index);
+   if(seen.has(key))return false;
+   seen.add(key);
+   if(event.stage==="snapshot"&&event.event==="completed"&&has(item=>item.task_kind==="snapshot_import"&&item.event==="task_completed"))return false;
+   if(event.task_kind==="snapshot_import"&&event.event==="task_started")return false;
+   if(event.task_kind==="track_limit"&&event.event==="task_completed"&&has(item=>item.event==="limit_applied"))return false;
+   if(event.task_kind==="analysis_aggregate"&&event.event==="task_completed"&&has(item=>item.task_kind==="analysis_packet_validate"&&item.event==="task_completed"))return false;
+   if(event.task_kind==="platform_discovery"&&event.event==="task_completed")return false;
+   if(event.task_kind==="agent_recommendation_curate"&&event.event==="task_completed")return false;
+   if(event.stage==="recommendation"&&event.event==="stage_detail"&&String(event.message||"").includes("Agent"))return false;
+   if(event.stage==="export"&&event.event==="task_started")return false;
+   if(event.stage==="export"&&event.event==="task_completed"&&has(item=>item.stage==="export"&&item.event==="completed"))return false;
+   return true;
+  });
  }
  function workflowEventTime(value){
   const raw=String(value||"");const date=new Date(raw);if(Number.isNaN(date.getTime()))return raw.slice(11,19);
   return new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Shanghai",hourCycle:"h23",hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(date);
  }
  function workflowEventKey(event,index){return String(event&&event.seq!==undefined?event.seq:`legacy-${index}`);}
- function workflowEventView(event){
-  const failed=event.event==="failed"||event.event==="task_failed"||event.event==="round_failed"||event.task_status==="failed"||event.task_status==="timeout";
-  const done=event.event==="completed"||event.event==="task_completed"||event.event==="round_completed"||event.task_status==="validated"||event.task_status==="published";
-  return{className:failed?"fail":done?"done":"",time:workflowEventTime(event.at),stage:workflowStageLabel(event.stage),text:workflowEventText(event)};
+ const WORKFLOW_PIPELINE_STEPS={
+  snapshot:[
+   {key:"snapshot_import",title:"歌单读取",detail:"读取平台歌单并核对曲目数量"},
+   {key:"track_limit",title:"分析分位选择",detail:"按歌单总数确定本次分析范围"},
+  ],
+  analysis:[
+   {key:"track_fact_collect",title:"曲目事实与版本核验",detail:"从公开平台记录核对曲名、艺人、版本与来源"},
+   {key:"agent_style_analysis",title:"智能助手整体风格与兴趣岛",detail:"根据已取得的资料总结整体风格并归纳三大兴趣岛"},
+   {key:"relationship_collect",title:"成员、合作与共享音乐人核验",detail:"从公开目录取得可追溯的音乐人关系"},
+   {key:"analysis_packet_validate",title:"分析包最终校验",detail:"核对曲目覆盖、来源边界与兴趣岛结构"},
+  ],
+  recommendation:[
+   {key:"platform_discovery",title:"公开平台候选召回",detail:"排除完整原歌单及一周缓存后构造真实候选池"},
+   {key:"agent_recommendation_curate",title:"智能助手候选编排与推荐文案",detail:"只使用真实候选编号，生成三组 Atlas 所需编排与文案"},
+   {key:"recommendation_review",title:"本地事实、来源与去重复核",detail:"校验候选数量、来源、跨组重复和三组 Atlas 结构"},
+   {key:"atlas_export",title:"三组 Atlas 导出",detail:"生成网页数据并更新当前 Atlas"},
+  ],
+  export:[
+   {key:"atlas_export",title:"Atlas 导出",detail:"生成网页数据并更新当前 Atlas"},
+  ],
+ };
+ function workflowTaskState(event){return event&&(
+  event.event==="task_failed"||event.task_status==="failed"||event.task_status==="timeout")?"failed":event&&(
+  event.event==="task_started"||event.task_status==="running")?"running":"done";}
+ function workflowLatestTask(events,kind){let found=null,order=-1;events.forEach((event,index)=>{if(event.task_kind!==kind)return;const next=Number.isFinite(Number(event.seq))?Number(event.seq):index;if(next>=order){found=event;order=next;}});return found;}
+ function workflowHasEvent(events,predicate){return events.some(predicate);}
+ function workflowLegacyStepState(events,key){
+  const analysisDone=workflowHasEvent(events,event=>event.stage==="analysis"&&event.event==="completed");
+  const recommendationDone=workflowHasEvent(events,event=>event.stage==="recommendation"&&event.event==="completed");
+  if(key==="agent_style_analysis"){
+   if(analysisDone||workflowHasEvent(events,event=>event.task_kind==="relationship_collect"))return"done";
+   if(workflowHasEvent(events,event=>event.stage==="analysis"&&((event.task_kind==="analysis_aggregate"&&event.event==="task_started")||(event.event==="stage_detail"&&String(event.message||"").includes("Agent")))))return"running";
+  }
+  if(key==="analysis_packet_validate"){
+   if(analysisDone||workflowHasEvent(events,event=>event.task_kind==="analysis_aggregate"&&event.event==="task_completed"))return"done";
+   if(workflowHasEvent(events,event=>event.task_kind==="relationship_collect"&&event.event==="task_completed"))return"running";
+  }
+  if(key==="agent_recommendation_curate"){
+   if(recommendationDone)return"done";
+   if(workflowHasEvent(events,event=>event.stage==="recommendation"&&event.event==="stage_detail"&&String(event.message||"").includes("Agent")))return"running";
+  }
+  if(key==="recommendation_review"){
+   if(recommendationDone||workflowHasEvent(events,event=>event.task_kind==="platform_discovery"&&event.event==="task_completed"))return"done";
+  }
+  return"waiting";
  }
- function workflowEventSignature(view){return JSON.stringify(view);}
- function workflowEventMarkup(event,index){
-  const view=workflowEventView(event),key=workflowEventKey(event,index);return`<div class="wf-event ${view.className}" data-event-key="${esc(key)}" data-event-index="${index}" data-signature="${esc(workflowEventSignature(view))}"><span class="stamp">${esc(view.time)}</span><span class="event-copy"><b class="event-stage">${esc(view.stage)}</b> · <span class="event-text">${esc(view.text)}</span></span></div>`;
+ function workflowStepDetail(step,event){
+  if(!event)return step.detail;
+  if(step.key==="track_fact_collect"&&event.event==="task_completed")return`已核验 ${event.verified_count||0} 首 · 有来源 ${event.source_recorded_count||0} 首 · 未确认 ${event.unverified_count||0} 首`;
+  if(step.key==="agent_style_analysis"&&event.event==="task_completed")return"已生成兴趣岛";
+  if(step.key==="relationship_collect"&&event.event==="task_completed")return"已选出代表歌手";
+  if(step.key==="analysis_packet_validate"&&event.event==="task_completed")return"分析内容通过校验";
+  if(step.key==="platform_discovery"&&event.event==="task_completed")return"Atlas 候选已准备";
+  if(step.key==="agent_recommendation_curate"&&event.event==="task_completed")return"Atlas 匹配完成";
+  if(step.key==="recommendation_review"&&event.event==="task_completed")return"Atlas 校验完成";
+  if(step.key==="atlas_export"&&event.event==="task_completed")return"迎接你的 Atlas";
+  return event.error||event.message||step.detail;
  }
- function updateWorkflowEventNode(node,view,index){
-  const signature=workflowEventSignature(view);node.dataset.eventIndex=String(index);if(node.dataset.signature===signature)return;
-  node.dataset.signature=signature;node.className=`wf-event ${view.className}`;
-  const stamp=node.querySelector(".stamp"),stage=node.querySelector(".event-stage"),text=node.querySelector(".event-text");
-  if(stamp&&stamp.textContent!==view.time)stamp.textContent=view.time;
-  if(stage&&stage.textContent!==view.stage)stage.textContent=view.stage;
-  if(text&&text.textContent!==view.text)text.textContent=view.text;
- }
- function workflowTaskState(event){return event.event==="task_failed"||event.task_status==="failed"||event.task_status==="timeout"?"failed":event.event==="task_started"||event.task_status==="running"?"running":"done";}
- function workflowTaskRecords(events,kind,round){
-  const records=new Map();events.forEach((event,index)=>{
-   if(event.task_kind!==kind||!event.task_id||(round!==undefined&&Number(event.round)!==round))return;
-   const order=Number.isFinite(Number(event.seq))?Number(event.seq):index;const key=String(event.task_id);const prior=records.get(key);
-   if(!prior||order>=prior._order)records.set(key,{...event,_order:order});
+ function workflowPipelineRecords(job,group,recommendationOnly=false){
+  const events=Array.isArray(job&&job.events)?job.events:[];
+  const definitions=WORKFLOW_PIPELINE_STEPS[group]||[];
+  const records=definitions.map(step=>{
+   if(recommendationOnly&&(group==="snapshot"||group==="analysis"))return{...step,state:"reused",detail:"沿用当前音乐版图中已校验的结果",event:null};
+   const event=workflowLatestTask(events,step.key);let state=event?workflowTaskState(event):workflowLegacyStepState(events,step.key);
+   if(job.status==="failed"&&state==="running")state="failed";
+   return{...step,state,detail:workflowStepDetail(step,event),event};
   });
-  return Array.from(records.values()).sort((a,b)=>{const stateRank={running:0,done:1,failed:2};const stateDiff=stateRank[workflowTaskState(a)]-stateRank[workflowTaskState(b)];return stateDiff||b._order-a._order;});
+  if(job.status==="failed"&&!records.some(item=>item.state==="failed")){
+   const effectiveStage=workflowEffectiveStage(job,events);const targetGroup=effectiveStage==="analysis"?"analysis":effectiveStage==="recommendation"||effectiveStage==="export"?"recommendation":"";
+   if(group===targetGroup){const target=[...records].reverse().find(item=>item.state==="done")||null;const index=target?records.indexOf(target)+1:0;if(index<records.length&&records[index].state==="waiting")records[index].state="failed";}
+  }
+  return records;
  }
- function workflowTaskMarkup(task,key,kind,waiting){
-  const state=waiting?"waiting":workflowTaskState(task);
-  const name=waiting?"等待下一个任务":kind==="taste"?(task.task_kind==="artist_summary"?"歌手分布分析 · 单任务":"品味摘要分析 · 单任务"):kind==="analysis_batch"?`第 ${task.task_index||"—"}/${task.task_total||"—"} 批分析`:`第 ${task.round||"—"}/${task.round_total||"—"} 轮 · 任务 ${task.worker_index||"—"}`;
-  const detail=waiting?"并行槽位空闲":kind==="taste"?"按歌单规模采用整体分析":kind==="analysis_batch"?`${task.track_count||0} 首${task.reused_result?" · 复用已完成结果":""}`:"候选研究分片";
-  const status=waiting?"等待":state==="running"?"进行中":state==="failed"?"失败":kind==="taste"?"已完成":kind==="analysis_batch"?"已完成":"已返回";
-  return`<div class="wf-task-row ${state}" data-task-key="${esc(key)}"><div><span class="wf-task-name">${esc(name)}</span><span class="wf-task-detail">${esc(detail)}</span></div><span class="wf-task-state">${esc(status)}</span></div>`;
+ function workflowPipelineMarkup(item){
+  const status=item.state==="running"?"进行中":item.state==="failed"?"失败":item.state==="done"?"已完成":item.state==="reused"?"已复用":"等待";
+  return`<div class="wf-task-row ${esc(item.state)}" data-task-key="${esc(item.key)}"><div><span class="wf-task-name">${esc(item.title)}</span><span class="wf-task-detail">${esc(item.detail)}</span></div><span class="wf-task-state">${status}</span></div>`;
  }
- function updateWorkflowTaskNode(node,task,kind,waiting){
-  const state=waiting?"waiting":workflowTaskState(task);node.className=`wf-task-row ${state}`;
-  const name=waiting?"等待下一个任务":kind==="analysis_batch"?`第 ${task.task_index||"—"}/${task.task_total||"—"} 批分析`:`第 ${task.round||"—"}/${task.round_total||"—"} 轮 · 任务 ${task.worker_index||"—"}`;
-  const detail=waiting?"并行槽位空闲":kind==="analysis_batch"?`${task.track_count||0} 首${task.reused_result?" · 复用已完成结果":""}`:"候选研究分片";
-  const status=waiting?"等待":state==="running"?"进行中":state==="failed"?"失败":kind==="analysis_batch"?"已完成":"已返回";
-  const nameNode=node.querySelector(".wf-task-name"),detailNode=node.querySelector(".wf-task-detail"),statusNode=node.querySelector(".wf-task-state");
-  if(nameNode&&nameNode.textContent!==name)nameNode.textContent=name;if(detailNode&&detailNode.textContent!==detail)detailNode.textContent=detail;if(statusNode&&statusNode.textContent!==status)statusNode.textContent=status;
- }
- function workflowSyncTaskList(container,records,kind,slotCount){
-  if(!container)return;const desired=records.slice(0,slotCount).map((task)=>({task,key:String(task.task_id),waiting:false}));
-  for(let index=desired.length;index<slotCount;index++)desired.push({task:{},key:`empty-${kind}-${index}`,waiting:true});
-  const nodes=Array.from(container.querySelectorAll(".wf-task-row"));const keys=new Set(desired.map(item=>item.key));nodes.forEach(node=>{if(!keys.has(node.dataset.taskKey))node.remove();});
-  let cursor=container.firstElementChild;desired.forEach(item=>{
-   let node=Array.from(container.querySelectorAll(".wf-task-row")).find(candidate=>candidate.dataset.taskKey===item.key);
-   if(!node){container.insertAdjacentHTML("beforeend",workflowTaskMarkup(item.task,item.key,kind,item.waiting));node=Array.from(container.querySelectorAll(".wf-task-row")).find(candidate=>candidate.dataset.taskKey===item.key);}
-   if(node)updateWorkflowTaskNode(node,item.task,kind,item.waiting);
-   if(node&&node!==cursor)container.insertBefore(node,cursor);
-   cursor=node?node.nextElementSibling:cursor;
-  });
+ function workflowSyncPipelineList(container,records){
+  if(!container)return;const signature=JSON.stringify(records.map(item=>[item.key,item.state,item.title,item.detail]));if(container.dataset.signature===signature)return;container.dataset.signature=signature;container.innerHTML=records.map(workflowPipelineMarkup).join("");
  }
  function workflowProgressView(job){
-  const events=Array.isArray(job.events)?job.events:[];let analysisTotal=0,analysisCompleted=0,analysisTrackTotal=0,analysisTrackCompleted=0,analysisAggregateDone=false;
-  let recommendationRound=0,recommendationRoundTotal=0,acceptedCandidates=0,candidateTarget=0;
+  const events=Array.isArray(job.events)?job.events:[];let analysisTrackTotal=0,analysisTrackCompleted=0,candidateCount=0,atlasGroupCount=0,totalUniqueRecommendations=0;
+  const reusedEvent=events.find(event=>event&&event.reused_analysis_id);const recommendationOnly=job.workflow_mode==="recommendation_only"||Boolean(reusedEvent);const reusedAnalysisId=job.reused_analysis_id||reusedEvent?.reused_analysis_id||"";
   events.forEach(event=>{
    if(event.stage==="analysis"){
-    if(event.task_kind==="analysis_batch"||event.task_kind==="analysis_aggregate"){
-     if(Number.isFinite(Number(event.task_total)))analysisTotal=Math.max(analysisTotal,Number(event.task_total));
-     if(Number.isFinite(Number(event.completed)))analysisCompleted=Math.max(analysisCompleted,Number(event.completed));
-     if(Number.isFinite(Number(event.track_total)))analysisTrackTotal=Math.max(analysisTrackTotal,Number(event.track_total));
-     if(Number.isFinite(Number(event.track_completed)))analysisTrackCompleted=Math.max(analysisTrackCompleted,Number(event.track_completed));
-    }
-    if(event.task_kind==="analysis_aggregate"&&event.event==="task_completed")analysisAggregateDone=true;
     if(Number.isFinite(Number(event.source_track_count)))analysisTrackTotal=Math.max(analysisTrackTotal,Number(event.source_track_count));
+    if(Number.isFinite(Number(event.track_total)))analysisTrackTotal=Math.max(analysisTrackTotal,Number(event.track_total));
+    if(Number.isFinite(Number(event.track_completed)))analysisTrackCompleted=Math.max(analysisTrackCompleted,Number(event.track_completed));
    }
-   if(event.stage==="recommendation"){
-    if(Number.isFinite(Number(event.round)))recommendationRound=Math.max(recommendationRound,Number(event.round));
-    if(Number.isFinite(Number(event.round_total)))recommendationRoundTotal=Math.max(recommendationRoundTotal,Number(event.round_total));
-    if(Number.isFinite(Number(event.accepted_candidate_count)))acceptedCandidates=Math.max(acceptedCandidates,Number(event.accepted_candidate_count));
-    if(Number.isFinite(Number(event.candidate_target)))candidateTarget=Math.max(candidateTarget,Number(event.candidate_target));
+   if(event.stage==="recommendation"||event.stage==="export"){
+    if(Number.isFinite(Number(event.candidate_count)))candidateCount=Math.max(candidateCount,Number(event.candidate_count));
+    if(Number.isFinite(Number(event.atlas_group_count)))atlasGroupCount=Math.max(atlasGroupCount,Number(event.atlas_group_count));
+    if(Number.isFinite(Number(event.recommendation_group_count)))atlasGroupCount=Math.max(atlasGroupCount,Number(event.recommendation_group_count));
+    if(Number.isFinite(Number(event.total_unique_recommendation_count)))totalUniqueRecommendations=Math.max(totalUniqueRecommendations,Number(event.total_unique_recommendation_count));
    }
   });
-  const currentRound=recommendationRound||undefined;
-  const tasteEvent=events.find(e=>e.task_kind==="taste_summary"||e.task_kind==="artist_summary");
-  const analysisMode=tasteEvent?tasteEvent.task_kind:"track_research";
-  return{events,analysisMode,analysisTotal,analysisCompleted,analysisTrackTotal,analysisTrackCompleted,analysisAggregateDone,recommendationRound,recommendationRoundTotal,acceptedCandidates,candidateTarget,analysisTasks:analysisMode==="track_research"?workflowTaskRecords(events,"analysis_batch"):workflowTaskRecords(events,analysisMode),recommendationTasks:workflowTaskRecords(events,"recommendation_worker",currentRound)};
+  return{events,recommendationOnly,reusedAnalysisId,analysisTrackTotal,analysisTrackCompleted,candidateCount,atlasGroupCount,totalUniqueRecommendations};
  }
- function workflowStageState(stage,job,events){
+ function workflowEffectiveStage(job,events){
+  if(WORKFLOW_STAGE_ORDER.includes(job&&job.stage))return job.stage;
+  for(let index=events.length-1;index>=0;index--){if(WORKFLOW_STAGE_ORDER.includes(events[index]&&events[index].stage))return events[index].stage;}
+  return"snapshot";
+ }
+ function workflowStageState(stage,job,events,recommendationOnly=false){
+  if(recommendationOnly&&(stage==="snapshot"||stage==="analysis"))return"reused";
+  if(job.status==="completed")return"done";
   const completed=events.some(event=>event.stage===stage&&event.event==="completed");if(completed)return"done";
-  const current=workflowStageRank(job.stage),rank=workflowStageRank(stage);if(job.status==="queued")return stage==="snapshot"?"current":"pending";
-  if(current>=0&&rank<current)return"done";return stage===job.stage?"current":"pending";
+  const effective=workflowEffectiveStage(job,events);
+  if(job.status==="failed"&&stage===effective)return"failed";
+  if(recommendationOnly&&job.status==="queued")return stage==="recommendation"?"current":"pending";
+  const current=workflowStageRank(effective),rank=workflowStageRank(stage);if(job.status==="queued")return stage==="snapshot"?"current":"pending";
+  if(current>=0&&rank<current)return"done";return stage===effective?"current":"pending";
  }
  function workflowElapsed(job){
   const start=Date.parse(job.created_at||"");if(!Number.isFinite(start))return"—";const end=job.status==="queued"||job.status==="running"?Date.now():(Date.parse(job.updated_at||"")||Date.now());const seconds=Math.max(0,Math.floor((end-start)/1000));return`${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;
  }
  function workflowUpdateClock(job){
-  clearInterval(workflowClockTimer);workflowClockTimer=null;const flow=document.getElementById("flow");if(!flow||!flow.classList.contains("on"))return;const tick=()=>{const node=flow.querySelector("[data-wf-elapsed]");if(node)node.textContent=workflowElapsed(job);};tick();workflowClockTimer=setInterval(tick,1000);}
+  clearInterval(workflowClockTimer);workflowClockTimer=null;const flow=document.getElementById("flow");if(!flow||!flow.classList.contains("on"))return;const tick=()=>{const node=flow.querySelector("[data-wf-elapsed]");if(node)node.textContent=workflowElapsed(job);};tick();if(workflowActive(job.status))workflowClockTimer=setInterval(tick,1000);}
+ function workflowLogText(job){
+  const events=workflowDisplayEvents(job&&job.events);const lines=[
+   `任务 ID: ${job&&job.id||"—"}`,
+   `状态: ${statusText(job&&job.status)||"未知"}`,
+   `当前阶段: ${workflowStageLabel(workflowEffectiveStage(job,events))}`,
+   `开始时间: ${job&&job.created_at||"—"}`,
+   `更新时间: ${job&&job.updated_at||"—"}`,
+   `退出码: ${job&&job.exit_code===null||job&&job.exit_code===undefined?"—":job.exit_code}`,
+   `运行目录: ${job&&job.runtime_dir||"—"}`,
+   "",`事件记录 (${events.length})`,
+  ];
+  events.forEach(event=>{const error=event&&event.error?` | 错误: ${String(event.error).replace(/\s+/g," ")}`:"";lines.push(`[${workflowEventTime(event.at)}] ${workflowStageLabel(event.stage)} | ${workflowEventText(event)}${error}`);});
+  const stderr=String(job&&job.stderr_tail||"").trim();lines.push("","标准错误输出（最近 2000 字）",stderr||"无标准错误输出");return lines.join("\n");
+ }
+ function workflowPanelStat(records){const done=records.filter(item=>item.state==="done"||item.state==="reused").length,failed=records.some(item=>item.state==="failed"),running=records.some(item=>item.state==="running"),reused=records.length>0&&records.every(item=>item.state==="reused");return failed?`失败 · ${done}/${records.length}`:running?`进行中 · ${done}/${records.length}`:reused?`分析包已复用 · ${done}/${records.length}`:done===records.length?`已完成 · ${done}/${records.length}`:`等待 · ${done}/${records.length}`;}
+ function workflowStageStateText(state){return state==="done"?"已完成":state==="reused"?"已复用":state==="failed"?"失败":state==="current"?"进行中":"等待";}
+ function workflowSyncStagePanels(flow,job,events,recommendationOnly){
+  WORKFLOW_STAGE_ORDER.forEach(stage=>{
+   const panel=flow.querySelector(`[data-wf-stage-panel="${stage}"]`);if(!panel)return;
+   const state=workflowStageState(stage,job,events,recommendationOnly),stateNode=panel.querySelector("[data-wf-stage-panel-state]");
+   panel.className=`wf-stage-panel ${state}`;if(stateNode)stateNode.textContent=workflowStageStateText(state);
+   const previous=panel.dataset.state||"";panel.dataset.state=state;
+   if(panel.dataset.userToggled!=="1"&&(panel.dataset.initialized!=="1"||previous!==state))panel.open=state==="current"||state==="failed";
+   panel.dataset.initialized="1";
+  });
+ }
  function renderWorkflowJob(job){
-  const flow=document.getElementById("flow");if(!flow||!job)return;const active=workflowActive(job.status);syncLimitControls(job);
-  if(!active){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
+  rememberJobPlaylist(job);
+  const flow=document.getElementById("flow");if(!flow||!job)return;const active=workflowActive(job.status),completed=job.status==="completed",failed=job.status==="failed",terminal=completed||failed;syncLimitControls(job);
+  if(!active&&!terminal){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
   flow.classList.add("on");const jobId=String(job.id||"");let step=flow.querySelector(".fstep");
   if(!step||flow.dataset.jobId!==jobId){
-   flow.innerHTML=`<div class="wf-dashboard"><div class="fstep"></div><div class="wf-stagebar" role="list">${WORKFLOW_STAGE_ORDER.map((stage,index)=>`<div class="wf-stage" data-stage="${stage}" role="listitem"><span class="wf-stage-index">0${index+1}</span><span class="wf-stage-label">${workflowStageLabel(stage)}</span><span class="wf-stage-state">等待</span></div>`).join("")}</div><div class="wf-summary"><span class="wf-summary-main" data-wf-summary>正在处理歌单</span><span data-wf-elapsed>00:00</span><span class="wf-summary-count" data-wf-count>准备中</span></div><div class="wf-detail-grid"><section class="wf-task-panel"><div class="wf-panel-head"><h4>第二步 · 歌单分析</h4><span class="wf-panel-stat" data-wf-stat="analysis">0/0 批</span></div><p class="wf-panel-note" data-wf-note="analysis">等待分析任务启动。</p><div class="wf-task-list" data-wf-tasks="analysis"></div></section><section class="wf-task-panel"><div class="wf-panel-head"><h4>第三步 · 生成推荐</h4><span class="wf-panel-stat" data-wf-stat="recommendation">等待</span></div><p class="wf-panel-note" data-wf-note="recommendation">等待第二步分析包校验。</p><div class="wf-task-list" data-wf-tasks="recommendation"></div></section></div><div class="wf-events"><div class="wf-events-title">最近事件 · 北京时间</div><div data-wf-events></div></div></div>`;
+   flow.innerHTML=`<div class="wf-dashboard"><div class="fstep"></div><div class="wf-stagebar" role="list">${WORKFLOW_STAGE_ORDER.map((stage,index)=>`<div class="wf-stage" data-stage="${stage}" role="listitem"><span class="wf-stage-index">0${index+1}</span><span class="wf-stage-label">${workflowStageLabel(stage)}</span><span class="wf-stage-state">等待</span></div>`).join("")}</div><div class="wf-summary"><span class="wf-summary-main" data-wf-summary>正在处理歌单</span><span data-wf-elapsed>00:00</span><span class="wf-summary-count" data-wf-count>准备中</span></div><div class="wf-terminal-error" data-wf-terminal-error></div><div class="wf-stage-panels"><details class="wf-stage-panel" data-wf-stage-panel="snapshot"><summary><span>第一步 · 整理歌单</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="snapshot">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note">读取歌单、确认曲目数量并确定分析分位。</p><div class="wf-task-list" data-wf-tasks="snapshot"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="analysis"><summary><span>第二步 · 分析歌单</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="analysis">等待</span></summary><div class="wf-stage-panel-body"><div class="wf-panel-head"><span class="wf-panel-stat" data-wf-stat="analysis">等待 · 0/4</span></div><p class="wf-panel-note" data-wf-note="analysis">按真实性边界逐项取得资料、生成总结并完成校验。</p><div class="wf-task-list" data-wf-tasks="analysis"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="recommendation"><summary><span>第三步 · 生成推荐</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="recommendation">等待</span></summary><div class="wf-stage-panel-body"><div class="wf-panel-head"><span class="wf-panel-stat" data-wf-stat="recommendation">等待 · 0/4</span></div><p class="wf-panel-note" data-wf-note="recommendation">第二步校验通过后，依次召回、编排、复核和生成 Atlas。</p><div class="wf-task-list" data-wf-tasks="recommendation"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="export"><summary><span>第四步 · 更新 Atlas</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="export">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note">整理最终结果并更新当前 Atlas。</p><div class="wf-task-list" data-wf-tasks="export"></div></div></details></div><div class="wf-log-tools"><button type="button" class="wf-log-button" data-wf-log-toggle aria-expanded="false">查看运行日志</button><button type="button" class="wf-log-button" data-wf-log-copy>复制日志</button></div><div class="wf-log-panel hidden" data-wf-log-panel><pre data-wf-log-text></pre></div></div>`;
    flow.dataset.jobId=jobId;step=flow.querySelector(".fstep");
   }
-  const view=workflowProgressView(job),events=view.events,stepText=`正在处理歌单 · ${workflowStageLabel(job.stage)}`;if(step.textContent!==stepText)step.textContent=stepText;
-  WORKFLOW_STAGE_ORDER.forEach(stage=>{const node=flow.querySelector(`[data-stage="${stage}"]`);if(!node)return;const state=workflowStageState(stage,job,events);node.className=`wf-stage ${state}`;const label=node.querySelector(".wf-stage-label"),stateNode=node.querySelector(".wf-stage-state");if(label)label.textContent=workflowStageLabel(stage);if(stateNode)stateNode.textContent=state==="done"?"已完成":state==="current"?"进行中":"等待";});
+  const view=workflowProgressView(job),events=view.events;
+  const stepText=completed?(view.recommendationOnly?"新 Atlas 运行已完成":"运行已完成"):failed?(view.recommendationOnly?"新 Atlas 运行失败":"运行未完成"):view.recommendationOnly?"正在生成新 Atlas · 生成推荐":`正在处理歌单 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`;
+  if(step.textContent!==stepText)step.textContent=stepText;step.className=`fstep ${terminal?failed?"failed":"done":""}`;
+  WORKFLOW_STAGE_ORDER.forEach(stage=>{const node=flow.querySelector(`[data-stage="${stage}"]`);if(!node)return;const state=workflowStageState(stage,job,events,view.recommendationOnly);node.className=`wf-stage ${state}`;const stateNode=node.querySelector(".wf-stage-state");if(stateNode)stateNode.textContent=state==="done"?"已完成":state==="reused"?"已复用":state==="failed"?"失败":state==="current"?"进行中":"等待";});
+  const snapshotRecords=workflowPipelineRecords(job,"snapshot",view.recommendationOnly),analysisRecords=workflowPipelineRecords(job,"analysis",view.recommendationOnly),recommendationRecords=workflowPipelineRecords(job,"recommendation",view.recommendationOnly),exportRecords=workflowPipelineRecords(job,"export",view.recommendationOnly);
+  workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="snapshot"]'),snapshotRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="analysis"]'),analysisRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="recommendation"]'),recommendationRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="export"]'),exportRecords);workflowSyncStagePanels(flow,job,events,view.recommendationOnly);
+  const analysisStat=flow.querySelector('[data-wf-stat="analysis"]'),recommendationStat=flow.querySelector('[data-wf-stat="recommendation"]');if(analysisStat)analysisStat.textContent=workflowPanelStat(analysisRecords);if(recommendationStat)recommendationStat.textContent=workflowPanelStat(recommendationRecords);
   const summary=flow.querySelector("[data-wf-summary]"),count=flow.querySelector("[data-wf-count]"),analysisNote=flow.querySelector('[data-wf-note="analysis"]'),recommendationNote=flow.querySelector('[data-wf-note="recommendation"]');
-  if(summary)summary.textContent=`${job.status==="queued"?"排队中":job.status==="awaiting_limit"?"等待选择处理数量":"正在处理"} · ${workflowStageLabel(job.stage)}`;
-  const limitView=workflowLimitView(job);
-  if(count)count.textContent=limitView?`歌单已读取 ${limitView.maximum} 首`:`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
-  const analysisStat=flow.querySelector('[data-wf-stat="analysis"]');
-  if(analysisStat)analysisStat.textContent=view.analysisMode==="taste_summary"?"品味摘要 · 单任务":view.analysisMode==="artist_summary"?"歌手摘要 · 单任务":`${view.analysisCompleted}/${view.analysisTotal} 批 · ${view.analysisTrackCompleted}/${view.analysisTrackTotal} 首`;
-  if(analysisNote)analysisNote.textContent=view.analysisMode!=="track_research"?"按歌单规模采用整体分析（单任务），完成后进入第三步":view.analysisAggregateDone?"分析包已校验，第三步已获得启动条件":`${WORKFLOW.analysis_parallelism||5} 个并行槽位 · 所有批次完成后才进入第三步`;
-  const recommendationStat=flow.querySelector('[data-wf-stat="recommendation"]');if(recommendationStat)recommendationStat.textContent=view.recommendationRound?`第 ${view.recommendationRound}/${view.recommendationRoundTotal||"—"} 轮 · ${view.acceptedCandidates}/${view.candidateTarget||"—"} 候选`:"等待分析包";
-  if(recommendationNote)recommendationNote.textContent=view.recommendationRound?`${WORKFLOW.recommendation_parallelism||4} 个并行槽位 · 仅在第二步完成并校验后启动第三步`:`等待第二步分析包校验。`;
-  const analysisKind=view.analysisMode==="track_research"?"analysis_batch":"taste";
-  workflowSyncTaskList(flow.querySelector('[data-wf-tasks="analysis"]'),view.analysisTasks,analysisKind,view.analysisMode==="track_research"?(Number(WORKFLOW.analysis_parallelism)||5):1);
-  workflowSyncTaskList(flow.querySelector('[data-wf-tasks="recommendation"]'),view.recommendationTasks,"recommendation_worker",Number(WORKFLOW.recommendation_parallelism)||4);
-  const eventsContainer=flow.querySelector("[data-wf-events]"),visibleStart=Math.max(0,events.length-12),visible=events.slice(visibleStart),visibleKeys=new Set(visible.map((event,index)=>workflowEventKey(event,visibleStart+index)));
-  if(eventsContainer){Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).forEach(node=>{if(!visibleKeys.has(node.dataset.eventKey))node.remove();});if(!visible.length){if(!eventsContainer.querySelector("[data-placeholder]"))eventsContainer.insertAdjacentHTML("beforeend",'<div class="wf-event" data-placeholder>正在准备…</div>');}else{const placeholder=eventsContainer.querySelector("[data-placeholder]");if(placeholder)placeholder.remove();visible.forEach((event,offset)=>{const index=visibleStart+offset,key=workflowEventKey(event,index);let node=Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).find(candidate=>candidate.dataset.eventKey===key);const eventView=workflowEventView(event);if(node)updateWorkflowEventNode(node,eventView,index);else{eventsContainer.insertAdjacentHTML("beforeend",workflowEventMarkup(event,index));node=Array.from(eventsContainer.querySelectorAll(".wf-event[data-event-key]")).find(candidate=>candidate.dataset.eventKey===key);}});}}
-  workflowUpdateClock(job);
+  if(summary)summary.textContent=completed?(view.recommendationOnly?"新 Atlas 已生成 · 网页数据已更新":"运行已完成 · Atlas 已更新"):failed?`运行未完成 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`:view.recommendationOnly?(job.status==="queued"?"新 Atlas 排队中":"正在生成新 Atlas"):`${job.status==="queued"?"排队中":job.status==="awaiting_limit"?"等待选择处理数量":"正在处理"} · ${workflowStageLabel(workflowEffectiveStage(job,events))}`;
+  const limitView=workflowLimitView(job);if(count)count.textContent=failed?`退出码 ${job.exit_code===null||job.exit_code===undefined?"—":job.exit_code}`:view.recommendationOnly?(completed?`${view.candidateCount||view.totalUniqueRecommendations||0} 个候选已核验${view.atlasGroupCount?` · ${view.atlasGroupCount} 组 Atlas`:""}`:"正在生成新候选"):limitView?`歌单已读取 ${limitView.maximum} 首`:completed?`${view.analysisTrackCompleted||view.analysisTrackTotal||0} 首已分析 · ${view.atlasGroupCount||3} 组 Atlas`:`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
+  if(analysisNote)analysisNote.textContent=view.recommendationOnly?"沿用当前音乐版图的已校验分析，本次不重新分析歌单。":"曲目事实、智能助手风格总结、音乐人关系和分析包校验均独立显示状态。";
+  if(recommendationNote)recommendationNote.textContent="第二步校验通过后，依次召回真实候选、智能助手编排、本地复核并生成三组 Atlas。";
+  const terminalError=flow.querySelector("[data-wf-terminal-error]");if(terminalError){terminalError.classList.toggle("on",failed);terminalError.textContent=failed?`失败原因：${workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。"}`:"";}
+  const logText=flow.querySelector("[data-wf-log-text]");if(logText)logText.textContent=workflowLogText(job);workflowUpdateClock(job);
+ }
+ async function responseJson(response, fallbackMessage){
+  const contentType=String(response.headers.get("content-type")||"").toLowerCase();
+  if(!contentType.includes("application/json")){
+   throw new Error(response.status===404?"新 Atlas 接口尚未加载，请刷新页面后重试":fallbackMessage);
+  }
+  try{return await response.json();}catch{throw new Error(fallbackMessage);}
  }
  async function refreshAtlas(){
   try{const response=await fetch("/api/atlas",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){applyAtlasPayload(payload);render();}}catch{}
  }
- function setWorkflowButtonBusy(busy){const form=document.getElementById("workflow-form"),button=form&&form.querySelector('button[type="submit"]');if(button)button.disabled=Boolean(busy)||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);}
-/* ---------------- 处理数量档位（歌单已读取后选择） ---------------- */
-function workflowLimitOptions(){
- const options=WORKFLOW&&Array.isArray(WORKFLOW.track_limit_options)?WORKFLOW.track_limit_options:[];
- return options.filter(value=>Number.isInteger(value)&&value>0);
-}
-function workflowLimitDefault(){const value=Number(WORKFLOW&&WORKFLOW.track_limit_default);return Number.isInteger(value)&&value>0?value:(workflowLimitOptions()[0]||30);}
+ function setWorkflowButtonBusy(busy){const active=Boolean(busy),form=document.getElementById("workflow-form"),button=form&&form.querySelector('button[type="submit"]');if(button)button.disabled=active||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);document.querySelectorAll("[data-atlas-new]").forEach(atlasButton=>{atlasButton.disabled=active;});}
+/* ---------------- 分位选择（歌单已读取后选择） ---------------- */
+const TRACK_PERCENTILE_OPTIONS=[0.25,0.5,1];
+function workflowPercentileDefault(){const value=Number(WORKFLOW&&WORKFLOW.track_percentile_default);return TRACK_PERCENTILE_OPTIONS.includes(value)?value:1;}
+function percentileTrackLimit(maximum,percentile){return Math.max(1,Math.ceil(maximum*percentile));}
 /* 只有歌单真实读完后工作流才会进入 awaiting_limit；上限来自该事件携带的曲目数。 */
 function workflowLimitView(job){
  if(!job||job.status!=="awaiting_limit")return null;
@@ -759,33 +977,29 @@ function workflowLimitView(job){
  }
  return null;
 }
-/* 档位只列出小于上限的值，末尾追加“全部”（= 歌单实际曲目数），不出现选不了的高档位。 */
+/* 分位按歌单真实总数向上取整，只显示 25%、50% 与 100%。 */
 function renderLimitChips(maximum){
  const chips=document.getElementById("wf-limit-chips");if(!chips)return;
- const options=workflowLimitOptions().filter(value=>value<maximum);
- const signature=options.join(",")+"|"+maximum;if(chips.dataset.signature===signature)return;
+ const percentileValues=TRACK_PERCENTILE_OPTIONS.map(percentile=>({percentile,limit:percentileTrackLimit(maximum,percentile)}));
+ const signature=percentileValues.map(item=>item.percentile+":"+item.limit).join(",")+"|"+maximum;if(chips.dataset.signature===signature)return;
  chips.dataset.signature=signature;
- const buttons=options.map(value=>`<button type="button" class="chip" data-limit="${value}">${value}</button>`);
- buttons.push(`<button type="button" class="chip" data-limit="${maximum}">全部</button>`);
- chips.innerHTML=buttons.join("");
+ chips.innerHTML=percentileValues.map(item=>`<button type="button" class="chip" data-limit="${item.limit}" data-percentile="${item.percentile}">${item.percentile===1?"100% · 全部":Math.round(item.percentile*100)+"% · "+item.limit+" 首"}</button>`).join("");
 }
 function limitFieldError(message){
  const field=document.getElementById("wf-limit-field"),input=document.getElementById("wf-limit"),error=document.getElementById("wf-limit-error");if(!field||!input||!error)return;
  const active=Boolean(message);field.classList.toggle("has-error",active);input.setAttribute("aria-invalid",active?"true":"false");error.textContent=message||"";
 }
 function currentLimitValue(){
- const input=document.getElementById("wf-limit");if(!input)return{ok:false,message:"请输入处理数量。"};
- const raw=String(input.value||"").trim();
- if(!/^\d+$/.test(raw))return{ok:false,message:"处理数量必须是整数。"};
- const value=Number(raw);if(value<1)return{ok:false,message:"处理数量至少为 1 首。"};
- const maximum=Number(input.max);
- if(Number.isInteger(maximum)&&maximum>0&&value>maximum)return{ok:false,message:`不能超过歌单曲目数 ${maximum} 首。`};
- return{ok:true,value};
+ const input=document.getElementById("wf-limit");if(!input)return{ok:false,message:"请选择分析分位。"};
+ const maximum=Number(input.dataset.maximum),percentile=Number(input.dataset.percentile);
+ if(!Number.isInteger(maximum)||maximum<1||!TRACK_PERCENTILE_OPTIONS.includes(percentile))return{ok:false,message:"请选择 25%、50% 或 100% 分位。"};
+ const value=percentileTrackLimit(maximum,percentile);
+ return{ok:true,value,percentile};
 }
 function syncLimitChipHighlight(){
  const input=document.getElementById("wf-limit"),chips=document.getElementById("wf-limit-chips");if(!input||!chips)return;
- const raw=String(input.value||"").trim();
- chips.querySelectorAll("[data-limit]").forEach(chip=>chip.classList.toggle("on",chip.dataset.limit===raw));
+ const percentile=input.dataset.percentile||"";
+ chips.querySelectorAll("[data-percentile]").forEach(chip=>chip.classList.toggle("on",chip.dataset.percentile===percentile));
 }
 function syncLimitControls(job){
  const panel=document.getElementById("wf-limit-field"),submit=document.getElementById("wf-submit"),confirm=document.getElementById("wf-limit-confirm"),cancel=document.getElementById("wf-cancel"),input=document.getElementById("wf-limit");
@@ -796,21 +1010,31 @@ function syncLimitControls(job){
  }
  panel.classList.remove("hidden");confirm.classList.remove("hidden");cancel.classList.remove("hidden");submit.classList.add("hidden");
  const maximumNode=document.getElementById("wf-limit-max"),note=document.getElementById("wf-limit-note");
- if(input)input.max=String(view.maximum);
  if(maximumNode)maximumNode.textContent=String(view.maximum);
- if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。选择前 N 首继续处理（选“全部”即处理全部 ${view.maximum} 首）；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择前 N 首继续处理。`;
+ if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。请选择 25%（${percentileTrackLimit(view.maximum,0.25)} 首）、50%（${percentileTrackLimit(view.maximum,0.5)} 首）或 100%（全部）；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择分析分位。`;
  renderLimitChips(view.maximum);
  if(input&&input.dataset.jobId!==job.id){
-  input.dataset.jobId=job.id;input.value=String(Math.min(workflowLimitDefault(),view.maximum));limitFieldError("");
+  const percentile=workflowPercentileDefault();input.dataset.jobId=job.id;input.dataset.maximum=String(view.maximum);input.value=String(percentileTrackLimit(view.maximum,percentile));input.dataset.percentile=String(percentile);limitFieldError("");
  }
  syncLimitChipHighlight();
 }
  function stopWorkflowStream(){if(workflowEventSource){workflowEventSource.close();workflowEventSource=null;}workflowStreamId=null;}
  async function finishWorkflowJob(job){
-  clearTimeout(workflowPollTimer);workflowPollTimer=null;stopWorkflowStream();if(ACTIVE_JOB_ID===job.id)ACTIVE_JOB_ID=null;setWorkflowButtonBusy(false);syncLimitControls(null);
+  clearTimeout(workflowPollTimer);workflowPollTimer=null;stopWorkflowStream();if(ACTIVE_JOB_ID===job.id)ACTIVE_JOB_ID=null;rememberWorkflowJobId(job.id);setWorkflowButtonBusy(false);syncLimitControls(null);
   if(workflowFinishedJobId===job.id)return;workflowFinishedJobId=job.id;
-  if(job.status==="completed"){await refreshAtlas();toast("歌单分析与推荐已完成，网页数据已更新");}
-  else if(job.status==="failed"){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else toast("歌单处理未完成，请检查本机运行日志。");}
+  const recommendationOnly=workflowProgressView(job).recommendationOnly;
+  if(job.status==="completed"){await refreshAtlas();toast(recommendationOnly?"新 Atlas 已生成，网页数据已更新":"歌单分析与推荐已完成，网页数据已更新");}
+  else if(job.status==="failed"){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else{const detail=workflowFailureDetail(job),prefix=recommendationOnly?"新 Atlas 生成未完成":"歌单处理未完成";toast(detail?`${prefix}：${detail}`:`${prefix}，请检查本机运行日志。`);}}
+ }
+ /* 失败原因优先取失败事件里的 error，其次取子进程 stderr 最后一行，避免只提示“看日志”。 */
+ function workflowFailureDetail(job){
+  const events=Array.isArray(job&&job.events)?job.events:[];
+  for(let index=events.length-1;index>=0;index--){
+   const event=events[index];
+   if(event&&event.event==="failed"&&event.error)return String(event.error).replace(/\s+/g," ").slice(0,160);
+  }
+  const lines=String(job&&job.stderr_tail||"").split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+  return lines.length?lines[lines.length-1].slice(0,160):"";
  }
  function startWorkflowStream(id){
   if(typeof EventSource!=="function")return false;if(workflowStreamId===id&&workflowEventSource)return true;stopWorkflowStream();
@@ -833,9 +1057,24 @@ function syncLimitControls(job){
   const field=document.getElementById("wf-source-field"),input=document.getElementById("wf-source-url"),error=document.getElementById("wf-source-error");if(!field||!input||!error)return;
   const active=Boolean(message);field.classList.toggle("has-error",active);input.setAttribute("aria-invalid",active?"true":"false");error.textContent=message||"";
  }
+ const PLAYLIST_HISTORY_KEY="music-atlas.playlists.v1";
+ function playlistHistory(){try{const rows=JSON.parse(localStorage.getItem(PLAYLIST_HISTORY_KEY)||"[]");return Array.isArray(rows)?rows.filter(r=>r&&typeof r.url==="string"&&/^https:\/\//.test(r.url)).slice(0,20):[];}catch{return [];}}
+ function rememberPlaylist(url,name=""){
+  if(!url||!/^https:\/\//.test(url))return;
+  const rows=playlistHistory(),old=rows.find(r=>r.url===url);
+  const row={url,name:name||old?.name||"",usedAt:new Date().toISOString()};
+  try{localStorage.setItem(PLAYLIST_HISTORY_KEY,JSON.stringify([row,...rows.filter(r=>r.url!==url)].slice(0,20)));}catch{}
+  renderPlaylistHistory();
+ }
+ function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;select.innerHTML='<option value="">选择最近使用的歌单</option>'+playlistHistory().map(r=>`<option value="${esc(r.url)}">${esc(r.name||r.url)}</option>`).join("");}
+ const rememberedPlaylistJobs=new Set();
+ function rememberJobPlaylist(job){if(!job||rememberedPlaylistJobs.has(job.id))return;for(const e of job?.events||[]){if(e.stage==="snapshot"&&e.event==="completed"&&e.source?.url){rememberPlaylist(e.source.url,e.playlist_name||"");rememberedPlaylistJobs.add(job.id);break;}}}
  function bindWorkflowControls(){
   const form=document.getElementById("workflow-form");if(!form)return;
   const input=document.getElementById("wf-source-url");
+  renderPlaylistHistory();
+  if(input&&!input.value)input.value=playlistHistory()[0]?.url||"";
+  document.getElementById("wf-history")?.addEventListener("change",event=>{if(input&&event.target.value){input.value=event.target.value;workflowFieldError("");}});
   if(input)input.addEventListener("input",()=>workflowFieldError(""));
   form.addEventListener("submit",async event=>{
    event.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}
@@ -845,17 +1084,16 @@ function syncLimitControls(job){
    workflowFieldError("");
    const body={source_url:sourceUrl};
    const button=form.querySelector("button[type=submit]");if(button)button.disabled=true;
-   try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");ACTIVE_JOB_ID=payload.job.id;workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
+    try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");rememberPlaylist(sourceUrl);ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
    catch(error){if(button)button.disabled=false;toast(error.message||"无法启动工作流");}
   });
   const limitChips=document.getElementById("wf-limit-chips");
   if(limitChips)limitChips.addEventListener("click",event=>{
-   const chip=event.target.closest("[data-limit]");if(!chip||chip.disabled)return;
+   const chip=event.target.closest("[data-percentile]");if(!chip||chip.disabled)return;
    const target=document.getElementById("wf-limit");if(!target)return;
-   target.value=chip.getAttribute("data-limit");limitFieldError("");syncLimitChipHighlight();
+   target.value=chip.getAttribute("data-limit");target.dataset.percentile=chip.dataset.percentile;limitFieldError("");syncLimitChipHighlight();
   });
   const limitValueInput=document.getElementById("wf-limit");
-  if(limitValueInput)limitValueInput.addEventListener("input",()=>{limitFieldError("");syncLimitChipHighlight();});
   const limitConfirm=document.getElementById("wf-limit-confirm");
   if(limitConfirm)limitConfirm.addEventListener("click",async()=>{
    if(!ACTIVE_JOB_ID){toast("当前没有等待处理数量的任务");return;}
@@ -863,10 +1101,10 @@ function syncLimitControls(job){
    if(!state.ok){limitFieldError(state.message);if(limitValueInput)limitValueInput.focus();return;}
    limitFieldError("");limitConfirm.disabled=true;
    try{
-    const response=await fetch(`/api/jobs/${encodeURIComponent(ACTIVE_JOB_ID)}/limit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:state.value})});
+    const response=await fetch(`/api/jobs/${encodeURIComponent(ACTIVE_JOB_ID)}/limit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:state.value,percentile:state.percentile})});
     const payload=await response.json();
     if(!response.ok||!payload.ok)throw new Error(payload.error||"无法提交处理数量");
-    toast(`已提交处理数量：前 ${state.value} 首`);pollWorkflowJob(ACTIVE_JOB_ID);
+    toast(`已提交分析范围：${Math.round(state.percentile*100)}%（${state.value} 首）`);pollWorkflowJob(ACTIVE_JOB_ID);
    }catch(error){limitFieldError(error.message||"无法提交处理数量");if(limitValueInput)limitValueInput.focus();}
    finally{limitConfirm.disabled=false;}
   });
@@ -882,29 +1120,164 @@ function syncLimitControls(job){
    }catch(error){toast(error.message||"无法取消任务");}
    finally{limitCancel.disabled=false;}
   });
-  setWorkflowButtonBusy(Boolean(ACTIVE_JOB_ID));if(ACTIVE_JOB_ID)pollWorkflowJob(ACTIVE_JOB_ID);else syncLimitControls(null);
+   setWorkflowButtonBusy(Boolean(ACTIVE_JOB_ID));const visibleJobId=ACTIVE_JOB_ID||LATEST_JOB_ID;if(visibleJobId)pollWorkflowJob(visibleJobId);else syncLimitControls(null);
  }
  function vSources(){const configured=WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured;
   return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 推荐源</div>
   <h1 class="big-sec-title">推荐源</h1>
   <p class="lede" style="max-width:620px">粘贴一个公开歌单链接，系统会自动识别平台，完成整理、分析与推荐。</p>
-  <section class="workflow-panel"><h3>生成新的推荐</h3><p class="hint">支持 Apple Music、网易云音乐和 QQ 音乐公开歌单。系统先读取歌单，再由你选择处理数量，随后自动完成分析与推荐。</p>
+  <section class="workflow-panel"><h3>生成新的推荐</h3><p class="hint">支持 Apple Music、网易云音乐和 QQ 音乐公开歌单。系统读取完整歌单后，可选择 25%、50% 或 100% 的曲目范围进入分析。</p>
    <form id="workflow-form" class="wf-form" novalidate>
+    <div class="wf-field"><label for="wf-history">最近歌单（仅保存在当前浏览器）</label><select id="wf-history"><option value="">选择最近使用的歌单</option></select></div>
     <div class="wf-field" id="wf-source-field"><label for="wf-source-url">歌单链接</label><input id="wf-source-url" type="url" placeholder="粘贴 Apple Music、网易云音乐或 QQ 音乐链接" autocomplete="off" required aria-describedby="wf-source-error" aria-invalid="false"><p class="wf-error" id="wf-source-error" role="alert" aria-live="polite"></p></div>
     <div class="wf-field hidden" id="wf-limit-field">
-     <label for="wf-limit">处理数量（最多 <b id="wf-limit-max">—</b> 首）</label>
-     <div class="wf-limit-row"><input id="wf-limit" type="number" inputmode="numeric" min="1" step="1" autocomplete="off" aria-describedby="wf-limit-note wf-limit-error"><div class="wf-chips" id="wf-limit-chips"></div></div>
+     <label>分析范围（歌单共 <b id="wf-limit-max">—</b> 首）</label>
+     <div class="wf-limit-row"><input id="wf-limit" type="hidden"><div class="wf-chips" id="wf-limit-chips"></div></div>
      <p class="wf-limit-note" id="wf-limit-note"></p>
      <p class="wf-error" id="wf-limit-error" role="alert" aria-live="polite"></p>
     </div>
-    <div class="wf-actions"><button class="btn primary" type="submit" id="wf-submit" ${configured?"":"disabled"}>生成推荐 ↗</button><button class="btn primary hidden" type="button" id="wf-limit-confirm">按所选数量继续 ↗</button><button class="btn hidden" type="button" id="wf-cancel">取消任务</button></div>
+    <div class="wf-actions"><button class="btn primary" type="submit" id="wf-submit" ${configured?"":"disabled"}>生成推荐 ↗</button><button class="btn primary hidden" type="button" id="wf-limit-confirm">按所选分位继续 ↗</button><button class="btn hidden" type="button" id="wf-cancel">取消任务</button></div>
    </form>
    ${configured?"":`<div class="wf-meta">当前暂不可运行。</div>`}
   </section>
   <div class="flow" id="flow"></div>
-  ${SOURCES.map(s=>`<div class="srccard"><div><h3>${esc(s.name)}</h3><div class="metatab" style="margin:0"><div><span>曲目数</span>${s.tracks}</div><div><span>覆盖率</span>${esc(s.coverage)}</div><div><span>更新时间</span>${esc(s.updated)}</div></div></div><div style="align-self:center"><span class="st ${s.status==="archived"?"archived":""}">${esc(statusText(s.status))}</span></div></div>`).join("")||`<div class="empty-state">当前运行没有来源状态。</div>`}
+  ${SOURCES.map(s=>`<div class="srccard"><div><h3>${esc(s.name)}</h3><div class="metatab" style="margin:0"><div><span>曲目数</span>${s.tracks}</div><div><span>覆盖率</span>${esc(statusText(s.coverage))}</div><div><span>更新时间</span>${esc(s.updated)}</div></div></div><div style="align-self:center"><span class="st ${s.status==="archived"?"archived":""}">${esc(statusText(s.status))}</span></div></div>`).join("")||`<div class="empty-state">当前运行没有来源状态。</div>`}
   <div style="height:50px"></div></div>`;}
 function v404(msg){return`<div class="wrap" style="padding:100px 0"><div class="proto-note">404</div><h1 class="big-sec-title">${esc(msg||"此页不在 Atlas 内")}</h1><a class="btn primary" href="#/discover">回到发现 ↗</a></div>`;}
+
+/* ================= SETTINGS ================= */
+function settingsValue(value){return value===null||value===undefined?"":String(value);}
+function settingsSecretNote(){
+ if(!SECRET_STATUS)return "状态未知（密钥库不可用）";
+ if(!SECRET_STATUS.configured)return "未配置：任务调用模型时会失败";
+ return `已配置：${SECRET_STATUS.backend||"系统密钥库"}`;
+}
+function settingsInt(form,name,optional=false,minimum=1){
+ const raw=String(form.elements[name]?.value||"").trim();
+ if(!raw&&optional)return null;
+ if(!/^\d+$/.test(raw))throw new Error(`${name} 必须是整数`);
+ const value=Number(raw);if(!Number.isSafeInteger(value)||value<minimum)throw new Error(`${name} 必须是有效整数`);return value;
+}
+function settingsNumber(form,name){
+ const raw=String(form.elements[name]?.value||"").trim();const value=Number(raw);
+ if(!raw||!Number.isFinite(value)||value<0||value>2)throw new Error("温度必须是 0 到 2 的数字");return value;
+}
+function settingsPayloadFromForm(form){
+ const defaultPercentile=Number(form.elements.track_percentile_default.value);
+ if(!TRACK_PERCENTILE_OPTIONS.includes(defaultPercentile))throw new Error("默认分析分位必须是 25%、50% 或 100%");
+ return{settings:{
+  runtime:{openai_compat:{base_url:form.elements.ai_base_url.value.trim(),model:form.elements.ai_model.value.trim(),timeout_seconds:settingsInt(form,"ai_timeout"),max_tokens:settingsInt(form,"ai_max_tokens"),temperature:settingsNumber(form,"ai_temperature"),disable_thinking:form.elements.ai_disable_thinking.checked}},
+  crawler:{request_timeout_seconds:settingsInt(form,"crawler_timeout"),request_retries:settingsInt(form,"crawler_retries",false,0),user_agent:form.elements.crawler_user_agent.value.trim(),netease_detail_url:form.elements.netease_detail_url.value.trim(),netease_song_detail_url:form.elements.netease_song_detail_url.value.trim(),netease_referer:form.elements.netease_referer.value.trim(),netease_song_detail_batch_size:settingsInt(form,"netease_batch"),qq_page_size:settingsInt(form,"qq_page_size"),qq_max_pages:settingsInt(form,"qq_max_pages"),qq_musicu_url:form.elements.qq_musicu_url.value.trim(),qq_referer:form.elements.qq_referer.value.trim(),apple_export_timeout_seconds:settingsInt(form,"apple_timeout")},
+  recommendation_policy:{max_per_artist:settingsInt(form,"policy_max_artist"),max_per_project:settingsInt(form,"policy_max_project"),min_projects:settingsInt(form,"policy_min_projects"),candidate_pool_min:settingsInt(form,"policy_pool_min")},
+  editorial:{title:form.elements.editorial_title.value.trim(),lede:form.elements.editorial_lede.value.trim()},
+  workflow:{analysis_parallelism:settingsInt(form,"analysis_parallelism"),recommendation_parallelism:settingsInt(form,"recommendation_parallelism"),analysis_timeout_seconds:settingsInt(form,"analysis_timeout"),recommendation_timeout_seconds:settingsInt(form,"recommendation_timeout"),track_percentile_default:defaultPercentile,await_limit_timeout_seconds:settingsInt(form,"await_timeout"),max_research_rounds:settingsInt(form,"max_research_rounds"),max_candidates:settingsInt(form,"max_candidates"),candidate_target:settingsInt(form,"candidate_target",true),analysis_batch_size:settingsInt(form,"analysis_batch_size",true),analysis_context_budget:settingsInt(form,"analysis_context_budget",true),context_budget:settingsInt(form,"context_budget",true)}}};
+}
+function settingsMessage(text,error=false){const node=document.getElementById("settings-message");if(node){node.textContent=text||"";node.classList.toggle("error",Boolean(error));}}
+function renderSettingsModal(message="",error=false){
+ const root=document.getElementById("settings-root");if(!root||!SETTINGS)return;
+ const ai=SETTINGS.runtime?.openai_compat||{},crawler=SETTINGS.crawler||{},workflow=SETTINGS.workflow||{},policy=SETTINGS.recommendation_policy||{},editorial=SETTINGS.editorial||{};
+ root.innerHTML=`<div class="settings-backdrop" data-settings-close><section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="settings-head"><div><h2 id="settings-title">设置</h2><p>保存后仅影响下一次任务；当前运行中的任务使用已锁定的配置快照。</p></div><button type="button" class="settings-close" data-settings-close aria-label="关闭设置">×</button></div><form id="settings-form" class="settings-form">
+  <div class="settings-body">
+  <section class="settings-section"><h3>AI 执行器</h3><div class="settings-grid">
+   <div class="settings-field wide"><label for="settings-ai-base-url">兼容接口地址</label><input id="settings-ai-base-url" name="ai_base_url" type="url" value="${esc(settingsValue(ai.base_url))}" placeholder="https://example.com/v1" required></div>
+   <div class="settings-field"><label for="settings-ai-model">模型</label><input id="settings-ai-model" name="ai_model" value="${esc(settingsValue(ai.model))}" required></div>
+   <div class="settings-field wide"><label for="settings-ai-key">API Key（加密保存到本机系统密钥库）</label><div class="settings-key-row"><input id="settings-ai-key" name="ai_api_key" type="password" autocomplete="new-password" placeholder="${SECRET_STATUS&&SECRET_STATUS.configured?"已配置，留空则不修改":"请输入 API Key"}"><button type="button" class="btn" data-settings-clear-key>清除</button></div><span class="settings-note" id="settings-ai-key-status">${settingsSecretNote()}</span></div>
+   <div class="settings-field"><label for="settings-ai-timeout">请求超时（秒）</label><input id="settings-ai-timeout" name="ai_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(ai.timeout_seconds))}" required></div>
+   <div class="settings-field"><label for="settings-ai-tokens">最大输出 Token</label><input id="settings-ai-tokens" name="ai_max_tokens" type="number" min="1" max="200000" value="${esc(settingsValue(ai.max_tokens))}" required></div>
+   <div class="settings-field"><label for="settings-ai-temperature">Temperature</label><input id="settings-ai-temperature" name="ai_temperature" type="number" min="0" max="2" step="0.1" value="${esc(settingsValue(ai.temperature))}" required></div>
+   <label class="settings-check"><input name="ai_disable_thinking" type="checkbox" ${ai.disable_thinking!==false?"checked":""}>关闭思维链（速度优先）</label>
+  </div>
+  <div class="settings-inline-actions"><button type="button" class="btn" data-settings-test-ai>测试连接</button><span class="settings-note" id="settings-ai-test-result">用当前填写的接口、模型与密钥发送一个最小请求。</span></div></section>
+  <section class="settings-section"><h3>歌单读取与爬虫</h3><p class="settings-note">这里只调整请求预算和分页，不保存 Cookie、登录态或 API Key。</p><div class="settings-grid">
+   <div class="settings-field"><label for="settings-crawler-timeout">接口请求超时（秒）</label><input id="settings-crawler-timeout" name="crawler_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(crawler.request_timeout_seconds))}" required></div>
+   <div class="settings-field"><label for="settings-crawler-retries">失败重试次数</label><input id="settings-crawler-retries" name="crawler_retries" type="number" min="0" max="3" value="${esc(settingsValue(crawler.request_retries))}" required></div>
+   <div class="settings-field wide"><label for="settings-crawler-agent">请求 User-Agent</label><input id="settings-crawler-agent" name="crawler_user_agent" value="${esc(settingsValue(crawler.user_agent))}" maxlength="200" required></div>
+   <div class="settings-field wide"><label for="settings-netease-url">网易云歌单接口地址（仅允许 music.163.com）</label><input id="settings-netease-url" name="netease_detail_url" type="url" value="${esc(settingsValue(crawler.netease_detail_url))}" required></div>
+   <div class="settings-field wide"><label for="settings-netease-song-url">网易云歌曲详情接口地址</label><input id="settings-netease-song-url" name="netease_song_detail_url" type="url" value="${esc(settingsValue(crawler.netease_song_detail_url))}" required></div>
+   <div class="settings-field"><label for="settings-netease-referer">网易云 Referer</label><input id="settings-netease-referer" name="netease_referer" type="url" value="${esc(settingsValue(crawler.netease_referer))}" required></div>
+   <div class="settings-field"><label for="settings-qq-referer">QQ 音乐 Referer</label><input id="settings-qq-referer" name="qq_referer" type="url" value="${esc(settingsValue(crawler.qq_referer))}" required></div>
+   <div class="settings-field wide"><label for="settings-qq-url">QQ 音乐接口地址（仅允许 u.y.qq.com）</label><input id="settings-qq-url" name="qq_musicu_url" type="url" value="${esc(settingsValue(crawler.qq_musicu_url))}" required></div>
+   <div class="settings-field"><label for="settings-netease-batch">网易云歌曲详情批量数</label><input id="settings-netease-batch" name="netease_batch" type="number" min="1" max="1000" value="${esc(settingsValue(crawler.netease_song_detail_batch_size))}" required></div>
+   <div class="settings-field"><label for="settings-netease-batch-placeholder"> </label><span class="settings-note">高级地址和请求头会做域名、HTTPS、长度校验。</span></div>
+   <div class="settings-field"><label for="settings-qq-page-size">QQ 音乐分页大小</label><input id="settings-qq-page-size" name="qq_page_size" type="number" min="1" max="1000" value="${esc(settingsValue(crawler.qq_page_size))}" required></div>
+   <div class="settings-field"><label for="settings-qq-max-pages">QQ 音乐最大页数</label><input id="settings-qq-max-pages" name="qq_max_pages" type="number" min="1" max="500" value="${esc(settingsValue(crawler.qq_max_pages))}" required></div>
+   <div class="settings-field"><label for="settings-apple-timeout">Apple 歌单读取超时（秒）</label><input id="settings-apple-timeout" name="apple_timeout" type="number" min="1" max="3600" value="${esc(settingsValue(crawler.apple_export_timeout_seconds))}" required></div>
+  </div></section>
+  <section class="settings-section"><h3>推荐策略</h3><p class="settings-note">这些是推荐策略的安全边界覆盖；排序公式、证据门禁与最终顺序仍由程序确定。</p><div class="settings-grid">
+   <div class="settings-field"><label for="settings-policy-artist">同一艺人最多推荐数</label><input id="settings-policy-artist" name="policy_max_artist" type="number" min="1" max="10" value="${esc(settingsValue(policy.max_per_artist))}" required></div>
+   <div class="settings-field"><label for="settings-policy-project">同一项目最多推荐数</label><input id="settings-policy-project" name="policy_max_project" type="number" min="1" max="20" value="${esc(settingsValue(policy.max_per_project))}" required></div>
+   <div class="settings-field"><label for="settings-policy-projects">最少项目数</label><input id="settings-policy-projects" name="policy_min_projects" type="number" min="1" max="50" value="${esc(settingsValue(policy.min_projects))}" required></div>
+   <div class="settings-field"><label for="settings-policy-pool">候选池最低数量</label><input id="settings-policy-pool" name="policy_pool_min" type="number" min="1" max="200" value="${esc(settingsValue(policy.candidate_pool_min))}" required></div>
+  </div></section>
+  <section class="settings-section"><h3>页面展示</h3><p class="settings-note">标题和导语会写入下一次任务生成的 Atlas；不改变推荐事实与证据。</p><div class="settings-grid">
+   <div class="settings-field wide"><label for="settings-editorial-title">页面标题</label><input id="settings-editorial-title" name="editorial_title" maxlength="120" value="${esc(settingsValue(editorial.title))}"></div>
+   <div class="settings-field wide"><label for="settings-editorial-lede">页面导语</label><textarea id="settings-editorial-lede" name="editorial_lede" maxlength="2000" rows="3">${esc(settingsValue(editorial.lede))}</textarea></div>
+  </div></section>
+  <section class="settings-section"><h3>工作流与推荐预算</h3><div class="settings-grid">
+   <div class="settings-field"><label for="settings-analysis-parallel">分析并行数</label><input id="settings-analysis-parallel" name="analysis_parallelism" type="number" min="1" max="16" value="${esc(settingsValue(workflow.analysis_parallelism))}" required></div>
+   <div class="settings-field"><label for="settings-recommendation-parallel">推荐并行数</label><input id="settings-recommendation-parallel" name="recommendation_parallelism" type="number" min="1" max="8" value="${esc(settingsValue(workflow.recommendation_parallelism))}" required></div>
+   <div class="settings-field"><label for="settings-analysis-timeout">分析阶段超时（秒）</label><input id="settings-analysis-timeout" name="analysis_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.analysis_timeout_seconds))}" required></div>
+   <div class="settings-field"><label for="settings-recommendation-timeout">推荐阶段超时（秒）</label><input id="settings-recommendation-timeout" name="recommendation_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.recommendation_timeout_seconds))}" required></div>
+   <div class="settings-field"><label for="settings-track-percentile-default">默认分析分位</label><select id="settings-track-percentile-default" name="track_percentile_default"><option value="0.25" ${Number(workflow.track_percentile_default)===0.25?"selected":""}>25%</option><option value="0.5" ${Number(workflow.track_percentile_default)===0.5?"selected":""}>50%</option><option value="1" ${!TRACK_PERCENTILE_OPTIONS.includes(Number(workflow.track_percentile_default))||Number(workflow.track_percentile_default)===1?"selected":""}>100%（全部）</option></select></div>
+   <div class="settings-field"><label for="settings-await-timeout">等待选择超时（秒）</label><input id="settings-await-timeout" name="await_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.await_limit_timeout_seconds))}" required></div>
+   <div class="settings-field"><label for="settings-rounds">最大研究轮数</label><input id="settings-rounds" name="max_research_rounds" type="number" min="1" max="3" value="${esc(settingsValue(workflow.max_research_rounds))}" required></div>
+   <div class="settings-field"><label for="settings-candidates">最大候选数</label><input id="settings-candidates" name="max_candidates" type="number" min="1" max="200" value="${esc(settingsValue(workflow.max_candidates))}" required></div>
+   <div class="settings-field"><label for="settings-target">候选目标（留空=自动）</label><input id="settings-target" name="candidate_target" type="number" min="1" max="200" value="${esc(settingsValue(workflow.candidate_target))}"></div>
+   <div class="settings-field"><label for="settings-batch">分析批大小（留空=默认）</label><input id="settings-batch" name="analysis_batch_size" type="number" min="1" max="50" value="${esc(settingsValue(workflow.analysis_batch_size))}"></div>
+   <div class="settings-field"><label for="settings-analysis-budget">分析上下文预算（留空=默认）</label><input id="settings-analysis-budget" name="analysis_context_budget" type="number" min="1000" value="${esc(settingsValue(workflow.analysis_context_budget))}"></div>
+   <div class="settings-field"><label for="settings-context-budget">推荐上下文预算（留空=默认）</label><input id="settings-context-budget" name="context_budget" type="number" min="1000" value="${esc(settingsValue(workflow.context_budget))}"></div>
+  </div></section>
+  </div>
+  <div class="settings-actions"><span id="settings-message" class="settings-message ${error?"error":""}">${esc(message)}</span><button type="button" class="btn" data-settings-reset>恢复默认覆盖</button><button type="button" class="btn" data-settings-close>取消</button><button type="submit" class="btn primary">保存设置</button></div>
+ </form></section></div>`;
+ const form=document.getElementById("settings-form");
+ if(form)form.addEventListener("submit",async event=>{event.preventDefault();const button=form.querySelector('button[type="submit"]');if(button)button.disabled=true;settingsMessage("正在保存…");try{const body=settingsPayloadFromForm(form);const response=await fetch("/api/settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"设置保存失败");SETTINGS=payload.settings;const keyInput=document.getElementById("settings-ai-key");const newKey=keyInput?keyInput.value.trim():"";if(newKey){const keyResponse=await fetch("/api/secrets",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:newKey})});const keyPayload=await keyResponse.json();if(!keyResponse.ok||!keyPayload.ok)throw new Error(keyPayload.error||"API Key 保存失败");SECRET_STATUS=keyPayload;if(keyInput)keyInput.value="";}const configResponse=await fetch("/api/config",{cache:"no-store"});if(configResponse.ok){const config=await configResponse.json();if(config.ok)applyWorkflowConfig(config);}renderSettingsModal(newKey?"已保存：API Key 已写入系统密钥库":"已保存：从下一次任务开始生效");toast("设置已保存");}catch(error){settingsMessage(error.message||"设置保存失败",true);if(button)button.disabled=false;}});
+}
+async function openSettings(){
+ const root=document.getElementById("settings-root");if(!root)return;
+ root.innerHTML='<div class="settings-backdrop"><section class="settings-dialog"><div class="settings-head"><div><h2>设置</h2><p>正在读取本机配置…</p></div></section></div>';
+ try{const [response,secretResponse]=await Promise.all([fetch("/api/settings",{cache:"no-store"}),fetch("/api/secrets",{cache:"no-store"}).catch(()=>null)]);const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法读取设置");SETTINGS=payload.settings;if(secretResponse&&secretResponse.ok){const secretPayload=await secretResponse.json();if(secretPayload&&secretPayload.ok)SECRET_STATUS=secretPayload;}renderSettingsModal();}catch(error){root.innerHTML=`<div class="settings-backdrop" data-settings-close><section class="settings-dialog"><div class="settings-head"><div><h2>设置</h2><p class="settings-message error">${esc(error.message||"无法读取设置")}</p></div><button type="button" class="settings-close" data-settings-close>×</button></div></section></div>`;}
+}
+function closeSettings(){const root=document.getElementById("settings-root");if(root)root.innerHTML="";}
+function testResultNote(text,kind){const node=document.getElementById("settings-ai-test-result");if(!node)return;node.textContent=text;node.classList.toggle("ok",kind==="ok");node.classList.toggle("error",kind==="error");}
+async function saveAiKeyIfFilled(form){
+ const keyInput=document.getElementById("settings-ai-key");const newKey=keyInput?keyInput.value.trim():"";
+ if(!newKey)return false;
+ const response=await fetch("/api/secrets",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:newKey})});
+ const payload=await response.json();
+ if(!response.ok||!payload.ok)throw new Error(payload.error||"API Key 保存失败");
+ SECRET_STATUS=payload;if(keyInput)keyInput.value="";
+ return true;
+}
+function aiRuntimePatch(form){
+ return{runtime:{openai_compat:{base_url:form.elements.ai_base_url.value.trim(),model:form.elements.ai_model.value.trim(),timeout_seconds:settingsInt(form,"ai_timeout"),max_tokens:settingsInt(form,"ai_max_tokens"),temperature:settingsNumber(form,"ai_temperature"),disable_thinking:form.elements.ai_disable_thinking.checked}}};
+}
+async function testAiConnection(){
+ const form=document.getElementById("settings-form");if(!form)return;
+ const button=form.querySelector("[data-settings-test-ai]");
+ if(button)button.disabled=true;testResultNote("正在测试…");
+ try{
+  const response=await fetch("/api/settings",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({settings:aiRuntimePatch(form)})});
+  const saved=await response.json();
+  if(!response.ok||!saved.ok)throw new Error(saved.error||"AI 配置保存失败");
+  SETTINGS=saved.settings;
+  await saveAiKeyIfFilled(form);
+  const probeResponse=await fetch("/api/ai/test",{method:"POST"});
+  const probe=await probeResponse.json();
+  if(!probeResponse.ok||!probe.ok)throw new Error(probe.error||"连通性测试失败");
+  const preview=probe.reply_preview?` · 响应：${probe.reply_preview}`:"";
+  testResultNote(`连通正常 · ${probe.latency_ms} ms · 模型 ${probe.model} · 密钥来源 ${probe.key_source==="keyring"?"系统密钥库":"环境变量"}${preview}`,"ok");
+ }catch(error){testResultNote(error.message||"连通性测试失败","error");}
+ finally{if(button)button.disabled=false;}
+}
+async function clearApiKey(){
+ if(!window.confirm("从系统密钥库中删除已保存的 API Key？"))return;
+ try{const response=await fetch("/api/secrets",{method:"DELETE"});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"API Key 清除失败");SECRET_STATUS=payload;renderSettingsModal("已从系统密钥库删除 API Key");toast("已清除 API Key");}catch(error){settingsMessage(error.message||"API Key 清除失败",true);}
+}
+async function resetSettings(){
+ if(!window.confirm("删除网页设置覆盖并恢复项目默认配置？"))return;
+ try{const response=await fetch("/api/settings",{method:"DELETE"});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"恢复默认失败");SETTINGS=payload.settings;const configResponse=await fetch("/api/config",{cache:"no-store"});if(configResponse.ok){const config=await configResponse.json();if(config.ok)applyWorkflowConfig(config);}renderSettingsModal("已恢复项目默认配置");toast("已恢复默认设置");}catch(error){settingsMessage(error.message||"恢复默认失败",true);}
+}
 
 /* ================= ROUTER ================= */
 function render(){const h=location.hash.replace(/^#/,"")||"/discover";let html=header();
@@ -917,18 +1290,41 @@ function render(){const h=location.hash.replace(/^#/,"")||"/discover";let html=h
   hydrate(document.getElementById("app"));
   bindWorkflowControls();}
 /* global click delegation */
-document.addEventListener("click",e=>{
+document.addEventListener("click",async e=>{
+ const open=e.target.closest("[data-settings-open]");
+ if(open){e.preventDefault();openSettings();return;}
+ const close=e.target.closest("[data-settings-close]");
+ if(close&&(close===e.target||close.classList.contains("settings-close"))){e.preventDefault();closeSettings();return;}
+ const reset=e.target.closest("[data-settings-reset]");
+ if(reset){e.preventDefault();resetSettings();return;}
+ const clearKey=e.target.closest("[data-settings-clear-key]");
+ if(clearKey){e.preventDefault();clearApiKey();return;}
+ const testAi=e.target.closest("[data-settings-test-ai]");
+ if(testAi){e.preventDefault();testAiConnection();return;}
+ const stageSummary=e.target.closest("[data-wf-stage-panel] > summary");
+ if(stageSummary){const panel=stageSummary.parentElement;if(panel)panel.dataset.userToggled="1";return;}
+ const logToggle=e.target.closest("[data-wf-log-toggle]");
+ if(logToggle){e.preventDefault();const flow=logToggle.closest("#flow"),panel=flow&&flow.querySelector("[data-wf-log-panel]");if(panel){const open=panel.classList.toggle("hidden")===false;logToggle.setAttribute("aria-expanded",open?"true":"false");logToggle.textContent=open?"收起运行日志":"查看运行日志";}return;}
+ const logCopy=e.target.closest("[data-wf-log-copy]");
+ if(logCopy){e.preventDefault();const text=logCopy.closest("#flow")?.querySelector("[data-wf-log-text]")?.textContent||"";try{await navigator.clipboard.writeText(text);toast("运行日志已复制");}catch{const area=document.createElement("textarea");area.value=text;document.body.appendChild(area);area.select();document.execCommand("copy");area.remove();toast("运行日志已复制");}return;}
  const sl=e.target.closest("[data-songlink]");
  if(sl){e.stopPropagation();
   if(!sl.href||sl.href.endsWith("#")||sl.classList.contains("wait")){e.preventDefault();toast("正在解析歌曲链接，请稍候…");}
   else if(sl.classList.contains("nodata")){e.preventDefault();toast("未能解析到具体歌曲，请到平台内搜索："+sl.textContent.replace(" ↗",""));}
   return;}
+ const prev=e.target.closest("[data-atlas-prev]");
+ if(prev){e.preventDefault();const groups=atlasGroups();if(ATLAS_GROUP_INDEX>0){applyAtlasGroup(ATLAS_GROUP_INDEX-1);render();toast(`已返回第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 Atlas`);}return;}
+ const swap=e.target.closest("[data-atlas-swap]");
+ if(swap){e.preventDefault();const groups=atlasGroups();if(ATLAS_GROUP_INDEX<groups.length-1){applyAtlasGroup(ATLAS_GROUP_INDEX+1);render();toast(`已换到第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 Atlas`);}return;}
+ const newAtlas=e.target.closest("[data-atlas-new]");
+ if(newAtlas){e.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}newAtlas.disabled=true;try{const response=await fetch("/api/atlas/new",{method:"POST",headers:{"Content-Type":"application/json"}});const payload=await responseJson(response,"无法生成新 Atlas");if(!response.ok||!payload.ok)throw new Error(payload.error||"无法生成新 Atlas");ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);toast("已启动新 Atlas：复用当前分析重新生成推荐");}catch(error){newAtlas.disabled=false;toast(error.message||"无法生成新 Atlas");}return;}
  const tab=e.target.closest("[data-tab]");
  if(tab){const f=tab.getAttribute("data-tab");location.hash="#/atlas/"+(f==="all"?"":f);if(f==="all"){render();}return;}
  const go=e.target.closest("[data-go]");
  if(go){if(!e.target.closest("[data-open]")){location.hash=go.getAttribute("data-go");}return;}});
 window.addEventListener("hashchange",()=>{render();});
- bootAtlas();
+document.addEventListener("keydown",event=>{if(event.key==="Escape"&&document.getElementById("settings-root")?.firstElementChild)closeSettings();});
+bootAtlas();
 </script>
 </body>
 </html>

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import json
 import os
 import shlex
@@ -19,7 +24,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests/fixtures"))
 
 from agent_prompt import build_agent_input, build_agent_prompt
-from analysis_agent import execute_analysis_research, prepare_analysis_research
+from analysis_agent import (
+    execute_analysis_research,
+    execute_batch_with_retry,
+    is_retryable_batch_error,
+    prepare_analysis_research,
+)
 from analysis_contracts import build_research_requests, validate_research_bundle, validate_research_result
 from candidate_routes import resolve_candidate_route
 from contracts import ContractError, STYLE_AXIS_IDS, read_json, sha256_path, stable_hash, track_key, validate_analysis_packet, write_json
@@ -181,43 +191,71 @@ class AnalysisAgentTests(unittest.TestCase):
                 validate_research_result(altered, self.requests[0], self.taxonomy)
 
     def test_relations_require_targets_unique_endpoints_and_evidence(self):
-        for change in ("missing_artist", "duplicate_artist", "duplicate_endpoint", "no_evidence", "wrong_claim", "invalid_status"):
-            value = self.result()
+        for change in ("missing_artist", "duplicate_artist", "duplicate_endpoint", "invalid_status"):
+            valued = self.result()
             if change == "missing_artist":
-                value["artist_relations"].pop()
+                valued["artist_relations"].pop()
             elif change == "duplicate_artist":
-                value["artist_relations"][1] = deepcopy(value["artist_relations"][0])
+                valued["artist_relations"][1] = deepcopy(valued["artist_relations"][0])
             else:
-                relation = value["artist_relations"][0]["lead_vocalists"][0]
+                relation = valued["artist_relations"][0]["lead_vocalists"][0]
                 if change == "duplicate_endpoint":
-                    value["artist_relations"][0]["lead_vocalists"].append(deepcopy(relation))
-                elif change == "no_evidence":
-                    relation["evidence_items"] = []
-                elif change == "wrong_claim":
-                    relation["evidence_items"][0]["claim_type"] = "style"
+                    valued["artist_relations"][0]["lead_vocalists"].append(deepcopy(relation))
                 else:
                     relation["status"] = "confirmed"
             with self.subTest(change=change), self.assertRaises(ContractError):
-                validate_research_result(value, self.requests[0], self.taxonomy)
+                validate_research_result(valued, self.requests[0], self.taxonomy)
+        # 关系事实缺证据或证据类型不对：丢弃该条（不虚构），而不是让整个批次失败。
+        for change in ("no_evidence", "wrong_claim"):
+            valued = self.result()
+            relation = valued["artist_relations"][0]["lead_vocalists"][0]
+            if change == "no_evidence":
+                relation["evidence_items"] = []
+            else:
+                relation["evidence_items"][0]["claim_type"] = "style"
+            with self.subTest(change=change):
+                result = validate_research_result(valued, self.requests[0], self.taxonomy)
+                remaining = [
+                    item for item in result["artist_relations"]
+                    if item["artist"] == valued["artist_relations"][0]["artist"]
+                ][0]["lead_vocalists"]
+                self.assertNotIn(relation["name"], [item["name"] for item in remaining])
 
     def test_evidence_rejects_forbidden_negative_stale_future_and_invalid(self):
         changes = [("url", "https://music.apple.com/us/artist/sample/1"),
-                   ("url", "https://open.spotify.com/collection/tracks"),
-                   ("url", "https://musicbrainz.org/artist/not-a-valid-identifier"),
                    ("url", "file:///private/notes"), ("retrieved_at", "not-a-date"),
                    ("retrieved_at", "2020-01-01T00:00:00Z"),
                    ("retrieved_at", (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()),
                    ("verification_result", "contradictory"), ("verification_result", "inaccessible"),
-                   ("verification_result", "stale"), ("claim_type", "release")]
+                   ("verification_result", "stale")]
         for field, changed in changes:
             value = self.result()
             value["track_profiles"][0]["evidence_items"][0][field] = changed
             with self.subTest(field=field, changed=changed), self.assertRaises(ContractError):
                 validate_research_result(value, self.requests[0], self.taxonomy)
+        # 分析阶段宽容：spotify collection、musicbrainz 搜索等 URL 虽无稳定标识符，
+        # 但不致命（不会获得标识符加分，但也不应让整个任务失败）。
+        value = self.result()
+        value["track_profiles"][0]["evidence_items"][0]["url"] = "https://open.spotify.com/collection/tracks"
+        result = validate_research_result(value, self.requests[0], self.taxonomy)
+        self.assertIn("track_profiles", result)
+        value2 = self.result()
+        value2["track_profiles"][0]["evidence_items"][0]["url"] = "https://musicbrainz.org/artist/not-a-valid-identifier"
+        result2 = validate_research_result(value2, self.requests[0], self.taxonomy)
+        self.assertIn("track_profiles", result2)
+        # 仅有非 style 证据的已分类画像：自动降级为 unknown，而不是失败。
+        value = self.result()
+        value["track_profiles"][0]["evidence_items"][0]["claim_type"] = "release"
+        profile = validate_research_result(value, self.requests[0], self.taxonomy)["track_profiles"][0]
+        self.assertEqual(profile["classification_status"], "unclassified")
+        self.assertEqual(profile["evidence_items"], [])
         value = self.result()
         value["track_profiles"][0]["evidence_items"] = []
-        with self.assertRaises(ContractError):
-            validate_research_result(value, self.requests[0], self.taxonomy)
+        profile = validate_research_result(value, self.requests[0], self.taxonomy)["track_profiles"][0]
+        # 已分类但无风格证据：自动降级为 unknown，不虚构事实也不让任务失败。
+        self.assertEqual(profile["classification_status"], "unclassified")
+        self.assertEqual(profile["scope"], "unknown")
+        self.assertEqual(profile["evidence_items"], [])
 
     def test_bundle_is_bound_to_full_snapshot_taxonomy_and_batch_order(self):
         bundle = read_json(self.execute(batch_size=2))
@@ -376,6 +414,109 @@ class AnalysisAgentTests(unittest.TestCase):
             [result["request_id"] for result in read_json(bundle_path)["batches"]],
             [record["request_id"] for record in manifest["batches"]],
         )
+
+    def test_transient_upstream_error_retries_batch_once(self):
+        """上游 503 等瞬时故障应整批重试，而不是让整个分析阶段失败。"""
+
+        calls = []
+
+        def flaky(command, prompt, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise ContractError(
+                    'Agent 返回码为 2：Music Atlas 本机执行器未完成：上游返回 HTTP 503：'
+                    '{"error":{"message":"Service temporarily unavailable"}}'
+                )
+            return fixture_execute(command, prompt, **kwargs)
+
+        with patch("analysis_agent.time.sleep"):
+            bundle_path = self.execute(batch_size=2, execute=flaky)
+
+        report = read_json(self.directory / "research_report.json")
+        self.assertEqual(report["status"], "completed")
+        self.assertEqual([batch["status"] for batch in report["batches"]], ["validated", "validated"])
+        self.assertEqual(report["batches"][0]["retry_attempts"], 1)
+        self.assertIn("503", report["batches"][0]["last_retry_reason"])
+        self.assertEqual(len(calls), 3, "第一批应重试一次后成功")
+        self.assertTrue(read_json(bundle_path)["batches"])
+
+    def test_contract_error_is_not_retried(self):
+        """契约与内容错误属于确定性问题，重试只会浪费时间。"""
+
+        calls = []
+
+        def broken(command, prompt, **kwargs):
+            calls.append(1)
+            raise ContractError("分析 Skill 单批输出超过 500,000 字符上限")
+
+        with patch("analysis_agent.time.sleep"):
+            with self.assertRaisesRegex(ContractError, "字符上限"):
+                self.execute(batch_size=2, execute=broken)
+
+        self.assertEqual(len(calls), 1)
+
+    def test_retryable_error_classification(self):
+        for message in (
+            "上游返回 HTTP 503：Service temporarily unavailable",
+            "上游返回 HTTP 429：rate limited",
+            "请求失败：timed out",
+            "Agent 返回码为 2：上游返回 HTTP 502：Bad Gateway",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(is_retryable_batch_error(message))
+        for message in (
+            "分析 Skill 单批输出超过 500,000 字符上限",
+            "style_ref 不在词表中",
+            "上游返回 HTTP 400：invalid model",
+            "上游返回 HTTP 401：bad key",
+        ):
+            with self.subTest(message=message):
+                self.assertFalse(is_retryable_batch_error(message))
+
+    def test_retry_helper_returns_first_success_without_sleeping(self):
+        attempts = []
+
+        def flaky(command, prompt, **kwargs):
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise ContractError("上游返回 HTTP 500：server error")
+            return {"ok": True}
+
+        with patch("analysis_agent.time.sleep") as slept:
+            result = execute_batch_with_retry(flaky, "cmd", "prompt", timeout=10)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(attempts), 2)
+        slept.assert_called_once()
+
+    def test_strips_harmless_extra_profile_fields(self):
+        """模型偶发补充的多余字段（如 note/notes）应被剥离，而不是让整个批次失败。"""
+
+        def noisy(command, prompt, **kwargs):
+            result = fixture_execute(command, prompt, **kwargs)
+            profile = result["track_profiles"][0]
+            profile["notes"] = "模型补充说明"
+            profile["source_hint"] = "openai"
+            return result
+
+        bundle_path = self.execute(batch_size=2, execute=noisy)
+
+        bundle = read_json(bundle_path)
+        for batch in bundle["batches"]:
+            for profile in batch["track_profiles"]:
+                self.assertNotIn("notes", profile)
+                self.assertNotIn("source_hint", profile)
+
+    def test_program_owned_fields_are_still_rejected(self):
+        """程序字段（评分/排序/策略）始终硬拒绝，剥离容错不能贩弱契约边界。"""
+
+        def malicious(command, prompt, **kwargs):
+            result = fixture_execute(command, prompt, **kwargs)
+            result["track_profiles"][0]["score"] = 99.0
+            return result
+
+        with self.assertRaisesRegex(ContractError, "程序保留字段.*score"):
+            self.execute(batch_size=2, execute=malicious)
 
     def test_output_size_limit_and_failed_reimport_preserve_previous_bundle(self):
         def huge(command, prompt, **kwargs):

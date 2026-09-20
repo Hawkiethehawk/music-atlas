@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import json
 import os
 import shlex

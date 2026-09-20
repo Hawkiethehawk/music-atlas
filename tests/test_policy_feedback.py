@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import itertools
 import sys
 import tempfile
@@ -152,7 +157,7 @@ class ManualPolicyTests(unittest.TestCase):
 
     def test_invalid_unknown_and_boundary_changing_policies_are_rejected(self):
         invalid = [[], {"unknown": 1}, {"max_per_artist": True}, {"max_per_artist": 0},
-                   {"max_per_project": 1.5}, {"min_projects": 11}, {"candidate_pool_min": 9},
+                   {"max_per_project": 1.5}, {"min_projects": 11}, {"candidate_pool_min": 0},
                    {"ranking_weights": {"unknown": 0.1}}, {"ranking_weights": {"style_fit": 0.9}},
                    {"ranking_weights": {"style_fit": float("nan")}}, {"ranking_weights": []},
                    {"recall_mix": DEFAULT_POLICY["recall_mix"][:2]}, {"target_recommendations": 12},

@@ -4,9 +4,10 @@
 最终只向标准输出生成一个 JSON 对象，契约层（Skill 边界）不变。
 
 配置来源（非密钥，均在项目内）：
-- ``config/web.json`` → ``runtime.openai_compat``：``base_url``、``model``、
-  ``api_key_env``，以及可选的 ``timeout_seconds`` / ``max_tokens`` / ``temperature``。
-- API key 只从 ``api_key_env`` 指定的环境变量读取，绝不写入仓库。
+- ``config/web.json`` → ``runtime.openai_compat``：``base_url``、``model``，
+  以及可选的 ``timeout_seconds`` / ``max_tokens`` / ``temperature``。
+- API key 优先从系统密钥库（``secret_store.py``，keyring）读取；
+  没有时回退到 ``MUSIC_ATLAS_API_KEY`` 环境变量，绝不写入仓库。
 
 模型本身不内置联网检索工具：角色指令明确要求只凭既有知识给出可核验的公开
 来源，事实核验仍由程序（evidence.py）与契约层负责。
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import sys
 import time
 import urllib.error
@@ -29,23 +31,27 @@ except ImportError:  # pragma: no cover - 包模式
     from executors.local_codex_executor import _parse_json_object, _role_instruction
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+try:
+    from runtime_config import openai_compat_settings
+except ImportError:  # pragma: no cover - 直接从 executors 目录启动脚本
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from runtime_config import openai_compat_settings
 DEFAULT_TIMEOUT_SECONDS = 1800
 DEFAULT_MAX_TOKENS = 60000
 DEFAULT_TEMPERATURE = 0.2
-MAX_ATTEMPTS = 3
-RETRY_BASE_DELAY_SECONDS = 3.0
-REQUIRED_SETTINGS = ("base_url", "model", "api_key_env")
+MAX_ATTEMPTS = 5
+RETRY_BASE_DELAY_SECONDS = 1.5
+RETRY_MAX_DELAY_SECONDS = 20.0
+REQUIRED_SETTINGS = ("base_url", "model")
 
 
 def _settings() -> dict[str, Any]:
     try:
-        config = json.loads((PROJECT_ROOT / "config" / "web.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        settings = openai_compat_settings(PROJECT_ROOT)
+    except RuntimeError as exc:
         raise RuntimeError(f"无法读取项目配置：{exc}") from exc
-    runtime = config.get("runtime") if isinstance(config, dict) else None
-    settings = runtime.get("openai_compat") if isinstance(runtime, dict) else None
-    if not isinstance(settings, dict):
-        raise RuntimeError("config/web.json 缺少 runtime.openai_compat 配置")
+    if not isinstance(settings, dict) or not settings:
+        raise RuntimeError("配置缺少 runtime.openai_compat")
     missing = [key for key in REQUIRED_SETTINGS if not str(settings.get(key) or "").strip()]
     if missing:
         raise RuntimeError(f"runtime.openai_compat 缺少字段：{', '.join(missing)}")
@@ -95,15 +101,66 @@ def _request_once(url: str, api_key: str, payload: dict[str, Any], timeout: int)
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
+def _secret_store_get() -> tuple[str | None, str | None]:
+    """返回 (密钥, 错误描述)；密钥库不可用时以错误描述表示，由调用方决定是否回退。"""
+
+    def _call() -> str | None:
+        from secret_store import get_api_key
+        return get_api_key()
+
+    try:
+        return _call(), None
+    except ImportError:
+        try:
+            sys.path.insert(0, str(PROJECT_ROOT))
+            return _call(), None
+        except Exception as exc:  # noqa: BLE001 — 密钥库不可用时回退
+            return None, str(exc)
+    except Exception as exc:  # noqa: BLE001 — 密钥库错误如实报出
+        return None, str(exc)
+
+
+def _api_key(settings: dict[str, Any]) -> str:
+    """优先系统密钥库（网页保存的 Key，改动立即生效），其次环境变量回退。"""
+
+    value, store_error = _secret_store_get()
+    if value:
+        return value
+    env_name = str(settings.get("api_key_env") or "MUSIC_ATLAS_API_KEY").strip()
+    env_value = os.environ.get(env_name, "").strip()
+    if env_value:
+        return env_value
+    detail = f"系统密钥库不可用（{store_error}）" if store_error else "系统密钥库中没有保存"
+    raise RuntimeError(
+        f"未配置 API Key：{detail}，环境变量 {env_name} 也未设置；"
+        f"请在网页设置中输入 API Key（密钥只存本机系统密钥库）")
+
+
+def _retry_delay(attempt: int, headers: Any = None) -> float:
+    """指数退避加抖动；上游给了 Retry-After 时优先尊重。"""
+
+    if headers is not None:
+        raw = None
+        try:
+            raw = headers.get("Retry-After")
+        except Exception:  # noqa: BLE001 — 头部缺失或类型异常都不影响重试
+            raw = None
+        if raw:
+            try:
+                return max(0.0, min(float(str(raw).strip()), RETRY_MAX_DELAY_SECONDS))
+            except ValueError:
+                pass
+    base = min(RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)), RETRY_MAX_DELAY_SECONDS)
+    return base + random.uniform(0, 0.5)
+
+
 def _request(settings: dict[str, Any], role: str, task: str, timeout: int) -> dict[str, Any]:
     url = str(settings["base_url"]).strip().rstrip("/") + "/chat/completions"
-    api_key = os.environ.get(str(settings["api_key_env"]).strip(), "")
-    if not api_key:
-        raise RuntimeError(
-            f"环境变量 {settings['api_key_env']} 未设置；无法调用 {settings['model']}（密钥只存本机）")
+    api_key = _api_key(settings)
     payload = _chat_payload(settings, role, task)
     last_error: RuntimeError | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        retry_headers = None
         try:
             return _request_once(url, api_key, payload, timeout)
         except urllib.error.HTTPError as exc:
@@ -115,10 +172,11 @@ def _request(settings: dict[str, Any], role: str, task: str, timeout: int) -> di
             last_error = RuntimeError(f"上游返回 HTTP {exc.code}：{detail}")
             if exc.code < 500 and exc.code != 429:
                 raise last_error  # 请求本身有问题（鉴权/参数），重试无意义
+            retry_headers = getattr(exc, "headers", None)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = RuntimeError(f"请求失败：{exc}")
         if attempt < MAX_ATTEMPTS:
-            time.sleep(RETRY_BASE_DELAY_SECONDS * attempt)
+            time.sleep(_retry_delay(attempt, retry_headers))
     assert last_error is not None
     raise last_error
 

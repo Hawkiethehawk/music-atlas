@@ -39,6 +39,7 @@ def _check_list(*, tools_status: str, web_status: str, browser_status: str, atla
         Check("browser", "Playwright Chromium", browser_status, "detail", "fix"),
         Check("config", "网页配置", "ok", "ok"),
         Check("modules", "Python 模块自检", "ok", "ok"),
+        Check("keyring", "系统密钥库", "ok", "ok"),
         Check("atlas", "atlas 命令", atlas_status, "detail", "fix"),
     ]
 
@@ -161,7 +162,7 @@ class CheckTests(unittest.TestCase):
 
         self.assertEqual(
             keys,
-            {"python", "node", "npm", "tools_deps", "web_deps", "browser", "config", "modules", "atlas"},
+            {"python", "node", "npm", "tools_deps", "web_deps", "browser", "config", "modules", "keyring", "atlas"},
         )
 
 

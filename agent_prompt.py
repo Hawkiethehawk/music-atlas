@@ -38,11 +38,11 @@ RECOMMENDATION_SKILL_INSTRUCTIONS = """你是 Music Atlas 候选研究 Skill。�
 4. 每个候选必须同时具备歌曲身份和风格证据；音乐人关系候选还必须具备关系证据。证据不足时返回 insufficient_evidence。
 5. 风格必须使用 known_style_refs；允许使用不在 active_style_refs 中的新风格，由程序计算其与当前画像的距离。
 6. 每位艺人独立判断，不能使用宽泛“摇滚”兜底，也不能为 Bad Omens 设置特殊逻辑。
-7. 只研究结构化候选，不为全部候选撰写最终推荐说明；程序选出 10 首后根据兴趣组、关系与实际评分生成说明。
+7. 只研究结构化候选，不为全部候选撰写最终推荐说明；程序最多选出 target_recommendations 首（候选不足时按可用数量收缩）后，根据兴趣组、关系与实际评分生成说明。
 8. candidate_type 由程序复核：艺人延伸必须匹配当前艺人，音乐人关系必须匹配当前分析包中的项目艺人；其余候选按与最近兴趣组的风格/听感距离分类。researched 关系来自 Step 2 研究 Skill，仍待独立核验；不可用随意引用冒充关系。
 9. 按 interest_profiles 分组分别研究，避免只选整体平均听感。若有 research_request，只补其指定的缺额/约束，遵守剩余数量预算和去重清单；这不是历史偏好输入。若 research_request.parallel_worker 存在，这是并行分片：只返回 requested_type_counts 指定类型、最多 candidate_budget 首；不同分片之间可能出现重复，程序会统一去重。
 
-首轮候选池必须达到 recommendation_policy.candidate_pool_min，并覆盖 recall_mix 的四种 candidate_type。补充轮以 research_request 为准，不必重复首轮的最低数量或全部类型。候选不得命中 favorite_track_keys 或相同 platform_track_id。style_mix 权重合计为 1；style_axes 必须填写八个 0 到 100 的听感轴。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
+首轮候选池至少达到 recommendation_policy.candidate_pool_min；候选充足时尽量覆盖 recall_mix 的 candidate_type，候选不足时不为凑齐类型虚构结果。补充轮以 research_request 为准，不必重复首轮的最低数量或全部类型。候选不得命中 favorite_track_keys 或相同 platform_track_id。style_mix 权重合计为 1；style_axes 必须填写八个 0 到 100 的听感轴。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
 
 每条 evidence_items 包含 claim_type、claim、url；claim_type 只能是 track_identity、style、relation、release。evidence_items 中的 URL 也必须列入 sources。evidence_grade 只能是 A、B、C，style_confidence 只能是 high、medium、low。
 

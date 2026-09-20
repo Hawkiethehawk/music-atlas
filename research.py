@@ -12,9 +12,11 @@ from copy import deepcopy
 from typing import Any, Callable
 
 from agent_prompt import apply_context_budget
+from agent_retry import call_agent_with_retry
 from candidate_routes import resolve_candidate_route
 from contracts import ContractError, SCHEMA_VERSION, _validate_candidate_pool, normalized_text, parse_timestamp, target_counts, track_key
-from evidence import require_usable_evidence
+from evidence import require_usable_evidence, verify_evidence_item
+from metadata_verify import verify_many
 from recommender import SelectionSearchBudgetExceeded, rank_bundle
 
 
@@ -103,18 +105,36 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
                               "candidate_target": candidate_target, "max_candidates": max_candidates, "max_rounds": max_rounds,
                               "parallelism": parallelism, "rounds": [], "route_corrections": [],
                               "skipped_duplicates_or_favorites": 0, "truncated_candidate_count": 0,
+                              "worker_retry_attempts": 0,
                               "policy_changed": False}
     prompt = prepared
     failure = "候选不足"
     requested_counts: dict[str, int] | None = None
+    worker_retry_attempts = 0
 
     def notify(event: str, **payload: Any) -> None:
         if progress is not None:
             progress({"event": event, "stage": "recommendation", **payload})
 
     def run_one(worker_prompt: str, timeout_budget: int) -> tuple[dict[str, Any] | None, Exception | None]:
+        def on_retry(attempt: int, message: str) -> None:
+            nonlocal worker_retry_attempts
+            worker_retry_attempts += 1
+            report["worker_retry_attempts"] = worker_retry_attempts
+            report["last_retry_reason"] = str(message)[:200]
+            notify(
+                "stage_detail",
+                task_kind="recommendation_worker",
+                message=f"候选研究 worker 遇到瞬时故障，正在重试（第 {attempt} 次）",
+            )
+
         try:
-            return execute(command, worker_prompt, timeout=timeout_budget), None
+            return (
+                call_agent_with_retry(
+                    execute, command, worker_prompt, timeout=timeout_budget, on_retry=on_retry
+                ),
+                None,
+            )
         except Exception as exc:  # Keep every worker outcome for the diagnostic report.
             return None, exc
 
@@ -454,6 +474,32 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
 
         generated_values = [raw["generated_at"] for raw in returned]
         generated_at = max(generated_values, key=lambda value: parse_timestamp(value, "generated_at")) if generated_values else None
+        # 平台元数据核验：候选的曲名/艺人来自模型既有知识，先用平台公开搜索核验；
+        # 命中后用平台规范名称覆盖展示字段，未核实（含网络失败）的候选直接丢弃，
+        # 不用模型记忆里的名字充当事实。
+        raw_candidates = [
+            original
+            for raw in returned
+            for original in (raw.get("candidate_pool") or [])
+            if isinstance(original, dict)
+        ]
+        verify_keys = [(str(item.get("title") or ""), str(item.get("artist") or "")) for item in raw_candidates]
+        verified_map: dict[tuple[str, str], dict[str, Any]] = {}
+        if verify_keys:
+            notify(
+                "stage_detail",
+                task_kind="metadata_verify",
+                task_total=len(verify_keys),
+                completed=0,
+                total=len(verify_keys),
+                message=f"正在用平台搜索核验 {len(verify_keys)} 个候选的曲名与艺人",
+            )
+            for verify_key, verified_value in zip(verify_keys, verify_many(verify_keys)):
+                if verified_value is not None and verify_key not in verified_map:
+                    verified_map[verify_key] = verified_value
+            report["metadata_verified_count"] = len(verified_map)
+            report["metadata_unverified_count"] = len({key for key in verify_keys}) - len(verified_map)
+        verified_candidates = 0
         for raw in returned:
             batch = raw.get("candidate_pool")
             if not isinstance(batch, list):
@@ -471,12 +517,36 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
                         "reason": str(exc),
                     })
                     continue
-                require_usable_evidence(original)
+                # 单个候选的来源标识符无效，说明该候选的模型事实不可信；
+                # 丢弃并记录，不应阻断同轮其他已通过平台元数据核验的候选。
+                # 但已知矛盾、不可访问或过期证据是全轮硬失败，不能被静默吞掉。
+                try:
+                    require_usable_evidence(original)
+                except ContractError as exc:
+                    evidence_items = original.get("evidence_items") or []
+                    if any(
+                        verify_evidence_item(item).get("verification_result")
+                        in {"contradictory", "inaccessible", "stale"}
+                        for item in evidence_items if isinstance(item, dict)
+                    ):
+                        raise
+                    report.setdefault("rejected_candidates", []).append({
+                        "canonical_track_id": str(original.get("canonical_track_id") or ""),
+                        "reason": str(exc),
+                    })
+                    continue
                 candidate = deepcopy(original)
-                candidate["candidate_type"] = resolve_candidate_route(candidate, packet)["candidate_type"]
-                if candidate["candidate_type"] != original["candidate_type"]:
-                    report["route_corrections"].append({"canonical_track_id": candidate["canonical_track_id"],
-                                                       "declared": original["candidate_type"], "resolved": candidate["candidate_type"]})
+                resolved_type = resolve_candidate_route(candidate, packet)["candidate_type"]
+                if resolved_type != original["candidate_type"]:
+                    report.setdefault("rejected_candidates", []).append({
+                        "canonical_track_id": str(candidate.get("canonical_track_id") or ""),
+                        "reason": (
+                            "候选声明的召回类型与当前分析包推导路径不一致："
+                            f"声明 {original['candidate_type']}，应为 {resolved_type}"
+                        ),
+                    })
+                    continue
+                candidate["candidate_type"] = resolved_type
                 try:
                     _validate_candidate_pool([candidate], known_refs=set(packet["analysis_ref_ids"]),
                                              known_style_refs=set(packet["style_analysis"]["known_style_refs"]), require_all_types=False)
@@ -486,6 +556,21 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
                         "reason": str(exc),
                     })
                     continue
+                verification = verified_map.get((str(candidate.get("title") or ""), str(candidate.get("artist") or "")))
+                if verification is None:
+                    report.setdefault("unverified_candidates", []).append({
+                        "canonical_track_id": str(candidate.get("canonical_track_id") or ""),
+                        "title": str(candidate.get("title") or ""),
+                        "artist": str(candidate.get("artist") or ""),
+                        "reason": "平台搜索未能核验曲名与艺人（可能是错写、同名曲或未收录）",
+                    })
+                    continue
+                # 以平台规范名称覆盖展示字段，并保留核验来源供页面标注。
+                candidate["title"] = verification["title"] or candidate["title"]
+                candidate["artist"] = verification["artist"] or candidate["artist"]
+                candidate["album"] = verification["album"] or candidate.get("album") or candidate.get("project")
+                candidate["metadata_verified"] = verification
+                verified_candidates += 1
                 identity = candidate["canonical_track_id"].casefold()
                 key = track_key(candidate["title"], candidate["artist"])
                 platform_id = normalized_text(candidate.get("platform_track_id")).casefold()
@@ -500,6 +585,7 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
                 seen_keys.add(key)
                 if platform_id:
                     seen_platform_ids.add(platform_id)
+        report["metadata_verified_candidate_count"] = verified_candidates
         result = {"schema_version": SCHEMA_VERSION, "bundle_type": "recommendation_bundle", "bundle_stage": "candidate_pool",
                   "status": "ready", "analysis_id": packet["analysis_id"], "generated_at": generated_at or "",
                   "candidate_pool": pool, "recommendations": []}
@@ -558,5 +644,30 @@ def research_candidates(packet: dict[str, Any], prepared: str, command: str, *,
                 break
         else:
             requested_counts = deficits
+    # candidate_target 是质量和多样性的目标，不是发布门槛。经过所有轮次后，
+    # 只要严格核验后的池满足策略最小值，就按实际数量确定性排序；
+    # 这与推荐策略“候选不足时按可用数量收缩”的契约保持一致。
+    # Explicitly requesting a larger research pool is a hard research-budget
+    # requirement. The normal UI target (at most the final recommendation
+    # count) may reduce to its verified usable pool.
+    if (
+        candidate_target <= int(packet["recommendation_policy"]["target_recommendations"])
+        and len(pool) >= int(packet["recommendation_policy"]["candidate_pool_min"])
+    ):
+        try:
+            ranked = rank_bundle(result, packet)
+        except SelectionSearchBudgetExceeded:
+            raise
+        except ContractError as exc:
+            failure = str(exc)
+        else:
+            report.update(
+                status="ready_with_reduced_pool",
+                accepted_candidate_count=len(pool),
+                selected_count=len(ranked["recommendations"]),
+                target_unmet=True,
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+            return ranked, report
     report.update(status="budget_exhausted", elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
-    raise ResearchExhausted(f"候选研究未完成：{failure}；保留研究报告，不输出不足 10 首或降低门槛的推荐", report)
+    raise ResearchExhausted(f"候选研究未完成：{failure}；保留研究报告，不输出无法通过契约的推荐", report)

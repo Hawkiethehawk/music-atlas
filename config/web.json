@@ -14,11 +14,30 @@
     "openai_compat": {
       "base_url": "https://sshzyu.com/v1",
       "model": "deepseek-v4.1-flash",
-      "api_key_env": "MUSIC_ATLAS_API_KEY",
       "timeout_seconds": 1800,
       "max_tokens": 60000,
+      "temperature": 0.2,
       "disable_thinking": true
     }
+  },
+  "crawler": {
+    "request_timeout_seconds": 30,
+    "request_retries": 1,
+    "user_agent": "MusicAtlas/1.0 (+local)",
+    "netease_detail_url": "https://music.163.com/api/v6/playlist/detail",
+    "netease_song_detail_url": "https://music.163.com/api/v3/song/detail",
+    "netease_referer": "https://music.163.com/",
+    "netease_song_detail_batch_size": 200,
+    "qq_page_size": 100,
+    "qq_max_pages": 50,
+    "qq_musicu_url": "https://u.y.qq.com/cgi-bin/musicu.fcg",
+    "qq_referer": "https://y.qq.com/",
+    "apple_export_timeout_seconds": 600
+  },
+  "recommendation_policy": {},
+  "editorial": {
+    "title": "",
+    "lede": ""
   },
   "executors": {
     "analysis": "executors/openai_analysis.py",
@@ -26,19 +45,16 @@
   },
   "workflow": {
     "analysis_parallelism": 5,
-    "recommendation_parallelism": 8,
+    "recommendation_parallelism": 4,
     "analysis_timeout_seconds": 7200,
     "recommendation_timeout_seconds": 3600,
-    "track_limit_options": [
-      30,
-      100,
-      200,
-      500,
-      1000
-    ],
-    "track_limit_default": 30,
+    "track_percentile_default": 1,
     "await_limit_timeout_seconds": 1800,
     "max_research_rounds": 2,
-    "max_candidates": 60
+    "max_candidates": 60,
+    "candidate_target": 10,
+    "analysis_batch_size": 10,
+    "analysis_context_budget": null,
+    "context_budget": null
   }
 }

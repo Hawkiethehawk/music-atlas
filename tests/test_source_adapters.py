@@ -14,12 +14,14 @@ from source_adapters import (
     CsvPlaylistReader,
     NeteasePublicPlaylistReader,
     QQPublicPlaylistReader,
+    _crawler_url,
     _normalize_csv_key,
     _parse_netease_detail,
     _parse_netease_song_details,
     _parse_qq_diss_page,
     _playlist_id_from_arg,
     _playlist_id_from_qq_arg,
+    _request_headers,
 )
 
 
@@ -73,6 +75,50 @@ V3_SONG_DETAIL_PAYLOAD = {
         {"id": 103, "name": "Song C", "ar": [{"name": "Artist C"}], "al": {"name": "Album C"}},
     ],
 }
+
+
+def _crawler_url_from_settings(value: str) -> str:
+    """用指定值模拟项目配置，避免读到真实 config/web.json。"""
+
+    with mock.patch("source_adapters.crawler_settings", return_value={"netease_detail_url": value}):
+        return _crawler_url(
+            "netease_detail_url", "https://music.163.com/api/v6/playlist/detail", ("music.163.com",)
+        )
+
+
+class CrawlerUrlTests(unittest.TestCase):
+    """网页保存的爬虫地址必须被读取器接受（包括去掉末尾斜杠的 Referer）。"""
+
+    def test_referer_without_trailing_slash_is_accepted(self) -> None:
+        with mock.patch("source_adapters.crawler_settings", return_value={
+            "netease_referer": "https://music.163.com",
+            "qq_referer": "https://y.qq.com",
+        }):
+            netease = _request_headers("netease")
+            qq = _request_headers("qq")
+
+        self.assertEqual(netease["Referer"], "https://music.163.com")
+        self.assertEqual(qq["Referer"], "https://y.qq.com")
+
+    def test_absolute_and_relative_paths_are_both_accepted(self) -> None:
+        for value, expected in (
+            ("https://music.163.com/", "https://music.163.com"),
+            ("https://music.163.com", "https://music.163.com"),
+            ("https://music.163.com/api/v6/playlist/detail", "https://music.163.com/api/v6/playlist/detail"),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(_crawler_url_from_settings(value), expected)
+
+    def test_other_hosts_and_schemes_are_rejected(self) -> None:
+        for value in (
+            "https://evil.example.com",
+            "http://music.163.com",
+            "https://music.163.com.evil.example.com",
+            "https://u.y.qq.com/api",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ContractError):
+                    _crawler_url_from_settings(value)
 
 
 class PlaylistIdParsingTests(unittest.TestCase):

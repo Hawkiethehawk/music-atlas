@@ -245,16 +245,22 @@ def source_evidence_grade(candidate: dict[str, Any]) -> str:
     ])
 
 
-def require_usable_evidence(candidate: dict[str, Any]) -> None:
-    """Allow unverified research, but reject known-negative evidence."""
+def require_usable_evidence(candidate: dict[str, Any], *, lenient_identifier: bool = False) -> None:
+    """Allow unverified research, but reject known-negative evidence.
 
+    ``lenient_identifier=True``（分析批次阶段）把“已知来源但标识符格式无效”
+    的证据视为不致命：研究草稿阶段应容忍模型输出不稳，标识符无效只意味着
+    该证据不会获得稳定标识符加分。候选/推荐阶段保持严格，防止伪造标识符。
+    """
+
+    label = candidate.get("track_key") or candidate.get("canonical_track_id") or str(candidate.get("position", "?"))
     for item in candidate.get("evidence_items", []):
         checked = verify_evidence_item(item)
         status = checked["verification_result"]
         if status in {"contradictory", "inaccessible", "stale"}:
-            raise ContractError(f"候选 {candidate.get('canonical_track_id')} 的证据不可用：{status}")
-        if checked["identifier_status"] == "invalid":
-            raise ContractError(f"候选 {candidate.get('canonical_track_id')} 的证据标识符格式无效")
+            raise ContractError(f"{label} 的证据不可用：{status}")
+        if not lenient_identifier and checked["identifier_status"] == "invalid":
+            raise ContractError(f"{label} 的证据标识符格式无效")
 
 
 def check_evidence_acceptance(

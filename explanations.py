@@ -16,12 +16,18 @@ def explain_selected(candidate: dict[str, Any], packet: dict[str, Any]) -> dict[
     origin = "Agent 研究路径：" if route["verification_scope"] == "current_packet_agent_relation" else "本次艺人路径：" if route["candidate_type"] == "artist_continuation" else "目录路径："
     relation = (origin + " → ".join(route["path"]) + "；尚未在线核验") if route["path"] else "未确认音乐人关系，本曲按描述性风格/听感发现"
     axes = interest["style_axes"] if interest else {}
-    closest = sorted(axes, key=lambda axis: (abs(axes[axis] - candidate["style_axes"][axis]), axis))[:3]
+    candidate_axes = candidate.get("style_axes", {})
+    closest = sorted(
+        [axis for axis in axes if axes[axis] is not None and candidate_axes.get(axis) is not None],
+        key=lambda axis: (abs(axes[axis] - candidate_axes[axis]), axis),
+    )[:3]
     fit = "；".join(f"{STYLE_AXIS_LABELS[axis]}：候选 {candidate['style_axes'][axis]:.0f} / 兴趣组 {axes[axis]:.0f}" for axis in closest)
     fit = "描述性画像估计，非音频实测：" + (fit or "听感依据不足")
     labels = {item["style_ref"]: item["label"] for item in packet["style_analysis"]["style_definitions"]}
-    styles = "、".join(labels.get(ref, ref) for ref in candidate["style_refs"])
-    style_fit = f"{styles}；风格匹配 {candidate['score_features']['style_fit']:.1f}，听感匹配 {candidate['score_features']['axis_fit']:.1f}（均非喜欢概率）"
+    styles = "、".join(labels.get(ref, ref) for ref in candidate["style_refs"]) or "风格资料不足"
+    style_fit = (f"{styles}；风格与八轴资料不足，已从本首评分中排除"
+                 if candidate.get("style_status") == "unclassified"
+                 else f"{styles}；风格匹配 {candidate['score_features']['style_fit']:.1f}，听感匹配 {candidate['score_features']['axis_fit']:.1f}（均非喜欢概率）")
     novelty = f"未命中本次收藏；程序判定为 {route['candidate_type']}，新鲜度仅相对本次输入"
     return {"preference_basis": basis, "artist_relation": relation, "music_fit": fit, "style_fit": style_fit,
-            "novelty": novelty, "text": f"承接{basis}。{relation}。{fit}。{novelty}。公开事实尚未核验，本结果仅为研究草稿。"}
+            "novelty": novelty, "text": f"承接{basis}。{relation}。{fit}。{style_fit}。{novelty}。曲目身份来自本次公开平台记录。"}

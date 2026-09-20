@@ -45,7 +45,7 @@ function projectRelative(absolutePath) {
  * 启动隔离的 server.js 实例。
  * options.executors 为 false 时模拟"执行器未配置"（POST /api/jobs 应返回 503）。
  */
-export async function createIsolatedServer({ label, executors = true } = {}) {
+export async function createIsolatedServer({ label, executors = true, settings = null } = {}) {
   const runtimeDir = uniqueRuntimeDir(label || "server");
   await mkdir(runtimeDir, { recursive: true });
   const port = await getFreePort();
@@ -74,10 +74,30 @@ export async function createIsolatedServer({ label, executors = true } = {}) {
   }
   const configPath = path.join(runtimeDir, "web.config.json");
   await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
+  // 可选的预置网页设置覆盖（用于验证旧配置迁移）。
+  if (settings) {
+    await writeFile(path.join(runtimeDir, "settings.json"), JSON.stringify(settings, null, 2), "utf8");
+  }
+
+  // 密钥库隔离：用夹具脚本 + 临时状态文件，测试不会触碰真实系统密钥库。
+  const secretStatePath = path.join(runtimeDir, "fake-secret.json");
+  const secretScript = path.join(PROJECT_ROOT, "tests", "fixtures", "fake_secret_store.py");
+
+  const childEnv = {
+    ...process.env,
+    ATLAS_WEB_CONFIG: configPath,
+    ATLAS_WEB_SECRET_SCRIPT: secretScript,
+    ATLAS_SECRET_STATE_FILE: secretStatePath,
+  };
+  // 测试确定性：不让宿主机的真实 API Key 环境变量影响探测结果。
+  delete childEnv.MUSIC_ATLAS_API_KEY;
+  // 夹具曲目为合成数据，平台上不存在；关闭平台元数据核验，
+  // 否则候选会被当作“未核实”全部丢弃（核验本身由 Python 测试覆盖）。
+  childEnv.ATLAS_METADATA_VERIFY = "off";
 
   const proc = spawn(process.execPath, ["server.js"], {
     cwd: WEB_DIR,
-    env: { ...process.env, ATLAS_WEB_CONFIG: configPath },
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stderr = "";
@@ -107,6 +127,7 @@ export async function createIsolatedServer({ label, executors = true } = {}) {
     baseUrl,
     runtimeDir,
     configPath,
+    secretStatePath,
     exited,
     stderr: () => stderr,
     async stop() {
@@ -158,7 +179,7 @@ export async function runFixtureWorkflow({ label, playlistName = "示例歌单" 
   const currentData = path.join(dir, "current.json");
   await mkdir(jobDir, { recursive: true });
   const args = [
-    "web_workflow.py",
+    "tests/fixtures/web_workflow_fixture.py",
     "--runtime-dir", jobDir,
     "--current-data", currentData,
     "--source-kind", "local_json",
@@ -170,7 +191,13 @@ export async function runFixtureWorkflow({ label, playlistName = "示例歌单" 
     "--recommendation-command", `${PYTHON} tests/fixtures/fake_agent.py`,
     "--analysis-batch-size", "2",
   ];
-  const proc = spawn(PYTHON, args, { cwd: PROJECT_ROOT, stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(PYTHON, args, {
+    cwd: PROJECT_ROOT,
+    stdio: ["ignore", "pipe", "pipe"],
+    // 夹具曲目为合成数据，平台上不存在；关闭平台元数据核验，
+    // 否则候选会被当作“未核实”全部丢弃。
+    env: { ...process.env, ATLAS_METADATA_VERIFY: "off" },
+  });
   const events = [];
   let stdout = "";
   let stderr = "";

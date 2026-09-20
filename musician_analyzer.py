@@ -71,10 +71,11 @@ DEFAULT_POLICY: dict[str, Any] = {
     "max_per_artist": 2,
     "max_per_project": 3,
     "min_projects": 6,
-    "candidate_pool_min": 20,
+    "candidate_pool_min": 1,
     "exclude_current_favorites": True,
     "cross_platform_links_allowed": True,
     "algorithm_version": "hybrid_music_discovery_v2",
+    # 风格资料不足时允许保持 unknown；对应候选评分维度会被程序排除。
     "analysis_quality": {"min_classified_share": 0.5},
     "display_limits": {
         "artists": 5,
@@ -554,7 +555,8 @@ def _copy_relation_list(entry: dict[str, Any], field: str) -> list[dict[str, Any
             continue
         copied = {
             key: item[key]
-            for key in ("name", "role", "status", "relation", "person", "confidence", "sources", "evidence_items")
+            for key in ("name", "role", "status", "relation", "person", "confidence", "sources", "evidence_items",
+                        "begin", "end", "cross_checked", "source_conflict", "external_ids", "retrieved_at")
             if key in item
         }
         name = normalized_text(copied.get("name"))
@@ -582,21 +584,28 @@ def _entity(
 ) -> tuple[dict[str, Any], list[str]]:
     entry = catalog.get(normalized_name(name), {})
     canonical = normalized_text(entry.get("canonical_name") or name)
+    members = _copy_relation_list(entry, "members")
     vocalists = _copy_relation_list(entry, "lead_vocalists")
+    collaborators = _copy_relation_list(entry, "collaborators")
     related_projects = _copy_relation_list(entry, "related_projects")
     sources = _source_urls(entry)
-    for fact in (*vocalists, *related_projects):
+    for fact in (*members, *vocalists, *collaborators, *related_projects):
         for source in fact.get("sources", []):
             if source not in sources:
                 sources.append(source)
-    relation_status = "confirmed" if vocalists or related_projects else "unmapped"
+    relation_status = "confirmed" if members or vocalists or collaborators or related_projects else "unmapped"
     if relation_status == "confirmed" and entry.get("research_origin") == "agent":
         relation_status = "researched"
     refs = [_artist_ref(canonical)]
+    for member in members:
+        refs.append(_person_ref(member["name"]))
     for vocalist in vocalists:
         refs.append(_person_ref(vocalist["name"]))
+    for collaborator in collaborators:
+        refs.append(_artist_ref(collaborator["name"]))
     for project in related_projects:
         refs.append(_project_ref(project["name"]))
+    refs = list(dict.fromkeys(refs))
     entity = {
         "entity_ref": _artist_ref(canonical),
         "name": canonical,
@@ -606,7 +615,9 @@ def _entity(
         "credited_track_count": credited_count,
         "is_preferred": preferred,
         "relation_status": relation_status,
+        "members": members,
         "lead_vocalists": vocalists,
+        "collaborators": collaborators,
         "related_projects": related_projects,
         "sources": sources,
         "analysis_refs": refs,
@@ -847,6 +858,7 @@ def analyze_snapshot(
     policy_path: Path | None = None,
     as_of_date: str | None = None,
     research_bundle_path: Path | None = None,
+    analysis_mode: str | None = None,
 ) -> dict[str, Any]:
     snapshot = validate_playlist_snapshot(read_json(snapshot_path), require_complete=True)
     scoring_date = (
@@ -1077,6 +1089,7 @@ def analyze_snapshot(
         "track_style_assignments": track_style_assignments,
         "style_analysis": style_analysis,
         "recommendation_policy": policy,
+        "analysis_mode": analysis_mode,
     }
     analysis_id = f"analysis-{stable_hash(identity_payload)[:20]}"
     packet = {
@@ -1101,6 +1114,7 @@ def analyze_snapshot(
         "track_style_assignments": track_style_assignments,
         "style_analysis": style_analysis,
         "recommendation_policy": policy,
+        "analysis_mode": analysis_mode,
         "input_manifest": {
             "snapshot_file_name": snapshot_path.name,
             "snapshot_sha256": sha256_path(snapshot_path),
@@ -1327,6 +1341,7 @@ def analyze_and_validate(
     policy_path: Path | None = None,
     as_of_date: str | None = None,
     research_bundle_path: Path | None = None,
+    analysis_mode: str | None = None,
 ) -> dict[str, Any]:
     packet = analyze_snapshot(
         snapshot_path,
@@ -1340,5 +1355,6 @@ def analyze_and_validate(
         policy_path=policy_path,
         as_of_date=as_of_date,
         research_bundle_path=research_bundle_path,
+        analysis_mode=analysis_mode,
     )
     return validate_analysis_packet(packet)

@@ -39,7 +39,6 @@ def _completion(content: str) -> bytes:
 _SETTINGS = {
     "base_url": "https://example.invalid/v1",
     "model": "glm-5.3-flash",
-    "api_key_env": "TEST_ATLAS_API_KEY",
     "timeout_seconds": 60,
     "max_tokens": 1234,
 }
@@ -49,7 +48,6 @@ class SettingsTests(unittest.TestCase):
     def test_reads_settings_from_project_config(self) -> None:
         settings = executor._settings()
         self.assertTrue(settings["model"], "项目配置必须声明模型")
-        self.assertTrue(settings["api_key_env"], "项目配置必须声明密钥所在环境变量")
         self.assertTrue(str(settings["base_url"]).startswith("https://"), "必须使用 HTTPS 端点")
 
     def test_missing_settings_field_is_reported(self) -> None:
@@ -58,20 +56,40 @@ class SettingsTests(unittest.TestCase):
             config = root / "config" / "web.json"
             config.parent.mkdir(parents=True)
             config.write_text(json.dumps({"runtime": {"openai_compat": {
-                "base_url": "  ", "model": "m", "api_key_env": "TEST_ATLAS_API_KEY"}}}), encoding="utf-8")
+                "base_url": "  ", "model": "m"}}}), encoding="utf-8")
             with mock.patch.object(executor, "PROJECT_ROOT", root), \
-                 mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}):
+                 mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "k"}):
                 with self.assertRaises(RuntimeError) as ctx:
                     executor.run("analysis", "任务")
         self.assertIn("base_url", str(ctx.exception))
 
+    def test_api_key_prefers_keyring_then_environment(self) -> None:
+        with mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "env-key"}), \
+             mock.patch("secret_store.get_api_key", return_value="store-key"):
+            self.assertEqual(executor._api_key(dict(_SETTINGS)), "store-key")
+        with mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "env-key"}), \
+             mock.patch("secret_store.get_api_key", side_effect=RuntimeError("密钥库不可用")):
+            self.assertEqual(executor._api_key(dict(_SETTINGS)), "env-key")
+        with mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "env-key"}), \
+             mock.patch("secret_store.get_api_key", return_value=None):
+            self.assertEqual(executor._api_key(dict(_SETTINGS)), "env-key")
+
     def test_missing_api_key_is_reported(self) -> None:
-        clean = {k: v for k, v in os.environ.items() if k != "TEST_ATLAS_API_KEY"}
-        with mock.patch.dict(os.environ, clean, clear=True):
-            with mock.patch.object(executor, "_settings", return_value=dict(_SETTINGS)):
-                with self.assertRaises(RuntimeError) as ctx:
-                    executor.run("analysis", "任务")
-        self.assertIn("TEST_ATLAS_API_KEY", str(ctx.exception))
+        clean = {k: v for k, v in os.environ.items() if k != "MUSIC_ATLAS_API_KEY"}
+        with mock.patch.dict(os.environ, clean, clear=True), \
+             mock.patch("secret_store.get_api_key", return_value=None), \
+             mock.patch.object(executor, "_settings", return_value=dict(_SETTINGS)):
+            with self.assertRaises(RuntimeError) as ctx:
+                executor.run("analysis", "任务")
+        self.assertIn("未配置 API Key", str(ctx.exception))
+
+    def test_keyring_failure_message_is_reported(self) -> None:
+        clean = {k: v for k, v in os.environ.items() if k != "MUSIC_ATLAS_API_KEY"}
+        with mock.patch.dict(os.environ, clean, clear=True), \
+             mock.patch("secret_store.get_api_key", side_effect=RuntimeError("后端不安全")):
+            with self.assertRaises(RuntimeError) as ctx:
+                executor._api_key(dict(_SETTINGS))
+        self.assertIn("后端不安全", str(ctx.exception))
 
 
 class PayloadTests(unittest.TestCase):
@@ -109,7 +127,7 @@ class RequestTests(unittest.TestCase):
     def test_success_parses_final_json(self) -> None:
         body = _completion('```json\n{"ok": true}\n```')
         with mock.patch.object(executor, "_settings", return_value=dict(_SETTINGS)), \
-             mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}), \
+             mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "k"}), \
              mock.patch.object(executor.urllib.request, "urlopen", return_value=_FakeResponse(body)):
             result = executor.run("analysis", "任务", timeout=5)
         self.assertEqual(result, {"ok": True})
@@ -122,7 +140,7 @@ class RequestTests(unittest.TestCase):
             raise _http_error(401, "bad key")
 
         with mock.patch.object(executor.urllib.request, "urlopen", side_effect=fake_urlopen), \
-             mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}), \
+             mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "k"}), \
              mock.patch.object(executor.time, "sleep") as slept:
             with self.assertRaises(RuntimeError) as ctx:
                 executor._request(dict(_SETTINGS), "analysis", "任务", 5)
@@ -138,7 +156,7 @@ class RequestTests(unittest.TestCase):
             raise _http_error(502, "upstream")
 
         with mock.patch.object(executor.urllib.request, "urlopen", side_effect=fake_urlopen), \
-             mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}), \
+             mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "k"}), \
              mock.patch.object(executor.time, "sleep"):
             with self.assertRaises(RuntimeError) as ctx:
                 executor._request(dict(_SETTINGS), "analysis", "任务", 5)
@@ -148,7 +166,7 @@ class RequestTests(unittest.TestCase):
     def test_empty_content_is_reported(self) -> None:
         body = _completion("   ")
         with mock.patch.object(executor, "_settings", return_value=dict(_SETTINGS)), \
-             mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}), \
+             mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "k"}), \
              mock.patch.object(executor.urllib.request, "urlopen", return_value=_FakeResponse(body)):
             with self.assertRaises(RuntimeError) as ctx:
                 executor.run("analysis", "任务", timeout=5)
@@ -160,7 +178,7 @@ class MainContractTests(unittest.TestCase):
         body = _completion('{"ok": true}')
         out, err = StringIO(), StringIO()
         with mock.patch.object(executor, "_settings", return_value=dict(_SETTINGS)), \
-             mock.patch.dict(os.environ, {"TEST_ATLAS_API_KEY": "k"}), \
+             mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "k"}), \
              mock.patch.object(executor.urllib.request, "urlopen", return_value=_FakeResponse(body)), \
              mock.patch.object(executor.sys.stdin, "read", return_value="任务文本"), \
              redirect_stdout(out), redirect_stderr(err):

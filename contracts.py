@@ -700,8 +700,8 @@ def _validate_entities(packet: dict[str, Any]) -> None:
         if unknown:
             raise ContractError(f"entities[{index}] 包含未知 analysis_refs：{unknown}")
         relation_count = 0
-        for field in ("lead_vocalists", "related_projects"):
-            facts = entity.get(field)
+        for field in ("members", "lead_vocalists", "collaborators", "related_projects"):
+            facts = entity.get(field, [])
             if not isinstance(facts, list):
                 raise ContractError(f"entities[{index}].{field} 必须是数组")
             relation_count += len(facts)
@@ -787,6 +787,18 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
         raise ContractError("analysis_ref_ids 不得重复")
     _validate_entities(packet)
     _validate_style_analysis(packet, source_count)
+    if "agent_islands" in packet:
+        from agent_lastfm import validate_islands
+        from lastfm_pipeline import validate_knowledge
+        validate_knowledge(packet)
+        groups=packet["agent_islands"]
+        if not isinstance(groups,list) or [g.get("id") for g in groups]!=["agent-island-1","agent-island-2","agent-island-3"]:
+            raise ContractError("Agent 兴趣岛标识无效")
+        validate_islands({"islands":[{k:v for k,v in g.items() if k!="id"} for g in groups]},packet["source_tags"]["records"])
+        if packet.get("agent_copy_version") == 1:
+            from agent_lastfm import validate_analysis_copy
+            validate_analysis_copy({"overall_summary":packet.get("overall_summary"),
+                "islands":[{k:v for k,v in group.items() if k!="id"} for group in groups]},packet)
     return packet
 
 
@@ -795,7 +807,9 @@ def require_analysis_coverage(packet: dict[str, Any]) -> None:
     total = int(packet["source_track_count"])
     classified = sum(item.get("classification_status") == "classified" for item in packet["track_style_assignments"])
     minimum = packet["recommendation_policy"].get("analysis_quality", {}).get("min_classified_share", 0.5)
-    if not classified or not total or classified / total < minimum:
+    if packet.get("analysis_mode") == "public_facts_only":
+        return
+    if total and minimum > 0 and (not classified or classified / total < minimum):
         raise ContractError(f"画像覆盖不足：{classified}/{total} 首已分类，要求至少 {minimum:.0%}；请补齐画像并重新 analyze，未调用 Agent")
 
 
@@ -805,8 +819,8 @@ def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = No
     if not isinstance(quality, dict) or set(quality) != {"min_classified_share"}:
         raise ContractError("analysis_quality 仅允许 min_classified_share")
     floor = quality["min_classified_share"]
-    if isinstance(floor, bool) or not isinstance(floor, (int, float)) or not 0 < floor <= 1:
-        raise ContractError("min_classified_share 必须大于 0 且不超过 1")
+    if isinstance(floor, bool) or not isinstance(floor, (int, float)) or not 0 <= floor <= 1:
+        raise ContractError("min_classified_share 必须是 0 到 1")
     minimum = _require_int(policy.get("min_recommendations"), "min_recommendations", 1)
     maximum = _require_int(policy.get("max_recommendations"), "max_recommendations", minimum)
     if maximum < minimum:
@@ -821,9 +835,11 @@ def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = No
         raise ContractError("min_projects 不能大于 target_recommendations")
     candidate_pool_min = policy.get("candidate_pool_min")
     if candidate_pool_min is not None:
-        pool_minimum = _require_int(candidate_pool_min, "candidate_pool_min", target)
-        if pool_minimum < target:
-            raise ContractError("candidate_pool_min 不能小于 target_recommendations")
+        pool_minimum = _require_int(candidate_pool_min, "candidate_pool_min", 1)
+        # 候选池下限允许小于推荐数量：候选不足时由选曲按可用数量收缩，
+        # 不再强制先凑够候选才允许排序。
+        if pool_minimum < 1:
+            raise ContractError("candidate_pool_min 必须大于等于 1")
     recall_mix = policy.get("recall_mix")
     if recall_mix is not None:
         if not isinstance(recall_mix, list) or not recall_mix:
@@ -978,7 +994,12 @@ def _validate_candidate_evidence(candidate: dict[str, Any], label: str) -> None:
                 )
         claim_types.add(claim_type)
         evidence_urls.add(url)
-    missing_claims = {"track_identity", "style"} - claim_types
+    # 风格与八轴可以是有来源的估计；没有资料时必须显式 unknown，且不得
+    # 伪造一条 style 证据来满足结构。曲目身份始终需要本次程序取得的记录。
+    style_unknown = candidate.get("style_status") == "unclassified"
+    missing_claims = {"track_identity"} - claim_types
+    if not style_unknown:
+        missing_claims |= {"style"} - claim_types
     if missing_claims:
         raise ContractError(f"{label}.evidence_items 缺少必要证据类型：{sorted(missing_claims)}")
     if candidate.get("candidate_type") == "musician_relation" and "relation" not in claim_types:
@@ -1039,16 +1060,13 @@ def _validate_candidate_pool(
         unknown_refs = [ref for ref in refs if not isinstance(ref, str) or ref not in known_refs]
         if unknown_refs:
             raise ContractError(f"{label}[{index}] 包含未知 analysis_refs：{unknown_refs}")
-        style_mix = _validate_style_mix(
-            candidate.get("style_mix"),
-            f"{label}[{index}].style_mix",
-            known_style_refs,
-        )
-        if not style_mix:
-            raise ContractError(f"{label}[{index}].style_mix 不能为空")
+        style_status = candidate.get("style_status", "classified")
+        if style_status not in {"classified", "unclassified"}:
+            raise ContractError(f"{label}[{index}].style_status 必须是 classified 或 unclassified")
+        style_mix = _validate_style_mix(candidate.get("style_mix"), f"{label}[{index}].style_mix", known_style_refs)
         style_refs = candidate.get("style_refs")
-        if not isinstance(style_refs, list) or not style_refs:
-            raise ContractError(f"{label}[{index}].style_refs 不能为空")
+        if not isinstance(style_refs, list):
+            raise ContractError(f"{label}[{index}].style_refs 必须是数组")
         unknown_style_refs = [
             ref for ref in style_refs if not isinstance(ref, str) or ref not in known_style_refs
         ]
@@ -1056,13 +1074,18 @@ def _validate_candidate_pool(
             raise ContractError(f"{label}[{index}] 包含未知 style_refs：{unknown_style_refs}")
         if list(dict.fromkeys(style_refs)) != [entry["style_ref"] for entry in style_mix]:
             raise ContractError(f"{label}[{index}].style_refs 必须与 style_mix 顺序一致")
-        _validate_style_axes(candidate.get("style_axes"), f"{label}[{index}].style_axes")
+        _validate_style_axes(candidate.get("style_axes"), f"{label}[{index}].style_axes", allow_unknown=style_status == "unclassified")
         style_confidence = _require_text(
             candidate.get("style_confidence"),
             f"{label}[{index}].style_confidence",
         )
         if style_confidence not in STYLE_CONFIDENCE_LEVELS:
             raise ContractError(f"{label}[{index}].style_confidence 必须是 high、medium 或 low")
+        if style_status == "unclassified":
+            if style_mix or style_refs or any(value is not None for value in candidate.get("style_axes", {}).values()):
+                raise ContractError(f"{label}[{index}] 的 unknown 风格不得填写风格、八轴或评分资料")
+        elif not style_mix or not style_refs:
+            raise ContractError(f"{label}[{index}] 已分类风格必须提供 style_mix 与 style_refs")
         relation_path = candidate.get("relation_path")
         if not isinstance(relation_path, list) or len(relation_path) < 3:
             raise ContractError(f"{label}[{index}].relation_path 至少需要三段")
@@ -1108,6 +1131,9 @@ def _validate_candidate_pool(
 
 def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[str, Any]:
     analysis = validate_analysis_packet(packet)
+    if packet.get("selection_mode") == "lastfm_constraints_v1":
+        from lastfm_pipeline import validate_bundle
+        return validate_bundle(value, packet)
     bundle = _require_dict(value, "RecommendationBundle")
     if bundle.get("schema_version") != SCHEMA_VERSION:
         raise ContractError(f"RecommendationBundle.schema_version 必须是 {SCHEMA_VERSION}")
@@ -1146,6 +1172,9 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
         candidate_pool,
         known_refs=known_refs,
         known_style_refs=known_style_refs,
+        # 候选池允许不足：类型覆盖由选曲阶段的配额自适应保证，
+        # 不再要求候选池先凑齐全部召回类型。
+        require_all_types=False,
         required_types={candidate_type for candidate_type, _ in recall_mix_ratios(analysis)},
     )
     from candidate_routes import resolve_candidate_route
@@ -1166,14 +1195,15 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
         return bundle
     if bundle.get("publication_status") != "draft":
         raise ContractError("当前离线排序结果只能是 publication_status=draft；请重新生成候选排序结果")
-    if len(recommendations) != target:
-        raise ContractError(f"ranked 阶段必须包含 {target} 首推荐，实际为 {len(recommendations)}")
+    # 候选不足时允许少于目标数量：推荐数为 1..target，选曲阶段已按可用候选收缩。
+    if not recommendations or len(recommendations) > target:
+        raise ContractError(f"ranked 阶段推荐数量必须在 1 到 {target} 之间，实际为 {len(recommendations)}")
     ranking = _require_dict(bundle.get("ranking"), "ranking")
     _require_text(ranking.get("algorithm_version"), "ranking.algorithm_version")
-    if _require_int(ranking.get("selected_count"), "ranking.selected_count") != target:
-        raise ContractError("ranking.selected_count 与 target_recommendations 不一致")
+    if _require_int(ranking.get("selected_count"), "ranking.selected_count") != len(recommendations):
+        raise ContractError("ranking.selected_count 与实际推荐数量不一致")
     selected_ids = ranking.get("selected_canonical_track_ids")
-    if not isinstance(selected_ids, list) or len(selected_ids) != target:
+    if not isinstance(selected_ids, list) or len(selected_ids) != len(recommendations):
         raise ContractError("ranking.selected_canonical_track_ids 必须完整记录入选歌曲")
     candidates_by_id = {str(item["canonical_track_id"]).casefold(): item for item in candidate_pool}
     favorite_keys = set(str(key) for key in analysis["favorite_track_keys"])
@@ -1250,13 +1280,15 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
             raise ContractError(f"recommendations[{index}].relation_path 至少需要三段")
 
         style_refs = recommendation.get("style_refs")
-        if not isinstance(style_refs, list) or not style_refs:
-            raise ContractError(f"recommendations[{index}].style_refs 不能为空")
+        if not isinstance(style_refs, list):
+            raise ContractError(f"recommendations[{index}].style_refs 必须是数组")
         unknown_style_refs = [
             ref for ref in style_refs if not isinstance(ref, str) or ref not in known_style_refs
         ]
         if unknown_style_refs:
             raise ContractError(f"recommendations[{index}] 包含未知 style_refs：{unknown_style_refs}")
+        if not style_refs and recommendation.get("style_status") != "unclassified":
+            raise ContractError(f"recommendations[{index}] 缺少风格时必须显式标记 unclassified")
         _validate_explanation(recommendation.get("program_explanation"), f"recommendations[{index}].program_explanation")
         _validate_candidate_evidence(recommendation, f"recommendations[{index}]")
         discovery_source = _require_text(
@@ -1270,12 +1302,25 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
             raise ContractError(f"recommendations[{index}].platform_links 必须是非空对象")
         for platform, link in links.items():
             _validate_http_url(link, f"recommendations[{index}].platform_links[{platform}]")
-    if len(project_counts) < int(policy["min_projects"]):
+    required_projects = min(int(policy["min_projects"]), len(recommendations))
+    if len(project_counts) < required_projects:
         raise ContractError(
             "ready 状态的推荐项目覆盖数不足："
-            f"需要至少 {policy['min_projects']} 个，实际为 {len(project_counts)} 个"
+            f"需要至少 {required_projects} 个，实际为 {len(project_counts)} 个"
         )
-    expected_types = target_counts(target, analysis)
+    # rank_candidates 会将缺失类型的配额转移给仍有候选的类型；
+    # ranked 清单始终以程序生成的 manifest 自适应配额为准。
+    manifest_types = ranking.get("target_counts")
+    if not isinstance(manifest_types, dict):
+        raise ContractError("ranking.target_counts 必须是自适应候选类型配额")
+    expected_types = {}
+    for candidate_type, count in manifest_types.items():
+        if candidate_type not in CANDIDATE_TYPES or isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ContractError("ranking.target_counts 包含无效候选类型配额")
+        if count:
+            expected_types[candidate_type] = count
+    if sum(expected_types.values()) != len(recommendations):
+        raise ContractError("ranking.target_counts 与实际推荐数量不一致")
     if type_counts != Counter(expected_types):
         raise ContractError(
             f"recommendations 候选类型配额不一致：实际 {dict(type_counts)}，要求 {expected_types}"

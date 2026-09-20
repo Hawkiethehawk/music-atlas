@@ -1,14 +1,14 @@
 # Music Atlas
 
-Music Atlas 是一个可扩展的歌单推荐工作流：**随时手动触发，不绑定时间；对本次输入的整个歌单做全量解析**。它把歌单读取、音乐人关系分析和 Skill 推荐拆成三个独立步骤，并通过 JSON 契约连接每一步。推荐数量固定为 10 首，与歌单规模无关；当前输出仅为**研究草稿**，不代表外部事实已核验或正式推荐。所有产物都供网页端展示；仓库不含任何消息发送途径。
+Music Atlas 是一个可扩展的歌单推荐工作流：**随时手动触发，不绑定时间；对本次输入的整个歌单做全量解析**。它把歌单读取、音乐人关系分析和 Skill 推荐拆成三个独立步骤，并通过 JSON 契约连接每一步。默认推荐目标为 10 首；候选不足时按实际可用数量输出 1–10 首，候选充足时仍输出 10 首。当前输出仅为**研究草稿**，不代表外部事实已核验或正式推荐。所有产物都供网页端展示；仓库不含任何消息发送途径。
 
 ## 设计边界
 
 1. Step 1 将 Apple Music、网易云或本地 JSON/CSV 歌单统一为 `PlaylistSnapshot`。
 2. Step 2 只以本次 `PlaylistSnapshot` 作为偏好输入，由分析 Skill 研究公开音乐资料，返回逐曲画像及主唱、前乐队和 side project 关系；程序独占校验、统计和多兴趣聚合。
-3. Step 3 只接收本次 `MusicianAnalysisPacket`，由推荐 Skill 分轮研究候选事实；程序选出 10 首后生成与当前偏好、关系路径和实际评分一致的说明。
+3. Step 3 只接收本次 `MusicianAnalysisPacket`，由推荐 Skill 分轮研究候选事实；程序最多选出 10 首（候选不足时按可用数量收缩）后，生成与当前偏好、关系路径和实际评分一致的说明。
 
-Step 3 使用混合音乐发现策略：Skill 只提交艺人延伸、音乐人关系、细分风格邻近和探索四类候选的结构化事实与逐项证据；固定代码计算风格、听感轴、关系、频率、新鲜度、证据质量和公开关联七项分数，执行硬性召回配额、去重、项目覆盖、MMR 多样性控制和能量弧线排序。当前不调用平台个性化接口；反馈契约与离线评估已就位，但行为反馈只用于评估与人工批准的调优建议，不参与候选发现或自动排序。
+Step 3 使用混合音乐发现策略：Skill 只提交艺人延伸、音乐人关系、细分风格邻近和探索四类候选的结构化事实与逐项证据；固定代码计算风格、听感轴、关系、频率、新鲜度、证据质量和公开关联七项分数，按可用候选自适应召回配额，再执行去重、项目覆盖、MMR 多样性控制和能量弧线排序。当前不调用平台个性化接口；反馈契约与离线评估已就位，但行为反馈只用于评估与人工批准的调优建议，不参与候选发现或自动排序。
 
 Apple Music 只用于歌单快照和最终跳转链接。Apple Music 或网易云的个性化推荐、登录状态和历史运行结果不参与候选发现、排序或说明生成。
 
@@ -24,8 +24,8 @@ pwsh -File install.ps1        # Windows / PowerShell
 
 安装脚本本身只做一件事：定位 Python 并执行内置的 `atlas setup`。`setup` 会：
 
-1. 检查 Python ≥ 3.10、Node.js ≥ 18、npm、仓库配置与核心模块；
-2. 安装缺失依赖：`tools/` 与 `web/` 的 `npm ci`、Playwright Chromium（Apple 歌单导出需要）；
+1. 检查 Python ≥ 3.10、Node.js ≥ 18、npm、仓库配置、系统密钥库（keyring）与核心模块；
+2. 安装缺失依赖：`pip install keyring`（网页保存 AI API Key 用）、`tools/` 与 `web/` 的 `npm ci`、Playwright Chromium（Apple 歌单导出需要）；
 3. 注册 `atlas` 命令：在用户级 bin 目录生成只调用本仓库的包装脚本（Windows 追加用户 PATH 并广播设置变更；Linux/macOS 写 `~/.local/bin/atlas`，目录不在 PATH 时只提示，不改 shell 配置）。
 
 注册是幂等的：重复执行不会重复追加 PATH 条目，也不会覆盖已有 `atlas`。可选参数：
@@ -171,8 +171,7 @@ CSV 的声明数量优先级为 `--declared-count` → `--declared-count-file` �
 | **合计** | **70-90s** |
 
 关键手段是 `runtime.openai_compat.disable_thinking: true`：实测真实批次单次调用从 65.1s（reasoning 14973 tokens）降到
-15.8s（reasoning 0），输出仍是合法 JSON。候选池最小值（20 首）与推荐数量（10 首）等契约不变，
-因此耗时随当轮模型是否产出足够的探索候选在 70-90s 间波动；需要更快时只能放宽这些契约或降低研究覆盖。
+15.8s（reasoning 0），输出仍是合法 JSON。候选池最低门槛已降为 1，推荐目标仍为 10；候选不足时允许按实际数量降级，且不再为凑齐类型启动额外补缺轮。因此耗时随当轮模型是否产出足够的探索候选在 70-90s 间波动，正常候选充足时仍按 10 首目标排序。
 
 ## 兴趣组命名
 
@@ -191,13 +190,13 @@ CSV 的声明数量优先级为 `--declared-count` → `--declared-count-file` �
 
 ## 分阶段候选研究
 
-默认首轮研究策略要求的最小候选池；合并去重后未达到候选目标或无法满足选曲约束时，再请求补充缺额和新候选。补充请求只携带本次研究的缺额、约束失败原因与排重标识，不引入历史偏好。
+默认首轮研究策略要求的最小候选池；合并去重后未达到候选目标或无法满足选曲约束时，再请求补充缺额和新候选。候选目标默认采用最低门槛 `1`，因此候选不足时可直接按实际数量输出，不会为凑齐召回类型虚构结果。补充请求只携带本次研究的缺额、约束失败原因与排重标识，不引入历史偏好。
 
 推荐 Skill 入口 `workflow.py skill`、`skill_runner.py` 均支持：
 
 | 参数 | 默认值与边界 |
 |------|------------|
-| `--candidate-target` | 默认采用策略 `candidate_pool_min`（20），不得低于策略最小值 |
+| `--candidate-target` | 默认采用策略 `candidate_pool_min`（1），不得低于策略最小值 |
 | `--max-research-rounds` | 默认 2，包含首轮，允许 1 到 3 |
 | `--max-candidates` | 默认 80，最大 200，必须不小于候选目标 |
 | `--timeout` | 默认 600 秒，为整个研究循环共用的预算，不按轮重置 |
@@ -212,7 +211,7 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
   --command 'python tests/fixtures/fake_agent.py'
 ```
 
-补充轮仍遵守准备时的字符硬预算，原始 prompt/manifest 保持不变。预算耗尽或 Skill 执行器失败时仅写诊断，不生成或覆盖推荐与内部报告。程序只给最终 10 首生成说明，包含代表收藏、目录路径、具体听感差异、相对本次输入的新鲜点及草稿限制。
+补充轮仍遵守准备时的字符硬预算，原始 prompt/manifest 保持不变。预算耗尽或 Skill 执行器失败时仅写诊断，不生成或覆盖推荐与内部报告。程序只给最终最多 10 首生成说明，包含代表收藏、目录路径、具体听感差异、相对本次输入的新鲜点及草稿限制。
 
 输出旁的 `<bundle 名>.research.json` 记录轮次、各轮 prompt 摘要、输入/输出字符数、耗时、候选预算和说明数量；成功时绑定排序包的精确摘要。字符量不是计费 token 或真实费用，fake Skill 执行器耗时也不代表真实检索延迟。
 
@@ -239,7 +238,7 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
   ```
 
   `--playlist-id` 接受数字 ID 或 `y.qq.com` 分享链接；自动按接口 `hasmore` 信号分页拉取（每页 100 首）；歌曲以 `mid` 作为稳定 `platform_track_id`；数量来自接口 `total_song_num`，与实际解析数不一致时 `reader_status` 为 `incomplete`。`input_sha256` 与 `snapshot_id` 覆盖按顺序、带长度前缀的全部页面响应，reader 同时记录实际页数与逐页摘要，后续页变化不会被首屏摘要掩盖。
-- Apple Music 个人歌单（免登录，经 TuneMyMusic 中转）：在 tunemymusic.com 网页无需注册登录，源选 Apple Music → "Load from URL" 粘贴歌单分享链接 → 目标选 "Export to file" → CSV → 下载；用 `csv` reader 解析，表头自动归一化（`Track name`/`Artist name`/`Apple - id`），`Apple - id` 作稳定 `platform_track_id`。直接抓取 Apple 网页仅能拿到部分预渲染曲目，不作为方案。
+- Apple Music 公开歌单（免登录，官方网页服务）：无头浏览器打开 Apple Music 官方嵌入播放器，取得该页面的临时访问上下文后，从 `amp-api.music.apple.com` 按 `next` 分页读取完整曲目；不保存令牌或浏览器状态。输出 CSV 后继续用 `csv` reader 建立快照，`Apple - id` 作为稳定 `platform_track_id`。官方分页未完整结束、曲目字段缺失或独立数量不匹配时停止后续分析，且不覆盖旧文件。
 - `relations/artist_relations.json`：可审计的公开音乐人关系目录。
 - `analysis_contracts.py` + `analysis_agent.py`：绑定当前快照的研究协议、分批、上下文硬预算、外部分析 Skill 执行、结果导入与断点续跑。
 - `skills/music-atlas-analysis/` + `skills/music-atlas-recommendation/`：两个模型与供应商无关的 Skill 契约说明和约束参考。
@@ -252,8 +251,9 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
 - `research.py` + `explanations.py`：有界分轮研究与程序拥有的入选说明。
 - `benchmark.py`：同输入的人工试听清单与只读方案对照。
 - `web_view_model.py` + `workflow.py web-export`：将已校验的运行产物转换为网页专用、只读的脱敏数据。
-- `config/web.json`：网页服务默认配置；端口、稳定发布文件、运行目录和并行度均由项目内文件决定。
-- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。网页提交歌单链接后先读取歌单，再让操作者选择处理数量（档位 `30/100/200/500/1000` 或任意整数，上限为真实曲目数），随后继续分析与推荐；档位选项与等待超时由 `config/web.json` 决定。
+- `config/web.json`：网页服务基础配置；网页右上角「设置」把安全覆盖保存到 Git 忽略的 `runtime/web/settings.json`，不改写基础配置。
+- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。网页提交歌单链接后先读取歌单，再让操作者选择处理数量（分位 `25%/50%/100%`，按真实曲目数向上取整），随后继续分析与推荐；分位、AI、爬虫、预算、推荐边界与展示标题均可在设置入口编辑。AI API Key 在设置中单独输入，加密保存到系统密钥库（Windows Credential Manager / macOS Keychain / Linux Secret Service），任务自动复用，网页不回显；环境变量 `MUSIC_ATLAS_API_KEY` 仍可作为回退方式。
+- `secret_store.py`：跨平台系统密钥库封装（基于 keyring），完成密钥库可用性校验，拒绝 keyrings.alt 等不安全后端。
 - `atlas.py` + `web_service.py`：统一 CLI 入口与面板服务管理。`atlas start [--port N] [--no-open] [--force]` 启动面板（已运行则复用），`atlas stop` / `atlas restart` / `atlas status [--json]` / `atlas logs`；其余子命令透传 workflow.py（如 `atlas run ...`）。停止与替换有身份防护：`/api/health` 携带 `service/pid/web_root`，只有本项目面板会被停止；端口被其他服务占用时默认拒绝，`--force` 才替换；状态文件 PID 存活但健康端点不可用时拒绝覆盖。日志在 `runtime/web/service.log`。Windows 下可将项目根加入 PATH 后用 `atlas` 直呼（`atlas.bat`）。
 
 Apple 自动导出入口为 `python workflow.py export-apple-playlist --url <分享链接> --expected-count <独立确认的歌曲数>`。下载先进入临时目录，经 UTF-8、标准 CSV 解析与数量检查后才替换目标文件；失败保留原文件。不提供 `--expected-count` 时输出 `completeness_status: "unconfirmed"`，不能仅凭 CSV 行数宣称完整。安装与浏览器验收见 [tools/README.md](tools/README.md)。
@@ -367,7 +367,7 @@ python workflow.py run --input tests/fixtures/playlist_sample.json --reader loca
   --analysis-command 'python tests/fixtures/fake_analysis_agent.py'
 ```
 
-对象字段递归覆盖，未提供的字段保留默认值；数组整体替换。可调整评分权重、四类召回比例、艺人/项目上限、最低项目覆盖、候选池最小数量、多样性、序列与显示策略。新增 `analysis_quality.min_classified_share`（默认 0.5，范围大于 0 且不超过 1）、`diversity_policy.new_interest_bonus`（默认 4）与 `min_interest_groups`（默认 1，实际约束不超过本次可用兴趣组数）。这些值仅通过人工策略文件修改，不自动放宽门槛。各组权重和召回比例总和必须为 1，召回数组必须完整覆盖四类候选；未知字段、非法数值及固定设计边界修改会被拒绝，推荐目标仍为 10 首。
+对象字段递归覆盖，未提供的字段保留默认值；数组整体替换。可调整评分权重、四类召回比例、艺人/项目上限、最低项目覆盖、候选池最小数量、多样性、序列与显示策略。新增 `analysis_quality.min_classified_share`（默认 0.5，范围大于 0 且不超过 1）、`diversity_policy.new_interest_bonus`（默认 4）与 `min_interest_groups`（默认 1，实际约束不超过本次可用兴趣组数）。默认 `candidate_pool_min` 为 1：它只规定最低候选门槛，不再要求候选池先覆盖全部召回类型；候选不足时推荐数可低于 10，但不会超过 `target_recommendations`。这些值仅通过人工策略文件修改，不自动放宽证据门槛。各组权重和召回比例总和必须为 1；未知字段、非法数值及固定设计边界修改会被拒绝，正常目标仍为 10 首。
 
 未指定文件时只使用默认策略，不自动发现或应用调优建议。最终策略 SHA-256 纳入 `analysis_id`、分析 manifest 和管线 manifest，且不会修改共享的 `DEFAULT_POLICY`。应用策略后重新执行 Step 2/3，不能把旧候选包当作新分析的结果使用。
 
@@ -429,7 +429,7 @@ npm --prefix web test
 npm --prefix web run test:browser
 ```
 
-当前 203 项 Python 测试不依赖 `input/` 或私有风格画像。另有 11 项 Node 单元测试与 1 项真实 Chromium 本地下载测试；浏览器测试覆盖生产下载/校验辅助函数，不访问 TuneMyMusic 线上页面。
+当前 385 项 Python 测试不依赖 `input/` 或私有风格画像。Apple 读取工具另有 15 项 Node 单元测试与 1 项 Chromium 文件写入测试；网页层另有 13 项 Node 测试与 20 项 Chromium 交互测试。线上可达性以 2026-09-18 对当前公开歌单完成的 Apple 官方两页、123 首读取为准。
 
 `web/tests/` 覆盖网页层回归：`server.test.mjs` 与 `workflow-job.test.mjs` 用隔离端口和临时配置启动独立 `server.js` 实例（`ATLAS_WEB_CONFIG`），验证静态服务、错误路径、真实任务生命周期、SSE 事件顺序与并发互斥；`workflow-ui.browser.mjs` 用 Playwright 注入可编程 `EventSource`，覆盖乱序、重复、丢帧事件、SSE 中断回退轮询与轮询去重，以及歌单读完后才解锁的档位选择（上限、快捷键、越界拦截、提交后继续与取消）；`atlas-fixture.browser.mjs` 用 `tests/fixtures/playlist_sample.json` 与夹具执行器真实运行 `web_workflow.py`，在隔离 runtime 发布后验证页面渲染 10 首推荐。测试不访问外部歌单内容，不依赖真实检索执行器。
 

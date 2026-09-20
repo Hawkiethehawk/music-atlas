@@ -9,6 +9,30 @@ import sys
 
 def main() -> int:
     prompt = sys.stdin.read()
+    if "\n```json\n" not in prompt:
+        packet = json.loads(prompt.rsplit("\n", 1)[1])
+        islands = packet["islands"]
+        rows = []
+        details = {
+            "preference_basis": "另类摇滚与电子线索构成该兴趣岛清晰而开放的主要底色。",
+            "music_fit": "候选资料中的风格线索与岛内已有方向形成具体交集。",
+            "novelty": "它沿相邻风格继续向外展开，提供不同于已有收藏的比较角度。",
+            "listening_tip": "建议与熟悉作品并排聆听，留意节拍、音墙和空间层次的差异。",
+        }
+        ordered = list(packet["catalog"])
+        target = max(1, int(packet.get("policy", {}).get("target_recommendations", 10)))
+        for candidate_type, slot in (("musician_relation", max(0, target - 2)),
+                                     ("exploration", max(0, target - 1))):
+            index = next((i for i, item in enumerate(ordered)
+                          if item.get("candidate_type") == candidate_type), None)
+            if index is not None and index >= target:
+                ordered.insert(slot, ordered.pop(index))
+        for index, candidate in enumerate(ordered):
+            rows.append({"id": candidate["id"], "island_id": islands[index % len(islands)]["id"],
+                         "reason": "从相邻风格切入，适合继续比较同一审美下不同作品的表达方式。",
+                         "details": details})
+        print(json.dumps({"candidates": rows}, ensure_ascii=False))
+        return 0
     marker = "```json\n"
     start = prompt.rfind(marker)
     if start < 0:
@@ -34,8 +58,13 @@ def main() -> int:
     if not projects:
         # 品味摘要模式没有关系研究：跳过 musician_relation 候选，而非退出。
         candidate_types = [item for item in candidate_types if item != "musician_relation"]
-    for index in range(int(policy["candidate_pool_min"])):
-        number = index + 1 + (packet.get("research_request", {}).get("round", 1) - 1) * int(policy["candidate_pool_min"])
+    research_request = packet.get("research_request", {})
+    # candidate_pool_min 是最低门槛，不应让夹具把正常的 10 首推荐流程缩成 1 首；
+    # 固定每轮生成 20 个候选，同时覆盖默认流程与 20/40 候选补充研究测试。
+    batch_size = max(20, int(policy["candidate_pool_min"]))
+    round_number = int(research_request.get("round", 1))
+    for index in range(batch_size):
+        number = index + 1 + (round_number - 1) * batch_size
         source_url = f"https://musicbrainz.org/recording/00000000-0000-4000-8000-{number:012d}"
         candidate_type = candidate_types[index % len(candidate_types)]
         artist = (anchors[(index // 4) % len(anchors)] if candidate_type == "artist_continuation"

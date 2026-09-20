@@ -17,9 +17,42 @@ from contracts import (
 from evidence import require_usable_evidence
 
 
-def _object(value: Any, fields: set[str], label: str, *, optional: set[str] | None = None) -> dict:
-    if not isinstance(value, dict) or set(value) - fields - (optional or set()) or fields - set(value):
-        raise ContractError(f"{label} 字段不完整或包含未允许字段；Agent 不得提交统计、评分或策略")
+_PROGRAM_OWNED_FIELDS = {
+    "score", "scores", "score_breakdown", "score_features", "rank", "ranking",
+    "rank_variant", "selection", "selection_metadata", "strategy", "program_owned",
+    "accepted", "rejected", "candidate_status", "diversity", "sequence", "order",
+    # 聚合统计与策略字段同样属于程序：Agent 只能提交曲目事实，不能提交总量/分布/画像/评分/策略。
+    "source_track_count", "style_distribution", "interest_profiles", "ranking_score",
+    "recommendation_policy", "classified_track_count", "artist_profile_count",
+    "profile_coverage", "style_analysis",
+}
+
+
+def _object(
+    value: Any,
+    fields: set[str],
+    label: str,
+    *,
+    optional: set[str] | None = None,
+    strip_extra: bool = False,
+) -> dict:
+    """校验对象字段。`strip_extra=True` 时剥离无害多余字段（模型偶发补充说明），
+    但程序保留字段（评分/排序/策略等）始终硬拒绝。"""
+
+    if not isinstance(value, dict):
+        raise ContractError(f"{label} 必须是 JSON 对象")
+    allowed = fields | (optional or set())
+    missing = fields - set(value)
+    extra = set(value) - allowed
+    if missing:
+        raise ContractError(f"{label} 缺少必填字段：{sorted(missing)}；Agent 不得提交统计、评分或策略")
+    if extra:
+        forbidden = extra & _PROGRAM_OWNED_FIELDS
+        if forbidden:
+            raise ContractError(f"{label} 包含程序保留字段：{sorted(forbidden)}；Agent 不得提交统计、评分或策略")
+        if not strip_extra:
+            raise ContractError(f"{label} 包含未允许字段：{sorted(extra)}；Agent 不得提交统计、评分或策略")
+        return {key: item for key, item in value.items() if key not in extra}
     return value
 
 
@@ -34,9 +67,12 @@ def _confidence(value: Any) -> None:
         raise ContractError("研究画像 confidence 必须为 high、medium 或 low")
 
 
-def validate_research_evidence(value: Any, required_claim: str) -> list[dict]:
+def validate_research_evidence(value: Any, required_claim: str, label: str | None = None) -> list[dict]:
+    """校验 1 到 8 条公开证据；``label`` 用于错误信息定位到具体曲目。"""
+
+    evidence_label = label or "研究证据"
     if not isinstance(value, list) or not 1 <= len(value) <= 8:
-        raise ContractError("研究事实需要 1 到 8 条公开证据")
+        raise ContractError(f"{evidence_label}需要 1 到 8 条公开证据")
     for item in value:
         _object(item, {"claim_type", "claim", "url", "retrieved_at"}, "研究证据",
                 optional={"verification_result", "source_identifier"})
@@ -57,7 +93,7 @@ def validate_research_evidence(value: Any, required_claim: str) -> list[dict]:
             _text(item["source_identifier"], "研究证据 source_identifier")
     if not any(item["claim_type"] == required_claim for item in value):
         raise ContractError(f"研究事实缺少 {required_claim} 证据")
-    require_usable_evidence({"evidence_items": value})
+    require_usable_evidence({"evidence_items": value}, lenient_identifier=True)
     return value
 
 
@@ -128,9 +164,10 @@ def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
     if not isinstance(profiles, list) or len(profiles) != len(targets):
         raise ContractError("研究结果必须逐一覆盖本批每首曲目，未知也须明确返回")
     seen: set[int] = set()
-    for profile in profiles:
-        _object(profile, {"position", "track_key", "classification_status", "scope", "confidence", "style_mix",
-                          "style_axes", "summary", "evidence_items"}, "研究曲目画像")
+    for index, profile in enumerate(profiles):
+        profile = _object(profile, {"position", "track_key", "classification_status", "scope", "confidence", "style_mix",
+                                   "style_axes", "summary", "evidence_items"}, "研究曲目画像", strip_extra=True)
+        profiles[index] = profile
         position = profile["position"]
         if isinstance(position, bool) or not isinstance(position, int) or position not in targets or position in seen:
             raise ContractError("研究画像包含多余、重复或错误的曲目位置")
@@ -140,6 +177,23 @@ def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
         _text(profile["summary"], "画像 summary")
         _confidence(profile["confidence"])
         status = profile["classification_status"]
+        # 已分类但缺少风格证据（模型 v4-flash 等偶发）：自动降级为 unknown，
+        # 避免因模型输出不稳导致整个任务失败，同时不虚构事实。
+        if status == "classified":
+            ev_items = profile.get("evidence_items") or []
+            if not isinstance(ev_items, list) or not any(
+                e.get("claim_type") == "style" for e in ev_items if isinstance(e, dict)
+            ):
+                profile.update({
+                    "classification_status": "unclassified",
+                    "scope": "unknown",
+                    "confidence": "low",
+                    "style_mix": [],
+                    "style_axes": dict.fromkeys(STYLE_AXIS_IDS),
+                    "evidence_items": [],
+                })
+                profiles[index] = profile
+                status = "unclassified"
         if status == "unclassified":
             if (profile["scope"] != "unknown" or profile["confidence"] != "low" or profile["style_mix"] != []
                     or profile["style_axes"] != dict.fromkeys(STYLE_AXIS_IDS) or profile["evidence_items"] != []):
@@ -156,7 +210,7 @@ def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
                 _object(item, {"style_ref", "role", "weight"}, "研究风格权重")
             _object(profile["style_axes"], set(STYLE_AXIS_IDS), "研究 style_axes")
             _validate_style_axes(profile["style_axes"], "研究 style_axes")
-            validate_research_evidence(profile["evidence_items"], "style")
+            validate_research_evidence(profile["evidence_items"], "style", label=f"曲目 {profile['position']} 的")
         else:
             raise ContractError("画像 classification_status 无效")
     artists = value["artist_relations"]
@@ -176,11 +230,18 @@ def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
             if not isinstance(facts, list) or len(facts) > 12:
                 raise ContractError("每类关系事实必须是最多 12 项的数组")
             fact_names = set()
+            remaining: list[dict[str, Any]] = []
             for fact in facts:
                 fields = {"name", "confidence", "evidence_items"} | ({"role", "status"} if field == "lead_vocalists" else {"person", "relation"})
                 _object(fact, fields, "音乐人关系事实")
                 for key in fields - {"confidence", "evidence_items"}:
                     _text(fact[key], f"关系 {key}", 500)
+                # 关系事实缺少 relation 证据（模型不稳）：丢弃该条，不虚构关系
+                ev_items = fact.get("evidence_items") or []
+                if not isinstance(ev_items, list) or not any(
+                    e.get("claim_type") == "relation" for e in ev_items if isinstance(e, dict)
+                ):
+                    continue
                 marker = normalized_name(fact["name"])
                 if marker in fact_names:
                     raise ContractError("同一艺人不能重复返回相同关系端点")
@@ -188,7 +249,9 @@ def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
                 if field == "lead_vocalists" and fact["status"] not in ("current", "former", "unknown"):
                     raise ContractError("主唱 status 必须为 current、former 或 unknown")
                 _confidence(fact["confidence"])
-                validate_research_evidence(fact["evidence_items"], "relation")
+                validate_research_evidence(fact["evidence_items"], "relation", label=f"{artist['artist']} 的")
+                remaining.append(fact)
+            artist[field] = remaining
     return deepcopy(value)
 
 

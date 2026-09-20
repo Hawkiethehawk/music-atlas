@@ -42,15 +42,14 @@ after(async () => {
   await server?.stop();
 });
 
-test("夹具工作流产物：四阶段、两批分析、四槽推荐与 10 首输出", async () => {
+test("夹具工作流产物：四阶段、分析门槛、平台候选与 10 首输出", async () => {
   const { events } = fixtureRun;
   const stage = (name) => events.filter((event) => event.stage === name);
-  // 分析批次事件来自真实执行（2 批），推荐 worker 为并行分片任务。
-  assert.ok(stage("analysis").some((event) => event.event === "task_started" && event.task_kind === "analysis_batch"));
+  assert.ok(stage("analysis").some((event) => event.event === "task_started" && event.task_kind === "track_fact_collect"));
   assert.ok(stage("analysis").some((event) => event.event === "task_completed" && event.task_status === "validated"
     && event.task_kind === "analysis_aggregate"), "分析聚合应校验通过");
-  assert.ok(stage("recommendation").some((event) => event.task_kind === "recommendation_worker"),
-    "推荐阶段应有并行 worker 任务");
+  assert.ok(stage("recommendation").some((event) => event.task_kind === "platform_discovery"),
+    "推荐阶段应完成平台候选召回");
   const exportCompleted = events.at(-1);
   assert.equal(exportCompleted.status, "completed");
   assert.equal(exportCompleted.recommendation_count, 10, "推荐数量固定 10 首");
@@ -59,6 +58,9 @@ test("夹具工作流产物：四阶段、两批分析、四槽推荐与 10 首�
   assert.equal(report.status, "completed");
   assert.equal(report.analysis_parallelism, 5);
   assert.equal(report.recommendation_parallelism, 4);
+  assert.equal(report.recommendation_groups.count, 3);
+  assert.equal(report.recommendation_groups.total_unique_recommendation_count, 30);
+  assert.equal(report.recommendation_history.retention_days, 7);
 });
 
 test("隔离服务器发布夹具产物：health 与 /api/atlas 返回真实数据", async () => {
@@ -73,7 +75,11 @@ test("隔离服务器发布夹具产物：health 与 /api/atlas 返回真实数�
   assert.equal(payload.payload_type, "music_atlas_web");
   assert.equal(payload.source.playlistName, "示例歌单");
   assert.equal(payload.source.trackCount, 3, "夹具歌单 3 首");
-  assert.equal(payload.recommendations.length, 10, "页面数据固定 10 首推荐");
+  assert.equal(payload.recommendations.length, 10, "每组固定 10 首推荐");
+  assert.equal(payload.candidate_count >= 30, true, "候选池至少 30 首");
+  assert.equal(payload.atlas_groups.length, 3, "应预生成三组 Atlas");
+  const ids = payload.atlas_groups.flatMap((group) => group.recommendations.map((item) => item.id));
+  assert.equal(new Set(ids).size, 30, "三组推荐不应重复");
   assert.ok(payload.source.snapshotId, "应携带真实快照 ID");
 });
 
@@ -90,10 +96,21 @@ test("Atlas 页面渲染真实夹具产物，控制台无错误", async () => {
     await page.waitForFunction(() => document.body.classList.contains("atlas-ready"), undefined, { timeout: 10000 });
 
     const bodyText = await page.locator("body").textContent();
-    assert.match(bodyText, /基于 3 首完整歌单快照/, "页面应展示真实夹具快照的导语文案");
+    assert.match(bodyText, /这份测试歌单以另类摇滚与电子纹理为主要底色/, "页面应展示 Agent 生成的整体风格总结");
     const recRows = await page.locator(".trow").count();
     assert.equal(recRows, 10, `发现页应渲染 10 个推荐条目，实际 ${recRows}`);
-    assert.match(bodyText, /Candidate Fixture 1/, "应出现真实工作流产物的推荐曲目");
+    assert.match(bodyText, /Fixture Track 1/, "应出现真实工作流产物的推荐曲目");
+    assert.match(bodyText, /第 1\/3 组/, "应显示当前 Atlas 组序号");
+    const firstTrack = await page.locator(".trow .tt").first().textContent();
+    await page.click("[data-atlas-swap]");
+    assert.match(await page.locator("body").textContent(), /第 2\/3 组/);
+    const secondTrack = await page.locator(".trow .tt").first().textContent();
+    assert.notEqual(secondTrack, firstTrack, "第一次换一批应切换推荐组");
+    await page.click("[data-atlas-swap]");
+    assert.match(await page.locator("body").textContent(), /第 3\/3 组/);
+    assert.equal(await page.locator("[data-atlas-swap]").count(), 0, "最后一批不再显示换一批");
+    assert.equal(await page.locator("[data-atlas-prev]").isDisabled(), false, "最后一批应可返回上一批");
+    assert.equal(await page.locator("[data-atlas-new]").count(), 1, "最后一批应显示新 Atlas");
     assert.match(bodyText, /研究草稿/, "保留研究草稿边界提示");
     assert.deepEqual(consoleErrors, [], "控制台不应有错误");
 

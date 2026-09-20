@@ -35,6 +35,7 @@ from evaluation import evaluate_offline
 from feedback import latest_feedback_outcomes
 from musician_analyzer import analyze_and_validate, load_recommendation_policy, write_coverage_report
 from recommender import rank_bundle
+from runtime_config import crawler_settings
 from source_adapters import build_snapshot, save_snapshot
 from skill_runner import run_skill
 from tune import propose_tuning
@@ -682,8 +683,13 @@ def command_web_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def export_apple_playlist_file(url: str, output_path: Path, expected_count: int | None = None) -> dict[str, Any]:
-    """Export a shared Apple Music playlist to CSV via TuneMyMusic (no login)."""
+def export_apple_playlist_file(
+    url: str,
+    output_path: Path,
+    expected_count: int | None = None,
+    timeout_seconds: int | None = None,
+) -> dict[str, Any]:
+    """Read a public Apple Music playlist through Apple official web services."""
 
     import shutil
     import subprocess
@@ -700,23 +706,30 @@ def export_apple_playlist_file(url: str, output_path: Path, expected_count: int 
     output_path = output_path.resolve()
     if expected_count is not None and not 0 < expected_count <= 9007199254740991:
         raise ContractError("expected-count 必须是正整数且不超过 JavaScript 安全整数范围")
+    if timeout_seconds is None:
+        try:
+            timeout_seconds = crawler_settings().get("apple_export_timeout_seconds", 600)
+        except RuntimeError as exc:
+            raise ContractError(str(exc)) from exc
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 3600:
+        raise ContractError("crawler.apple_export_timeout_seconds 必须是 1 到 3600 的整数")
     command = [node_executable, str(tool_path), url, str(output_path)]
     if expected_count is not None:
         command.append(str(expected_count))
     try:
         completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
-                                   timeout=600, **hidden_window_kwargs())
+                                   timeout=timeout_seconds, **hidden_window_kwargs())
     except subprocess.TimeoutExpired as exc:
-        raise ContractError("Apple 歌单导出超时：600 秒") from exc
+        raise ContractError(f"Apple 歌单读取超时：{timeout_seconds} 秒") from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")[:500]
-        raise ContractError(f"Apple 歌单导出失败：{detail}")
+        raise ContractError(f"Apple 歌单读取失败：{detail}")
     import json as json_module
 
     try:
         summary = json_module.loads(completed.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError) as exc:
-        raise ContractError(f"导出工具输出无法解析：{completed.stdout[:200]}") from exc
+        raise ContractError(f"Apple 歌单读取工具输出无法解析：{completed.stdout[:200]}") from exc
     summary["output"] = str(output_path)
     return summary
 
@@ -929,7 +942,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     export_parser = subparsers.add_parser(
         "export-apple-playlist",
-        help="经 TuneMyMusic 免登录导出 Apple Music 公开分享歌单为 CSV",
+        help="通过 Apple 官方网页服务读取公开分享歌单为 CSV",
     )
     export_parser.add_argument("--url", required=True, help="Apple Music 歌单分享链接")
     export_parser.add_argument("--output", default=None, help="CSV 输出路径（默认 input/apple_favorite_songs.csv）")

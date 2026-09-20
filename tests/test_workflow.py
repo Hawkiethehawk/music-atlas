@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import json
 from copy import deepcopy
 import sys
@@ -504,7 +509,7 @@ class WorkflowContractTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_recommendation_bundle(legacy, packet)
 
-    def test_candidate_pool_rejects_missing_recall_type_and_invalid_grade(self) -> None:
+    def test_candidate_pool_allows_missing_recall_type_and_rejects_invalid_grade(self) -> None:
         packet = minimal_analysis_packet()
         bundle = {
             "schema_version": "2.0",
@@ -516,8 +521,7 @@ class WorkflowContractTests(unittest.TestCase):
             "candidate_pool": [candidate_fixture(packet, index, "exploration") for index in range(1, 5)],
             "recommendations": [],
         }
-        with self.assertRaises(ContractError):
-            validate_recommendation_bundle(bundle, packet)
+        validate_recommendation_bundle(bundle, packet)
         bundle["candidate_pool"] = [
             candidate_fixture(packet, index, candidate_type)
             for index, candidate_type in enumerate(

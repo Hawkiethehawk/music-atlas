@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import json
 import sys
 import tempfile
@@ -54,6 +59,37 @@ class StagedResearchTests(unittest.TestCase):
             self.assertEqual(report["final_explanations_generated"], len(ranked["recommendations"]))
             self.assertGreater(report["input_characters_total"], summary["prompt_characters"])
 
+    def test_unverified_candidates_are_dropped_before_ranking(self):
+        """平台核验不到的候选（曲名/艺人无法匹配）必须丢弃，不用模型记忆的名字充当事实。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, packet = self.setup_pool(root)
+            # 让第一个候选核验失败（返回 None），其余保留原值。
+            unverified_title = pool["candidate_pool"][0]["title"]
+
+            def fake_verify(items):
+                return [None if title == unverified_title else {
+                    "source": "test", "score": 1.0, "title": title, "artist": artist,
+                    "album": "测试专辑", "cover": "https://cover.example/x.jpg",
+                    "platform_track_id": "", "url": None,
+                } for title, artist in items]
+
+            with patch("agent_runner.run_external_agent", side_effect=lambda *a, **k: deepcopy(pool)), \
+                 patch("research.verify_many", side_effect=fake_verify):
+                    self.execute(root, candidate_target=4, max_candidates=16, max_research_rounds=1)
+
+            report = read_json(root / "bundle.research.json")
+            dropped = report.get("unverified_candidates") or []
+            self.assertEqual([item["title"] for item in dropped], [unverified_title])
+            self.assertGreaterEqual(report["metadata_verified_candidate_count"], 1)
+            ranked = read_json(root / "bundle.json")
+            titles = {item["title"] for item in ranked["recommendations"]}
+            self.assertNotIn(unverified_title, titles, "未核实的候选不得进入推荐")
+            # 核验结果会重写展示字段并随推荐一起导出。
+            self.assertTrue(all(item.get("metadata_verified", {}).get("album") == "测试专辑"
+                                for item in ranked["recommendations"]))
+
     def test_candidate_missing_style_evidence_is_dropped_not_fatal(self):
         """缺 track_identity/style 证据的候选被程序丢弃，只记录原因，不让整轮研究失败。"""
 
@@ -68,13 +104,57 @@ class StagedResearchTests(unittest.TestCase):
             target["sources"] = [item["url"] for item in target["evidence_items"]]
 
             with patch("agent_runner.run_external_agent", side_effect=lambda *a, **k: deepcopy(broken)):
-                with self.assertRaises(ResearchExhausted):
-                    self.execute(root, candidate_target=8, max_candidates=8, max_research_rounds=1)
+                summary = self.execute(root, candidate_target=4, max_candidates=8, max_research_rounds=1)
 
             report = read_json(root / "bundle.research.json")
             rejected = report.get("rejected_candidates") or []
             self.assertEqual(len(rejected), 1, "应恰好丢弃缺证据的那一个候选")
             self.assertIn("style", rejected[0]["reason"])
+            self.assertEqual(summary["recommendation_count"], 4)
+            self.assertEqual(report["status"], "ready")
+
+    def test_candidate_with_invalid_evidence_identifier_is_dropped_not_fatal(self):
+        """单条伪造的稳定来源标识符只淘汰该候选，不能中断整轮推荐。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, packet = self.setup_pool(root)
+            broken = deepcopy(pool)
+            broken["candidate_pool"][0]["evidence_items"][0]["url"] = "https://musicbrainz.org/recording/not-a-valid-identifier"
+            broken["candidate_pool"][0]["sources"] = [
+                item["url"] for item in broken["candidate_pool"][0]["evidence_items"]
+            ]
+
+            with patch("agent_runner.run_external_agent", side_effect=lambda *a, **k: deepcopy(broken)):
+                self.execute(root, candidate_target=4, max_candidates=16, max_research_rounds=1)
+
+            report = read_json(root / "bundle.research.json")
+            rejected = report.get("rejected_candidates") or []
+            self.assertEqual(len(rejected), 1)
+            self.assertIn("标识符格式无效", rejected[0]["reason"])
+            ranked = read_json(root / "bundle.json")
+            self.assertNotIn(broken["candidate_pool"][0]["canonical_track_id"],
+                             {item["canonical_track_id"] for item in ranked["recommendations"]})
+
+    def test_candidate_with_route_mismatch_is_dropped_not_retyped(self):
+        """模型的召回类型必须与当前分析包一致，不能由程序悄悄改写后混入配额。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, _ = self.setup_pool(root)
+            broken = deepcopy(pool)
+            broken["candidate_pool"][0]["candidate_type"] = "exploration"
+
+            with patch("agent_runner.run_external_agent", side_effect=lambda *a, **k: deepcopy(broken)):
+                self.execute(root, candidate_target=4, max_candidates=16, max_research_rounds=1)
+
+            report = read_json(root / "bundle.research.json")
+            rejected = report.get("rejected_candidates") or []
+            self.assertEqual(len(rejected), 1)
+            self.assertIn("召回类型", rejected[0]["reason"])
+            ranked = read_json(root / "bundle.json")
+            self.assertNotIn(broken["candidate_pool"][0]["canonical_track_id"],
+                             {item["canonical_track_id"] for item in ranked["recommendations"]})
 
     def test_parallel_recommendation_workers_merge_before_program_ranking(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -116,6 +196,19 @@ class StagedResearchTests(unittest.TestCase):
             self.assertFalse((root / "bundle.json").exists())
             self.assertFalse((root / "report.txt").exists())
             self.assertEqual(read_json(root / "bundle.research.json")["status"], "budget_exhausted")
+
+    def test_verified_pool_at_final_target_is_ranked(self):
+        """达到最终推荐数的严格核验候选可直接输出。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pool, _ = self.setup_pool(root)
+            pool["candidate_pool"] = pool["candidate_pool"][:4]
+            with patch("agent_runner.run_external_agent", return_value=pool):
+                summary = self.execute(root, candidate_target=4, max_research_rounds=1)
+            self.assertEqual(summary["recommendation_count"], 4)
+            report = read_json(root / "bundle.research.json")
+            self.assertEqual(report["status"], "ready")
 
     def test_supplemental_payload_cannot_escape_hard_context_budget(self):
         with tempfile.TemporaryDirectory() as directory:

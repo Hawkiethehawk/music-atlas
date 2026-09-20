@@ -45,8 +45,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unclassified", action="store_true")
     args = parser.parse_args()
-    payload = json.loads(sys.stdin.read().rsplit("\n```json\n", 1)[1].rsplit("\n```", 1)[0])
-    print(json.dumps(make_result(payload, unclassified=args.unclassified), ensure_ascii=False))
+    prompt = sys.stdin.read()
+    if "\n```json\n" in prompt:
+        payload = json.loads(prompt.rsplit("\n```json\n", 1)[1].rsplit("\n```", 1)[0])
+        result = make_result(payload, unclassified=args.unclassified)
+    else:
+        payload = json.loads(prompt.rsplit("\n", 1)[1])
+        records = payload["records"]
+        groups = [[], [], []]
+        for record in records:
+            groups[int(record["id"]) % 3].append(int(record["id"]))
+        result = {
+            "overall_summary": "这份测试歌单以另类摇滚与电子纹理为主要底色，三组风格线索在清晰节拍、朦胧音墙和开放空间之间交错。整体从紧凑推进逐步转向宽阔铺陈，像夜色中的灯光沿街道延伸，保留冷峻轮廓，也带有轻盈流动的现代感。",
+            "islands": [
+                {"name": "另类摇滚岛", "summary": "以另类摇滚与失真吉他为核心，轮廓清晰，推进紧凑。", "record_ids": groups[0]},
+                {"name": "电子流光岛", "summary": "电子节拍和合成器线索交错，呈现明亮而流动的城市画面。", "record_ids": groups[1]},
+                {"name": "朦胧音墙岛", "summary": "以 Shoegaze 与 Dream Pop 的音墙线索为主，空间宽阔而柔和。", "record_ids": groups[2]},
+            ],
+        }
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 

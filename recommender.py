@@ -233,7 +233,17 @@ def score_candidate(candidate: dict[str, Any], packet: dict[str, Any]) -> dict[s
         "evidence_quality": round(_evidence_quality(candidate), 4),
         "public_association": round(_public_association(candidate, packet), 4),
     }
-    breakdown = {key: round(features[key] * weights[key], 4) for key in FEATURE_KEYS}
+    # 没有风格/八轴资料时，该维度不参与本首歌的加权总分；不能把“未知”当
+    # 作 0 分。其他候选仍使用完整七维权重。
+    unavailable = set()
+    if candidate.get("style_status") == "unclassified" or not _candidate_style_vector(candidate):
+        unavailable.add("style_fit")
+    if candidate.get("style_status") == "unclassified" or not any(value is not None for value in candidate.get("style_axes", {}).values()):
+        unavailable.add("axis_fit")
+    active_weight = sum(weight for key, weight in weights.items() if key not in unavailable)
+    effective_weights = {key: (weight / active_weight if key not in unavailable and active_weight else 0.0)
+                         for key, weight in weights.items()}
+    breakdown = {key: round(features[key] * effective_weights[key], 4) for key in FEATURE_KEYS}
     return {"score": round(sum(breakdown.values()), 4), "features": features, "breakdown": breakdown}
 
 
@@ -244,7 +254,8 @@ def _style_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
 def _axis_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
     left_axes = left.get("style_axes", {})
     right_axes = right.get("style_axes", {})
-    common = [key for key in left_axes if key in right_axes]
+    common = [key for key in left_axes if key in right_axes
+              and left_axes[key] is not None and right_axes[key] is not None]
     if not common:
         return 0.0
     distance = sum(abs(float(left_axes[key]) - float(right_axes[key])) for key in common) / len(common)
@@ -267,7 +278,7 @@ def _candidate_similarity(left: dict[str, Any], right: dict[str, Any], packet: d
 def _energy(candidate: dict[str, Any]) -> float:
     axes = candidate.get("style_axes", {})
     keys = ("heaviness", "aggression", "rhythmic_density", "vocal_harshness", "emotional_intensity")
-    values = [float(axes[key]) for key in keys if key in axes]
+    values = [float(axes[key]) for key in keys if key in axes and axes[key] is not None]
     return sum(values) / len(values) if values else 0.0
 
 
@@ -328,6 +339,33 @@ def _sequence_candidates(selected: list[dict[str, Any]], packet: dict[str, Any])
     }
 
 
+def _adaptive_quotas(limit: int, packet: dict[str, Any], prepared: list[dict[str, Any]]) -> dict[str, int]:
+    """按 recall_mix 分配配额，并把无法满足的部分收缩到实际可用数量。
+
+    候选池不足时（例如只研究了少数候选），先按可用数量裁剪，再把缺口补给仍有余量的
+    类型；只有全部候选都被排进去仍填不满 limit 时才留下缺口，由选曲搜索按实际数量返回。
+    """
+
+    quotas = target_counts(limit, packet)
+    available = Counter(str(item.get("candidate_type")) for item in prepared)
+    for kind in list(quotas):
+        quotas[kind] = min(quotas[kind], available.get(kind, 0))
+    deficit = limit - sum(quotas.values())
+    if deficit > 0:
+        order = [kind for kind, _ratio in recall_mix_ratios(packet)]
+        order += [kind for kind in available if kind not in order]
+        for kind in order:
+            if deficit <= 0:
+                break
+            spare = available.get(kind, 0) - quotas.get(kind, 0)
+            if spare <= 0:
+                continue
+            take = min(spare, deficit)
+            quotas[kind] = quotas.get(kind, 0) + take
+            deficit -= take
+    return quotas
+
+
 def rank_candidates(
     candidates: list[dict[str, Any]], packet: dict[str, Any], *, limit: int,
     search_budget: int = 50000,
@@ -347,6 +385,9 @@ def rank_candidates(
         for item in packet.get("favorite_tracks", [])
         if normalized_text(item.get("platform_track_id"))
     }
+    exclusion = packet.get("playlist_exclusion") if isinstance(packet.get("playlist_exclusion"), dict) else {}
+    favorite_keys |= {str(value) for value in exclusion.get("track_keys") or []}
+    favorite_platform_ids |= {normalized_text(value).casefold() for value in exclusion.get("platform_track_ids") or []}
     prepared: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     seen_ids: set[str] = set()
@@ -376,11 +417,14 @@ def rank_candidates(
     if not prepared:
         raise ContractError("candidate_pool 没有可用于排序的候选歌曲")
 
-    quotas = target_counts(limit, packet)
-    available = Counter(str(item.get("candidate_type")) for item in prepared)
-    shortages = {kind: count - available[kind] for kind, count in quotas.items() if available[kind] < count}
-    if shortages:
-        raise ContractError(f"candidate_pool 无法满足召回配额：{shortages}")
+    # 候选少于目标时按可用数量收缩（有多少用多少），不因候选不足整体失败；
+    # 项目覆盖下限同样不能超过实际可用项目数，否则只会变成无解。
+    limit = min(limit, len(prepared))
+    min_projects = min(
+        min_projects,
+        len({str(item.get("project") or "") for item in prepared if item.get("project")}),
+    )
+    quotas = _adaptive_quotas(limit, packet, prepared)
     prepared.sort(key=lambda item: (-float(item["ranking_score"]), int(item["_source_index"])))
     selected: list[dict[str, Any]] = []
     artist_counts: Counter[str] = Counter()
@@ -388,6 +432,11 @@ def rank_candidates(
     type_counts: Counter[str] = Counter()
     interest_counts: Counter[str] = Counter()
     min_interests = min(int(diversity.get("min_interest_groups", 1)), len(interest_profiles(packet)))
+    # 候选匹配到的兴趣组可能少于策略要求；不收缩就会变成搜索无解。
+    min_interests = min(
+        min_interests,
+        len({item.get("matched_interest_id") for item in prepared if item.get("matched_interest_id")}),
+    )
     failed_states: set[frozenset[int]] = set()
     visited = 0
 
@@ -494,7 +543,7 @@ def rank_candidates(
         "diversity_policy": deepcopy(diversity),
         "selected_count": len(sequenced),
         "selected_project_count": len(project_counts),
-        "selected_interest_counts": dict(interest_counts),
+        "selected_interest_counts": {str(key): value for key, value in interest_counts.items() if key is not None},
         "interest_group_count": len(interest_profiles(packet)),
         "selected_candidate_types": dict(type_counts),
         "selected_canonical_track_ids": [item["canonical_track_id"] for item in sequenced],
@@ -507,6 +556,9 @@ def rank_bundle(bundle: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any
     """Turn a validated candidate-pool bundle into a ranked bundle."""
 
     validate_recommendation_bundle(bundle, packet)
+    if packet.get("selection_mode") == "lastfm_constraints_v1":
+        from lastfm_pipeline import select
+        return select(bundle, packet)
     if bundle.get("status") != "ready":
         return bundle
     require_analysis_coverage(packet)

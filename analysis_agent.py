@@ -9,6 +9,12 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, Callable
 
+from agent_retry import (
+    AGENT_RETRY_ATTEMPTS,
+    AGENT_RETRY_DELAY_SECONDS,
+    call_agent_with_retry,
+    is_retryable_agent_error,
+)
 from analysis_contracts import build_research_requests, validate_research_bundle, validate_research_result
 from contracts import ContractError, SCHEMA_VERSION, parse_timestamp, read_json, sha256_path, stable_hash, validate_playlist_snapshot, write_json
 from musician_analyzer import load_style_taxonomy
@@ -40,6 +46,39 @@ ANALYSIS_SKILL_INSTRUCTIONS = """你是 Music Atlas 的偏好分析研究 Skill�
 # Compatibility name for existing prompt manifests and integrations. The
 # content itself is provider- and model-neutral.
 ANALYSIS_INSTRUCTIONS = ANALYSIS_SKILL_INSTRUCTIONS
+
+# 单批次瞬时故障（上游 5xx/429、连接中断）允许整批重试：一次偋发故障不应让
+# 整个分析阶段失败。确定性问题（契约、上限、内容不合规）不重试。
+# 实现与 Step 3 共用（agent_retry），这里保留原有导出名以免破坏既有集成。
+ANALYSIS_BATCH_RETRY_ATTEMPTS = AGENT_RETRY_ATTEMPTS
+ANALYSIS_BATCH_RETRY_DELAY_SECONDS = AGENT_RETRY_DELAY_SECONDS
+is_retryable_batch_error = is_retryable_agent_error
+execute_batch_with_retry = call_agent_with_retry
+
+
+def _retry_notifier(
+    telemetry: dict[str, Any],
+    notify: Callable[..., None],
+    *,
+    task_id: str,
+    task_index: int,
+    task_total: int,
+) -> Callable[[int, str], None]:
+    """记录重试次数并在事件流中可见，便于区分“瞬时故障重试”与“真实失败”。"""
+
+    def handler(attempt: int, message: str) -> None:
+        telemetry["retry_attempts"] = int(telemetry.get("retry_attempts", 0)) + 1
+        telemetry["last_retry_reason"] = str(message)[:200]
+        notify(
+            "stage_detail",
+            task_kind="analysis_batch",
+            task_id=task_id,
+            task_index=task_index,
+            task_total=task_total,
+            message=f"第 {task_index} 批遇到瞬时故障，正在重试（第 {attempt} 次）",
+        )
+
+    return handler
 
 
 def _prompt(request: dict, taxonomy: dict) -> str:
@@ -182,7 +221,15 @@ def execute_analysis_research(snapshot_path: Path, taxonomy_path: Path, director
                 )
                 try:
                     if command and not reuse:
-                        raw = execute(command, (directory / record["prompt_file"]).read_text(encoding="utf-8"), timeout=math.ceil(remaining))
+                        prompt_text = (directory / record["prompt_file"]).read_text(encoding="utf-8")
+                        raw = execute_batch_with_retry(
+                            execute,
+                            command,
+                            prompt_text,
+                            timeout=math.ceil(remaining),
+                            on_retry=_retry_notifier(telemetry, notify, task_id=request["request_id"],
+                                                     task_index=task_index, task_total=total_batches),
+                        )
                     else:
                         if result_path.stat().st_size > 2000000:
                             raise ContractError("分析 Skill 单批结果文件超过 2 MB 上限")
@@ -274,10 +321,14 @@ def execute_analysis_research(snapshot_path: Path, taxonomy_path: Path, director
                 )
                 try:
                     if command and not reuse:
-                        raw = execute(
+                        prompt_text = (directory / record["prompt_file"]).read_text(encoding="utf-8")
+                        raw = execute_batch_with_retry(
+                            execute,
                             command,
-                            (directory / record["prompt_file"]).read_text(encoding="utf-8"),
+                            prompt_text,
                             timeout=timeout_budget,
+                            on_retry=_retry_notifier(telemetry, notify, task_id=request["request_id"],
+                                                     task_index=index + 1, task_total=total_batches),
                         )
                     else:
                         if result_path.stat().st_size > 2000000:

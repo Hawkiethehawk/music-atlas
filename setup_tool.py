@@ -40,7 +40,7 @@ STATUS_MISSING = "missing"
 STATUS_OPTIONAL = "optional"
 STATUS_WARN = "warn"
 
-REQUIRED_KEYS = ("python", "node", "npm", "tools_deps", "config")
+REQUIRED_KEYS = ("python", "node", "npm", "tools_deps", "config", "keyring")
 
 
 @dataclass
@@ -355,6 +355,21 @@ def check_modules() -> Check:
     return Check("modules", "Python 模块自检", STATUS_OK, "核心模块可导入")
 
 
+def check_keyring() -> Check:
+    try:
+        import keyring  # noqa: F401
+    except ImportError:
+        return Check("keyring", "系统密钥库", STATUS_MISSING, "未安装 keyring 包",
+                     "运行 python -m pip install keyring")
+    try:
+        from secret_store import backend_name
+        detail = f"keyring 可用（{backend_name()}）"
+    except Exception as exc:  # noqa: BLE001 — 密钥库自检失败需如实报告
+        return Check("keyring", "系统密钥库", STATUS_MISSING, f"keyring 不可用：{exc}",
+                     "配置 Windows Credential Manager / macOS Keychain / Linux Secret Service")
+    return Check("keyring", "系统密钥库", STATUS_OK, detail)
+
+
 def check_atlas_command(bin_dir: Path | None = None) -> Check:
     target_dir = Path(bin_dir) if bin_dir else default_bin_dir()
     script = wrapper_path(target_dir)
@@ -376,6 +391,7 @@ def collect_checks() -> list[Check]:
         check_browser(),
         check_config(),
         check_modules(),
+        check_keyring(),
         check_atlas_command(),
     ]
 
@@ -412,6 +428,14 @@ def install_browser() -> str:
         detail = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")[:400]
         raise RuntimeError(f"Playwright Chromium 安装失败：{detail}")
     return "Playwright Chromium 已安装"
+
+
+def install_keyring() -> str:
+    completed = _run([sys.executable, "-m", "pip", "install", "--quiet", "keyring"])
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")[:400]
+        raise RuntimeError(f"keyring 安装失败：{detail}")
+    return "keyring 已安装（跨平台系统密钥库）"
 
 
 def _needs_install(checks: list[Check], key: str) -> bool:
@@ -452,6 +476,7 @@ def setup_main(argv: list[str] | None = None) -> int:
         ("tools_deps", "Apple 导出依赖", lambda: install_node_deps(TOOLS_DIR), args.skip_node_deps),
         ("web_deps", "网页测试依赖", lambda: install_node_deps(WEB_DIR), args.skip_node_deps),
         ("browser", "Playwright Chromium", install_browser, args.skip_browser),
+        ("keyring", "系统密钥库依赖", install_keyring, False),
     ):
         if not _needs_install(checks, key):
             continue

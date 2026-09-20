@@ -1,5 +1,109 @@
 # Changelog
 
+## 2026-09-20（公开资料驱动的音乐版图与三组 Atlas 工作流，维护标签 patch-20260920-090705）
+
+- 重构第二步分析：从公开平台取得曲目身份与风格资料，由智能助手总结歌单整体风格并归纳三个兴趣岛；成员、合作与共享音乐人关系由公开目录程序化核验，未知资料保持为空。
+- 重构第三步推荐：只使用经过平台事实核验的真实候选；完整排除原歌单全部曲目，并在同一歌单一周内排除已经推荐的曲目。候选不足时按层级扩大相似艺人、热门曲目与关系项目召回，支持大量排除后的补召回。
+- 新增三组 Atlas：每组至少 10 首且跨组去重，可返回上一批、换一批；最后一批可复用当前第二步结果生成新 Atlas。
+- 歌单处理改为 25%、50%、100% 分位选择并向上取整；保存最近歌单链接与名称，Apple Music 公共链接导出增加页面结构变化后的兼容与错误诊断。
+- 完善网页进度与日志：四阶段状态始终保留，运行中默认展开当前阶段、折叠已完成阶段；同一事件只显示一次，失败原因和标准错误可展开查看。
+- 完善界面与详情：保持三大兴趣岛模式，智能助手生成整体风格总结和逐曲推荐理由；补齐专辑、封面、详情与来源信息，并将页面状态、默认歌单名和内部流程字段统一为中文显示。
+- 增加系统密钥库、网页设置中心、AI 连通性检查、瞬时故障重试、候选事实复核、封面回退与本地审计；密钥、个人歌单及运行产物不写入仓库。
+
+实际验证：
+
+- `python -m unittest discover -s tests -v`：385 项通过。
+- `python -m compileall -q .`：通过。
+- `npm --prefix web test`：13 项通过。
+- `npm --prefix web run test:browser`：20 项通过。
+- CLI 夹具端到端链路：3 首输入完成第二步分析，第三步生成 10 首推荐；推荐状态 `ready`，发布状态 `draft`，推荐并行数 4。
+- 本机面板通过 `atlas restart --no-open` 启动于 `127.0.0.1:8420`，`/api/health` 返回 HTTP 200；8421 无监听。
+
+## 2026-09-15（网页流程跑通：重试加固、模型降级与宽容校验）
+
+- **上游网关问题**：`deepseek-v4.1-flash` 在当前 key 的账户下返回 404/502（网关未配置该模型），切回 `deepseek-v4-flash` 后可用。
+- **执行器重试加固**（`openai_compat_executor.py`）：最大尝试 5 次，指数退避加抖动，尊重上游 `Retry-After`；503/502/504/429 均重试，4xx 仍不重试。
+- **批次/worker 瞬时故障重试**：新增 `agent_retry.py`（Step 2 分析批次与 Step 3 候选 worker 共用），上游 5xx/429、连接中断、超时视为瞬时故障整批重试一次；契约/内容/鉴权错误不重试。报告与事件流记录重试次数与原因。
+- **模型输出容错**：
+  - 曲目画像多余字段（`notes` 等无害补充）自动剥离，程序保留字段（评分/排序/策略/聚合统计）仍硬拒绝；错误信息给出具体缺失/多余字段。
+  - 已分类但缺少风格证据的画像自动降级为 `unknown`（不虚构、不让任务失败），覆盖率相应下降但流程继续。
+  - 分析阶段对「已知来源但标识符格式无效」的证据改为宽容（不致命，不会获得标识符加分）；候选/推荐阶段保持严格防伪造。证据不可用（矛盾/不可访问/过期）仍致命。
+
+- **耗时优化配置**（本机 `runtime/web/settings.json`，不入库）：分析批次切碎为 5 首/批（最多 6 批并行）、候选研究 1 轮、候选池上限 40、候选 prompt 预算 40000 字符、推荐并行 6。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：309 项通过。
+- **真实网页全流程**（同一网易云歌单 86 首、选 30 首）：读取→分析→推荐→导出全部完成；优化前 133s，优化后 **115s**（分析 36s + 推荐 66s），推荐 10 首、3 个兴趣组；期间自动重试 3 批瞬时故障、剥离多余字段、降级无证据画像（覆盖 degraded 但流程继续）。
+- 耗时瓶颈是 `deepseek-v4-flash` 单次调用（每批 30–50s）；`deepseek-v4.1-flash` 在当前 key 的网关账户下稳定返回 404 `model_not_found`（直连连续 5 次），需先在网关侧确认账户-模型映射（历史实测该模型单次约 15s、全流程约 71s）。
+
+## 2026-09-14（修复网易云/QQ 读取器被 Referer 配置格式阻断）
+
+- **根因**：网页保存设置时会把 URL 末尾斜杠去掉（`https://music.163.com/` → `https://music.163.com`），而 Python 读取器的 `_crawler_url` 要求 `path` 以 `/` 开头，导致设置为空路径时直接拒绝。结果是只要在网页上保存过一次设置，后续网易云/QQ 歌单拉取都会在快照阶段失败，前端只显示「歌单处理未完成，请检查本机运行日志」。
+- **修复**：`_crawler_url` 改为容忍无路径 URL（等价于根路径），HTTPS 要求、域名白名单与协议校验不变；QQ 的 `qq_referer` 同样受益。
+- **可诊断性**：任务失败时前端提示改为带上具体原因（优先取失败事件的 `error`，其次取子进程 stderr 最后一行，截断 160 字），不再只提示「看日志」。
+- 设置弹窗底部操作条的按钮上下内边距统一（原上 16px / 下 22px），按钮到上下边界间距一致。
+- 新增回归测试：无斜杠 Referer 可用于构造请求头、带/不带路径的合法地址被接受、非法域名与 http 协议仍被拒绝。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：303 项通过。
+- `npm --prefix web run test:browser`：14 项通过（含失败提示带原因、弹窗布局断言）。
+- 真实歌单：截图中的网易云分享链接（`id=18135667715`）修复后读取成功 —— 86 首、`reader_status=complete`（修复前同一链接报 `crawler.netease_referer 必须是受支持域名的 HTTPS 地址`）。
+
+## 2026-09-14（AI 连通性测试与设置弹窗布局）
+
+- 设置页新增「测试连接」：用当前表单的接口地址、模型与参数（先保存到下次任务生效的配置）发起一个最小 Chat Completions 请求（`max_tokens: 16`、`temperature: 0`，按配置携带关闭思维链参数），界面显示延迟、模型、密钥来源与响应预览；上游非 2xx 显示状态码与摘要，超时按 `min(配置超时, 60s)` 计算。
+- 新增 `POST /api/ai/test`（仅本机访问），复用有效配置与跨平台密钥库，不写入任何运行产物，不影响当前任务。
+- 设置弹窗改为固定标题 + 可滚动内容 + 底部固定操作条的三段式布局：操作条不再悬浮遮挡表单，始终位于弹窗正下方；测试结果整行显示在按钮下方，不再溢出。
+
+实际验证：
+
+- `npm --prefix web test`：12 项通过（含连通性成功、上游 401、未配置密钥/未配置模型）。
+- `npm --prefix web run test:browser`：14 项通过（含测试连接 UI 与弹窗布局断言）。
+- 真实环境：面板「测试连接」实测成功（`deepseek-v4-flash`，密钥来源系统密钥库，延迟约 0.8–11s），截图确认操作条固定在弹窗底部且不遮挡内容。
+- `python -m compileall -q .`、`node --check web/server.js`：通过。
+
+## 2026-09-14（API Key 改用跳平台系统密钥库）
+
+- 网页设置中的「API Key 环境变量名」已删除，改为直接输入 **API Key**：加密保存到操作系统密钥库（基于 `keyring`：Windows Credential Manager / macOS Keychain / Linux Secret Service），任务自动解密复用；网页只显示「已配置」，不回显密钥。
+- 新增 `secret_store.py`：跳平台密钥库封装（`get`/`set`/`delete`/`status`），拒绝 `keyrings.alt`、明文文件与未知后端；提供 `python secret_store.py <action>` CLI。
+- 新增 `GET/PUT/DELETE /api/secrets`（仅本机）：保存、查询与清除密钥；保存后任务启动时由 Node 读密钥库并注入 `MUSIC_ATLAS_API_KEY` 子进程环境变量，执行器优先读密钥库、其次读同名环境变量。
+- `config/web.json` 删除 `api_key_env`；执行器 `REQUIRED_SETTINGS` 不再要求它（仍兼容自定义变量名）。`atlas setup` 新增 keyring 检查与自动安装。
+- 向后兼容：旧 `runtime/web/settings.json` 含已删除的 `api_key_env` 时自动剥离并写回，不会导致服务启动失败。
+- 新增测试：`tests/test_secret_store.py`（后端安全校验、CRUD 与边界、CLI 输出）、执行器密钥优先级与失败文案、Node 密钥接口与旧设置迁移、浏览器设置表单断言；均不触碰真实密钥库（Node 测试用夹具脚本 + 临时状态文件）。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：300 项通过。
+- `npm --prefix web test`：11 项通过；`npm --prefix web run test:browser`：14 项通过。
+- `python -m compileall -q .`、`node --check web/server.js`：通过。
+- 真实环境（Windows Credential Manager）：写入→解密读取→清除全链路通过（使用一次性临时值，未触碰真实 API Key）；生产 `settings.json` 自动迁移并正常启动服务。
+
+## 2026-09-14（网页设置中心与任务配置快照）
+
+- 网页右上角新增「设置」入口与配置表单，覆盖 AI 兼容执行器、歌单读取/爬虫请求、分页、重试、推荐预算、推荐策略边界和页面标题/导语。
+- 设置保存到 Git 忽略的运行时覆盖文件，不写入 API Key；接口仅允许本机访问，并对字段、范围、HTTPS 官方域名、环境变量名和文本长度执行白名单校验。
+- 任务启动时生成完整配置快照，当前任务不受之后的设置修改影响；推荐策略和 editorial 展示配置透传到网页工作流。
+- 新增 `runtime_config.py`，让 OpenAI 执行器、网易云/QQ 读取器和 Apple 导出超时共同读取同一份配置覆盖。
+
+实际验证：
+
+- `python -m unittest discover -s tests -v`：289 项通过。
+- `python -m compileall -q .`、`node --check web/server.js`、`git diff --check`：通过。
+- `npm --prefix web test`：9 项通过；`npm --prefix web run test:browser`：14 项通过。
+
+## 2026-09-14（候选池最低门槛降为 1）
+
+- `candidate_pool_min` 默认改为 `1`；候选池不再强制先覆盖全部召回类型，候选不足时由确定性选曲按实际可用数量收缩，默认目标仍为 10 首。
+- `ranked` 契约支持 1–`target_recommendations` 首推荐，并校验自适应候选类型配额、实际项目覆盖和排序清单长度。
+- 更新推荐 Skill 提示词、夹具与契约测试，覆盖单候选降级路径。
+
+实际验证：
+
+- `python -m unittest discover -s tests`：288 项通过。
+- `python -m compileall -q .`：通过。
+
 ## 2026-09-11（执行提速约 80%：关闭思维链与受限研究预算，维护标签 patch-20260911-193500）
 
 - 生产模型切到 `deepseek-v4.1-flash`（同一 sshzyu 端点，密钥改用与模型无关的 `MUSIC_ATLAS_API_KEY`）；`tests/test_openai_compat_executor.py` 不再硬编码模型名与密钥变量名，换模型不需要改测试。

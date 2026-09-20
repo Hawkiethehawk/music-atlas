@@ -4,9 +4,77 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { downloadAndValidate, validateExportCsv } from '../apple_export_helpers.mjs';
+import {
+  buildApplePlaylistCsv,
+  downloadAndValidate,
+  parseApplePlaylistUrl,
+  playlistFromPayload,
+  validateAppleTracks,
+  validateExportCsv,
+  writeApplePlaylistCsv,
+} from '../apple_export_helpers.mjs';
 
 const CSV = '\uFEFFTrack name,Artist name,Apple - id\r\n"Song, with comma",Artist,101\r\n"Song\nwith ""quotes""",Artist,102\r\n';
+
+test('Apple playlist URL parser accepts public share links and strips query state', () => {
+  const parsed = parseApplePlaylistUrl('https://music.apple.com/us/playlist/Favorite/pl.u-test_123?l=zh');
+  assert.equal(parsed.storefront, 'us');
+  assert.equal(parsed.playlistId, 'pl.u-test_123');
+  assert.equal(parsed.embedUrl, 'https://embed.music.apple.com/us/playlist/Favorite/pl.u-test_123');
+  for (const invalid of [
+    'http://music.apple.com/us/playlist/Favorite/pl.u-test',
+    'https://example.com/us/playlist/Favorite/pl.u-test',
+    'https://music.apple.com/us/album/Favorite/123',
+  ]) assert.throws(() => parseApplePlaylistUrl(invalid));
+});
+
+test('official Apple payload converts to a validated CSV', () => {
+  const payload = {
+    data: [{
+      id: 'pl.u-test', type: 'playlists', attributes: { name: 'My Playlist' },
+      relationships: { tracks: { data: [{
+        id: '101', type: 'songs', attributes: {
+          name: 'Song, One', artistName: 'Artist One', albumName: 'Album One',
+          isrc: 'AA111', releaseDate: '2026-01-02', url: 'https://music.apple.com/song/101',
+          artwork: { url: 'https://example.com/{w}x{h}.jpg' },
+        },
+      }], next: '/v1/catalog/us/playlists/pl.u-test/tracks?offset=100' } },
+    }],
+  };
+  const playlist = playlistFromPayload(payload, 'pl.u-test');
+  assert.equal(playlist.name, 'My Playlist');
+  assert.match(playlist.next, /offset=100/);
+  const csv = buildApplePlaylistCsv(playlist.name, playlist.tracks);
+  const parsed = validateExportCsv(csv, 1);
+  assert.equal(parsed.tracks, 1);
+  assert.match(csv, /"Song, One"/);
+  assert.match(csv, /My Playlist/);
+});
+
+test('official Apple track validation rejects missing identities and preserves playlist duplicates', () => {
+  assert.throws(() => validateAppleTracks([{ id: '1', type: 'songs', attributes: { name: '', artistName: 'A' } }]));
+  const tracks = validateAppleTracks([
+    { id: '1', type: 'songs', attributes: { name: 'One', artistName: 'A' } },
+    { id: '1', type: 'songs', attributes: { name: 'One', artistName: 'A' } },
+  ]);
+  assert.equal(tracks.length, 2);
+});
+
+test('official Apple CSV write confirms completed pagination and preserves metadata', async () => {
+  await withDirectory(async (root) => {
+    const output = path.join(root, 'playlist.csv');
+    const tracks = [{ id: '101', type: 'songs', attributes: { name: 'Song', artistName: 'Artist' } }];
+    const raw = buildApplePlaylistCsv('Playlist', tracks);
+    const result = writeApplePlaylistCsv(output, raw, {
+      playlistId: 'pl.u-test', playlistName: 'Playlist', storefront: 'us', tracks: 1,
+    });
+    assert.equal(result.completeness_status, 'confirmed');
+    assert.equal(result.expected_count_source, 'apple_official_pagination');
+    assert.equal(result.tracks, 1);
+    assert.equal(fs.readFileSync(output, 'utf8'), raw);
+  });
+});
+
 
 async function withDirectory(run) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-export-test-'));

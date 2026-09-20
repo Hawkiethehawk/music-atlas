@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import io
 import itertools
 import json
@@ -61,6 +66,16 @@ class RankingBoundaryTests(unittest.TestCase):
         self.assertEqual(self.ranked, rank_bundle(self.pool, self.packet))
         self.assertEqual(self.ranked, rank_bundle(self.ranked, self.packet))
         self.assertEqual(original, self.pool)
+
+    def test_candidate_shortage_returns_available_recommendations(self):
+        packet = deepcopy(self.packet)
+        packet["recommendation_policy"]["candidate_pool_min"] = 1
+        pool = deepcopy(self.pool)
+        pool["candidate_pool"] = [pool["candidate_pool"][0]]
+        ranked = rank_bundle(pool, packet)
+        self.assertEqual(len(ranked["recommendations"]), 1)
+        self.assertEqual(ranked["ranking"]["selected_count"], 1)
+        validate_recommendation_bundle(ranked, packet)
 
     def test_ranked_track_facts_must_match_candidate_pool(self):
         for field in ("title", "artist", "project", "release_date", "explanation", "sources", "style_axes"):

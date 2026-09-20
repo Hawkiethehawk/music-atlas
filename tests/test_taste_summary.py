@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# 测试夹具曲目是合成数据，平台上不存在；关闭平台元数据核验，
+# 核验逻辑本身由 tests/test_metadata_verify.py 与专门用例覆盖。
+import os as _atlas_os
+_atlas_os.environ.setdefault("ATLAS_METADATA_VERIFY", "off")
+
 import importlib.util
 import json
 import os
@@ -244,9 +249,9 @@ class RunTasteAnalysisTest(unittest.TestCase):
 
 
 class WebWorkflowTasteModeTest(unittest.TestCase):
-    """35 首歌单走完网页工作流全流程：品味摘要分析 → 推荐 → 发布。"""
+    """网页流程不会把没有公开候选事实的本地曲目发布为推荐。"""
 
-    def test_full_run(self):
+    def test_local_tracks_without_public_candidates_are_not_published(self):
         import os
         from contracts import read_json
         from web_workflow import build_parser, run_web_workflow
@@ -277,21 +282,12 @@ class WebWorkflowTasteModeTest(unittest.TestCase):
             cwd = os.getcwd()
             os.chdir(ROOT)
             try:
-                code = run_web_workflow(args)
+                from unittest.mock import patch
+                with patch("agent_lastfm.analyze"), patch("lastfm_pipeline.LastFM"), patch("lastfm_pipeline.validate_knowledge"), patch("lastfm_pipeline.collect_tags", return_value={"records":[]}), patch("lastfm_pipeline.discover", return_value=([],{})), self.assertRaises(ContractError):
+                    run_web_workflow(args)
             finally:
                 os.chdir(cwd)
-            self.assertEqual(code, 0)
-
-            packet = read_json(runtime_dir / "musician_analysis.json")
-            self.assertEqual(packet["analysis_mode"], "taste_summary")
-            self.assertTrue((runtime_dir / "analysis_research" / "taste_summary.json").is_file())
-            report = read_json(runtime_dir / "web_job_report.json")
-            self.assertEqual(report["status"], "completed")
-            payload = read_json(current_data)
-            self.assertEqual(payload["payload_type"], "music_atlas_web")
-            self.assertEqual(len(payload["recommendations"]), 10)
-            self.assertIsNotNone(payload.get("taste_review"), "品味摘要模式应输出锐评投影")
-            self.assertIn("headline", payload["taste_review"])
+            self.assertFalse(current_data.exists())
 
 
 class WorkflowCliScaleTest(unittest.TestCase):

@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -14,6 +15,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
 from contracts import ContractError, SCHEMA_VERSION, normalized_text, track_key, utc_now, write_json
+from runtime_config import crawler_settings
 
 
 class PlaylistReader(Protocol):
@@ -331,21 +333,75 @@ class CsvPlaylistReader:
 NETEASE_DETAIL_URL = "https://music.163.com/api/v6/playlist/detail"
 NETEASE_SONG_DETAIL_URL = "https://music.163.com/api/v3/song/detail"
 NETEASE_SONG_DETAIL_BATCH_SIZE = 200
-NETEASE_REQUEST_HEADERS = {
-    "Cookie": "os=pc; appver=2.9.7",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Referer": "https://music.163.com/",
-}
-
 QQ_MUSICU_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
-QQ_REQUEST_HEADERS = {
-    "Content-Type": "application/json",
-    "Referer": "https://y.qq.com/",
-    "Origin": "https://y.qq.com",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-}
 QQ_PAGE_SIZE = 100
 QQ_MAX_PAGES = 50
+
+
+def _crawler_value(name: str, default: Any) -> Any:
+    try:
+        return crawler_settings().get(name, default)
+    except RuntimeError as exc:
+        raise ContractError(str(exc)) from exc
+
+
+def _crawler_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = _crawler_value(name, default)
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ContractError(f"crawler.{name} 必须是 {minimum} 到 {maximum} 的整数")
+    return value
+
+
+def _crawler_text(name: str, default: str, *, maximum: int = 300) -> str:
+    value = _crawler_value(name, default)
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\r" in value or "\n" in value:
+        raise ContractError(f"crawler.{name} 必须是有效文本")
+    return value.strip()
+
+
+def _crawler_url(name: str, default: str, allowed_hosts: tuple[str, ...]) -> str:
+    value = _crawler_text(name, default, maximum=500)
+    parsed = urlparse(value)
+    hostname = (parsed.hostname or "").casefold().rstrip(".")
+    # 无路径的 URL（如 `https://music.163.com`）合法，等价于带 `/`；网页保存时
+    # 会去掉末尾斜杠，这里必须容忍，否则读取器会因配置格式而永久失败。
+    path_ok = not parsed.path or parsed.path.startswith("/")
+    if parsed.scheme != "https" or hostname not in allowed_hosts or not path_ok:
+        raise ContractError(f"crawler.{name} 必须是受支持域名的 HTTPS 地址")
+    return value.rstrip("/")
+
+
+def _request_headers(kind: str) -> dict[str, str]:
+    user_agent = _crawler_text("user_agent", "MusicAtlas/1.0 (+local)", maximum=200)
+    if kind == "netease":
+        referer = _crawler_url("netease_referer", "https://music.163.com/", ("music.163.com",))
+        return {
+            "Cookie": "os=pc; appver=2.9.7",
+            "User-Agent": user_agent,
+            "Referer": referer,
+        }
+    referer = _crawler_url("qq_referer", "https://y.qq.com/", ("y.qq.com",))
+    return {
+        "Content-Type": "application/json",
+        "Referer": referer,
+        "Origin": "https://y.qq.com",
+        "User-Agent": user_agent,
+    }
+
+
+def _fetch_public_bytes(request: Request) -> bytes:
+    timeout = _crawler_int("request_timeout_seconds", 30, 1, 86400)
+    retries = _crawler_int("request_retries", 1, 0, 3)
+    for attempt in range(retries + 1):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            retryable = not isinstance(exc, HTTPError) or exc.code == 429 or exc.code >= 500
+            if attempt >= retries or not retryable:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+    raise ContractError("公开接口请求失败")
 
 
 def _playlist_id_from_arg(value: str) -> str:
@@ -371,13 +427,13 @@ def _playlist_id_from_arg(value: str) -> str:
 def _fetch_netease_playlist_detail(playlist_id: str) -> bytes:
     """Fetch the current anonymous public playlist detail endpoint."""
 
+    detail_url = _crawler_url("netease_detail_url", NETEASE_DETAIL_URL, ("music.163.com",))
     request = Request(
-        f"{NETEASE_DETAIL_URL}?id={playlist_id}&n=1000",
-        headers=NETEASE_REQUEST_HEADERS,
+        f"{detail_url}?id={playlist_id}&n=1000",
+        headers=_request_headers("netease"),
     )
     try:
-        with urlopen(request, timeout=30) as response:
-            return response.read()
+        return _fetch_public_bytes(request)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise ContractError(f"网易云接口请求失败：{exc}") from exc
 
@@ -392,13 +448,13 @@ def _fetch_netease_song_details(track_ids: list[str]) -> bytes:
         ensure_ascii=False,
         separators=(",", ":"),
     )
+    song_detail_url = _crawler_url("netease_song_detail_url", NETEASE_SONG_DETAIL_URL, ("music.163.com",))
     request = Request(
-        f"{NETEASE_SONG_DETAIL_URL}?c={quote(payload, safe='')}",
-        headers=NETEASE_REQUEST_HEADERS,
+        f"{song_detail_url}?c={quote(payload, safe='')}",
+        headers=_request_headers("netease"),
     )
     try:
-        with urlopen(request, timeout=30) as response:
-            return response.read()
+        return _fetch_public_bytes(request)
     except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
         raise ContractError(f"网易云歌曲详情请求失败：{exc}") from exc
 
@@ -544,8 +600,11 @@ class NeteasePublicPlaylistReader:
             container = _netease_container(payload)
             track_ids = _netease_track_ids(container)
             by_id: dict[str, dict[str, Any]] = {}
-            for start in range(0, len(track_ids), NETEASE_SONG_DETAIL_BATCH_SIZE):
-                batch_ids = track_ids[start:start + NETEASE_SONG_DETAIL_BATCH_SIZE]
+            song_detail_batch_size = _crawler_int(
+                "netease_song_detail_batch_size", NETEASE_SONG_DETAIL_BATCH_SIZE, 1, 1000
+            )
+            for start in range(0, len(track_ids), song_detail_batch_size):
+                batch_ids = track_ids[start:start + song_detail_batch_size]
                 detail_raw = _fetch_netease_song_details(batch_ids)
                 raw_parts.append(detail_raw)
                 song_detail_request_count += 1
@@ -588,8 +647,10 @@ class NeteasePublicPlaylistReader:
             "reader": {
                 "type": "netease_public",
                 "source_playlist_id": playlist_arg,
-                "api_endpoint": NETEASE_DETAIL_URL,
-                "song_detail_batch_size": NETEASE_SONG_DETAIL_BATCH_SIZE,
+                "api_endpoint": _crawler_url("netease_detail_url", NETEASE_DETAIL_URL, ("music.163.com",)),
+                "song_detail_batch_size": _crawler_int(
+                    "netease_song_detail_batch_size", NETEASE_SONG_DETAIL_BATCH_SIZE, 1, 1000
+                ),
                 "song_detail_request_count": song_detail_request_count,
                 "declared_count_source": (
                     "argument" if declared_count is not None else "api_track_ids"
@@ -645,15 +706,15 @@ def _qq_diss_payload(playlist_id: str, song_begin: int, song_num: int) -> dict[s
 def _fetch_qq_playlist_page(playlist_id: str, song_begin: int, song_num: int) -> bytes:
     """Fetch one page of an anonymous public QQ Music playlist."""
 
+    qq_url = _crawler_url("qq_musicu_url", QQ_MUSICU_URL, ("u.y.qq.com",))
     request = Request(
-        QQ_MUSICU_URL,
+        qq_url,
         data=json.dumps(_qq_diss_payload(playlist_id, song_begin, song_num)).encode("utf-8"),
-        headers=QQ_REQUEST_HEADERS,
+        headers=_request_headers("qq"),
         method="POST",
     )
     try:
-        with urlopen(request, timeout=30) as response:
-            return response.read()
+        return _fetch_public_bytes(request)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise ContractError(f"QQ 音乐接口请求失败：{exc}") from exc
 
@@ -759,8 +820,10 @@ class QQPublicPlaylistReader:
         api_playlist_name = ""
         pages_digest = hashlib.sha256()
         page_hashes: list[str] = []
-        for page_index in range(QQ_MAX_PAGES):
-            raw = _fetch_qq_playlist_page(playlist_arg, page_index * QQ_PAGE_SIZE, QQ_PAGE_SIZE)
+        page_size = _crawler_int("qq_page_size", QQ_PAGE_SIZE, 1, 1000)
+        max_pages = _crawler_int("qq_max_pages", QQ_MAX_PAGES, 1, 500)
+        for page_index in range(max_pages):
+            raw = _fetch_qq_playlist_page(playlist_arg, page_index * page_size, page_size)
             pages_digest.update(len(raw).to_bytes(8, "big"))
             pages_digest.update(raw)
             page_hashes.append(hashlib.sha256(raw).hexdigest())
@@ -781,7 +844,7 @@ class QQPublicPlaylistReader:
             # 接口未返回 hasmore 时按原始行数推断分页边界；
             # 坏行跳过导致的 declared 差异交给 incomplete 语义处理，
             # 绝不因收集数少于声明数而重复拉取已读页面。
-            if not page["tracks"] or page["raw_count"] < QQ_PAGE_SIZE:
+            if not page["tracks"] or page["raw_count"] < page_size:
                 break
             if total and raw_collected >= total:
                 break
