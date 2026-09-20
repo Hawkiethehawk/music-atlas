@@ -22,6 +22,7 @@ test("未登录时显示默认入口页，不展示上一份 Atlas", { concurren
   assert.match(await page.locator("body").textContent(), /创建账号/);
   assert.equal(await page.locator(".trow").count(), 0);
   assert.equal(await page.locator("nav a").count(), 1);
+  assert.doesNotMatch(await page.title(), /Editorial Atlas/i);
   await page.locator("[data-auth-open-mode='register']").click();
   await page.getByRole("heading", { name: "创建账号" }).waitFor();
   assert.deepEqual(errors, []);

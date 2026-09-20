@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-20（修正刷新默认页面标题，维护标签 patch-20260920-110907）
+
+- 将页面静态默认标题从“Music Atlas · Editorial Atlas”改为“Music Atlas”，避免刷新时在数据加载前显示旧标题。
+- 增加浏览器回归断言，确保页面最终标题不再包含“Editorial Atlas”。
+
+实际验证：
+
+- `npm --prefix web test`：15 项通过。
+- `npm --prefix web run test:browser`：22 项通过。
+- `python -m unittest discover -s tests -p "test_*.py"`：386 项通过。
+- `git diff --check`：通过。
+
 ## 2026-09-20（未登录默认入口与页面状态清理，维护标签 patch-20260920-105921）
 
 - 生产环境未登录时显示独立默认入口页，隐藏上一份 Atlas 内容；登录或注册后恢复完整导航与个人工作流。
