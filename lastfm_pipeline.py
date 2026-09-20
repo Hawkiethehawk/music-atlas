@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import os
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -13,8 +14,12 @@ from secret_store import _load_keyring, SERVICE_NAME
 
 class LastFM:
     def __init__(self, cache_dir, seconds=90):
-        ring, _ = _load_keyring()
-        self.key = ring.get_password(SERVICE_NAME, 'lastfm_api_key')
+        try:
+            ring, _ = _load_keyring()
+            self.key = ring.get_password(SERVICE_NAME, 'lastfm_api_key')
+        except Exception:  # noqa: BLE001 - 无桌面的服务器使用受保护的环境变量回退
+            self.key = None
+        self.key = self.key or os.environ.get('LASTFM_API_KEY')
         if not self.key: raise ContractError('音乐资料服务密钥未配置')
         self.cache = Path(cache_dir)
         self.deadline = time.monotonic() + seconds

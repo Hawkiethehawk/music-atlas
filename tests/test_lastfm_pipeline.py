@@ -1,6 +1,9 @@
 import unittest
+import os
+import tempfile
 from copy import deepcopy
-from lastfm_pipeline import select, validate_bundle
+from unittest.mock import patch
+from lastfm_pipeline import LastFM, select, validate_bundle
 from contracts import ContractError, track_key
 
 class LastFMSelectionTests(unittest.TestCase):
@@ -85,5 +88,14 @@ class LastFMTagsTests(unittest.TestCase):
         self.assertIsNone(r['retrieved_at'])
         packet['source_tags']['records']=[]
         with self.assertRaises(ContractError):validate_knowledge(packet)
+
+
+class LastFMKeyConfigTests(unittest.TestCase):
+    def test_server_environment_key_is_used_when_keyring_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LASTFM_API_KEY': 'env-key'}), patch(
+            'lastfm_pipeline._load_keyring', side_effect=RuntimeError('no desktop keyring')
+        ):
+            client = LastFM(directory, seconds=1)
+        self.assertEqual(client.key, 'env-key')
 
 if __name__=='__main__':unittest.main()
