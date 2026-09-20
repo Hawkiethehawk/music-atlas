@@ -252,7 +252,7 @@ python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
 - `benchmark.py`：同输入的人工试听清单与只读方案对照。
 - `web_view_model.py` + `workflow.py web-export`：将已校验的运行产物转换为网页专用、只读的脱敏数据。
 - `config/web.json`：网页服务基础配置；网页右上角「设置」把安全覆盖保存到 Git 忽略的 `runtime/web/settings.json`，不改写基础配置。
-- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。网页提交歌单链接后先读取歌单，再让操作者选择处理数量（分位 `25%/50%/100%`，按真实曲目数向上取整），随后继续分析与推荐；分位、AI、爬虫、预算、推荐边界与展示标题均可在设置入口编辑。AI API Key 在设置中单独输入，加密保存到系统密钥库（Windows Credential Manager / macOS Keychain / Linux Secret Service），任务自动复用，网页不回显；环境变量 `MUSIC_ATLAS_API_KEY` 仍可作为回退方式。
+- `web/`：Editorial Atlas 网页及零依赖 Node 静态服务；网页通过 `GET /api/atlas` 读取导出数据。网页提交歌单链接后先读取歌单，再让操作者选择处理数量（分位 `25%/50%/100%`，按真实曲目数向上取整），随后继续分析与推荐；生产环境要求普通用户登录，歌单配置、偏好与七天推荐去重缓存按用户隔离。系统设置与 AI API Key 已收拢到独立管理员入口 `/admin`，管理员会话才能访问；密钥只保存到系统密钥库（Windows Credential Manager / macOS Keychain / Linux Secret Service），网页不回显；环境变量 `MUSIC_ATLAS_API_KEY` 仍可作为回退方式。Node 运行时需为 22.5+。
 - `secret_store.py`：跨平台系统密钥库封装（基于 keyring），完成密钥库可用性校验，拒绝 keyrings.alt 等不安全后端。
 - `atlas.py` + `web_service.py`：统一 CLI 入口与面板服务管理。`atlas start [--port N] [--no-open] [--force]` 启动面板（已运行则复用），`atlas stop` / `atlas restart` / `atlas status [--json]` / `atlas logs`；其余子命令透传 workflow.py（如 `atlas run ...`）。停止与替换有身份防护：`/api/health` 携带 `service/pid/web_root`，只有本项目面板会被停止；端口被其他服务占用时默认拒绝，`--force` 才替换；状态文件 PID 存活但健康端点不可用时拒绝覆盖。日志在 `runtime/web/service.log`。Windows 下可将项目根加入 PATH 后用 `atlas` 直呼（`atlas.bat`）。
 

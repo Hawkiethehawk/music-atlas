@@ -11,7 +11,7 @@
     "test:browser": "node --test tests/*.browser.mjs"
   },
   "engines": {
-    "node": ">=14"
+    "node": ">=22.5"
   },
   "devDependencies": {
     "playwright": "1.62.1"

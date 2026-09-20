@@ -143,7 +143,11 @@ RECOMMENDATION_HISTORY_DAYS = 7
 
 
 def _playlist_history_path(source_report: dict[str, Any], snapshot: dict[str, Any], runtime_dir: Path) -> Path:
-    identity = f"{source_report.get('kind', '')}:{snapshot.get('playlist_id', '')}"
+    # Web jobs are isolated by authenticated user.  A shared playlist URL may
+    # legitimately produce different recommendations for different accounts,
+    # so the seven-day de-duplication cache must never cross user boundaries.
+    user_id = str(os.environ.get("MUSIC_ATLAS_USER_ID", "anonymous") or "anonymous")
+    identity = f"{user_id}:{source_report.get('kind', '')}:{snapshot.get('playlist_id', '')}"
     digest = hashlib.sha256(str(identity).encode("utf-8")).hexdigest()
     base = runtime_dir.parent.parent if runtime_dir.parent.name in {"web-jobs", "jobs"} else runtime_dir.parent
     return base / "recommendation-history" / f"{digest}.json"

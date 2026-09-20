@@ -1,0 +1,29 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { chromium } from "playwright";
+import { createAuthStore } from "../auth_store.js";
+import { createIsolatedServer } from "./helpers.mjs";
+
+test("管理员页面沿用主页面视觉并完成登录后加载控制台", { concurrency: false }, async (t) => {
+  const server = await createIsolatedServer({ label: "admin-browser", authRequired: true });
+  t.after(() => server.stop());
+  const store = createAuthStore(server.authDbPath);
+  store.ensureBootstrapAdmin("browser-admin", "admin-password-2026");
+  store.close();
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const errors = [];
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.goto(`${server.baseUrl}/admin`);
+  await page.locator("#admin-user").fill("browser-admin");
+  await page.locator("#admin-pass").fill("admin-password-2026");
+  await page.getByRole("button", { name: "进入后台" }).click();
+  await page.getByText("后台控制台").waitFor();
+  assert.equal(await page.locator("header .logo").textContent(), "MUSIC ATLAS");
+  assert.equal(await page.locator(".panel").count(), 2);
+  assert.match(await page.locator("body").textContent(), /用户管理/);
+  assert.match(await page.locator("body").textContent(), /系统设置/);
+  assert.deepEqual(errors, []);
+});

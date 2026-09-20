@@ -9,6 +9,7 @@ User=www-data
 WorkingDirectory=/opt/music-atlas-web
 ExecStart=/usr/bin/node /opt/music-atlas-web/server.js
 Environment=NODE_ENV=production
+Environment=ATLAS_AUTH_REQUIRED=1
 Environment=HOST=127.0.0.1
 Environment=PORT=8420
 Restart=on-failure

@@ -136,6 +136,24 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .btn:hover{color:var(--ink);border-color:var(--acc)}
 .btn.primary{border-color:var(--acc);color:var(--acc)}
 .btn.primary:hover{background:var(--acc);color:#fff}
+.auth-link{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--dim);background:none;border:0;border-bottom:1px solid transparent;padding:6px 0;cursor:pointer}
+.auth-link:hover{color:var(--ink);border-bottom-color:var(--acc)}
+.auth-user{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--faint);display:flex;align-items:center;gap:12px}
+.auth-user button{font:inherit;color:var(--dim);background:none;border:0;border-bottom:1px solid transparent;padding:6px 0;cursor:pointer}
+.auth-user button:hover{color:var(--ink);border-bottom-color:var(--acc)}
+.auth-backdrop{position:fixed;inset:0;z-index:80;background:rgba(15,13,10,.82);display:grid;place-items:center;padding:24px}
+.auth-dialog{width:min(440px,100%);border:1px solid var(--line2);background:var(--panel);box-shadow:0 30px 80px rgba(0,0,0,.55);padding:28px}
+.auth-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:22px}
+.auth-head h2{font-family:var(--serif);font-size:30px;font-weight:500}
+.auth-head p{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;margin-top:4px}
+.auth-close{font-family:var(--serif);font-size:28px;line-height:1;color:var(--dim);border:0;background:none;cursor:pointer}
+.auth-tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.auth-tab{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--faint);border:0;border-bottom:1px solid transparent;background:none;padding:7px 0;cursor:pointer}
+.auth-tab.on{color:var(--acc);border-bottom-color:var(--acc)}
+.auth-form{display:grid;gap:14px}.auth-field{display:grid;gap:6px}.auth-field label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--faint)}
+.auth-field input{font:inherit;font-family:var(--mono);font-size:14px;color:var(--ink);background:var(--bg2);border:1px solid var(--line2);padding:10px 12px;outline:none}.auth-field input:focus{border-color:var(--acc)}
+.auth-message{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--dim);min-height:20px}.auth-message.error{color:#d98a7a}.auth-message.ok{color:#8fce9b}
+.auth-form .btn{width:100%;min-height:42px}
 /* article / detail */
 .crumb{font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--faint);padding:26px 0 0;text-transform:uppercase}
 .crumb a:hover{color:var(--acc)}
@@ -377,6 +395,7 @@ footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px}
 <body>
 <div id="app"></div>
 <div id="settings-root"></div>
+<div id="auth-root"></div>
 <div id="toast"></div>
 <script>
 /* ================= DATA (loaded from /api/atlas) ================= */
@@ -401,6 +420,10 @@ let workflowClockTimer=null;
 let workflowFinishedJobId=null;
 let SETTINGS=null;
 let SECRET_STATUS=null;
+let CURRENT_USER=null;
+let AUTH_REQUIRED=false;
+let SAVED_PLAYLISTS=[];
+let USER_PREFERENCES={};
 
 /* 任务活跃状态：awaiting_limit 表示歌单已读取、正在等用户选择处理数量，不能当终态。 */
 const WORKFLOW_ACTIVE_STATUSES=["queued","running","awaiting_limit"];
@@ -540,19 +563,27 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
   if(ISSUE.title)document.title="Music Atlas · "+ISSUE.title;
  }
  function applyWorkflowConfig(payload){const incoming=payload&&payload.workflow?payload.workflow:null;if(incoming)WORKFLOW=Object.assign({},WORKFLOW,incoming);if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;if(!LATEST_JOB_ID)LATEST_JOB_ID=payload&&payload.latest_job_id||storedWorkflowJobId();}
+ function authHeader(){return CURRENT_USER?`<span class="auth-user"><span>${esc(CURRENT_USER.username)}</span><button type="button" data-auth-logout>退出</button></span>`:`<button type="button" class="auth-link" data-auth-open>登录</button>`;}
+ function authModal(mode="login",message="",error=false){const root=document.getElementById("auth-root");if(!root)return;const isRegister=mode==="register";root.innerHTML=`<div class="auth-backdrop" data-auth-close><section class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div class="auth-head"><div><h2 id="auth-title">${isRegister?"创建账号":"登录 Music Atlas"}</h2><p>${AUTH_REQUIRED?"登录后保存歌单并运行分析":"登录后保存个人歌单与运行记录"}</p></div><button type="button" class="auth-close" data-auth-close>×</button></div><div class="auth-tabs"><button type="button" class="auth-tab ${isRegister?"":"on"}" data-auth-mode="login">登录</button><button type="button" class="auth-tab ${isRegister?"on":""}" data-auth-mode="register">注册</button></div><form class="auth-form" data-auth-form data-mode="${mode}"><div class="auth-field"><label for="auth-username">用户名</label><input id="auth-username" name="username" autocomplete="username" minlength="3" maxlength="64" required></div><div class="auth-field"><label for="auth-password">密码</label><input id="auth-password" name="password" type="password" autocomplete="${isRegister?"new-password":"current-password"}" minlength="8" maxlength="200" required></div><div class="auth-message ${error?"error":message?"ok":""}" data-auth-message>${esc(message)}</div><button class="btn primary" type="submit">${isRegister?"创建账号":"登录"}</button></form></section></div>`;root.querySelector("#auth-username")?.focus();}
+ function closeAuth(){const root=document.getElementById("auth-root");if(root)root.innerHTML="";}
+ async function loadAuth(){try{const response=await fetch("/api/auth/me",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){CURRENT_USER=payload.user||null;AUTH_REQUIRED=Boolean(payload.auth_required);}}catch{}refreshAuthChrome();}
+ function refreshAuthChrome(){const node=document.querySelector("[data-auth-slot]");if(node)node.innerHTML=authHeader();}
+ async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();refreshAuthChrome();renderPlaylistHistory();toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
  async function bootAtlas(){
   const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
   const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
-  const [configResult,atlasResult]=await Promise.allSettled([configPromise,atlasPromise]);
+  const authPromise=fetch("/api/auth/me",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
+  const [configResult,atlasResult,authResult]=await Promise.allSettled([configPromise,atlasPromise,authPromise]);
   if(configResult.status==="fulfilled"&&configResult.value&&configResult.value.ok)applyWorkflowConfig(configResult.value);
   if(atlasResult.status==="fulfilled")applyAtlasPayload(atlasResult.value);
   else{ATLAS=null;ISSUE={title:"当前 Atlas"};}
+  if(authResult.status==="fulfilled"&&authResult.value&&authResult.value.ok){CURRENT_USER=authResult.value.user||null;AUTH_REQUIRED=Boolean(authResult.value.auth_required);if(CURRENT_USER){try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}}}
   document.body.classList.add("atlas-ready");render();
  }
 
 /* ================= HEADER / FOOTER ================= */
 const NAV=[["#/discover","发现"],["#/atlas","Atlas"],["#/taste","音乐版图"],["#/sources","推荐源"]];
-const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav></div></div></header>${statusBanner()}`;
+const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav><span data-auth-slot>${authHeader()}</span></div></div></header>${statusBanner()}`;
 const footer=()=>`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span><span>${ATLAS?statusText(ATLAS.status.run||ATLAS.status.publication):"数据加载中"}</span></div></footer>`;
 
 /* ================= VIEWS ================= */
@@ -963,7 +994,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  function setWorkflowButtonBusy(busy){const active=Boolean(busy),form=document.getElementById("workflow-form"),button=form&&form.querySelector('button[type="submit"]');if(button)button.disabled=active||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);document.querySelectorAll("[data-atlas-new]").forEach(atlasButton=>{atlasButton.disabled=active;});}
 /* ---------------- 分位选择（歌单已读取后选择） ---------------- */
 const TRACK_PERCENTILE_OPTIONS=[0.25,0.5,1];
-function workflowPercentileDefault(){const value=Number(WORKFLOW&&WORKFLOW.track_percentile_default);return TRACK_PERCENTILE_OPTIONS.includes(value)?value:1;}
+function workflowPercentileDefault(){const preferred=Number(USER_PREFERENCES&&USER_PREFERENCES.track_percentile_default);if(TRACK_PERCENTILE_OPTIONS.includes(preferred))return preferred;const value=Number(WORKFLOW&&WORKFLOW.track_percentile_default);return TRACK_PERCENTILE_OPTIONS.includes(value)?value:1;}
 function percentileTrackLimit(maximum,percentile){return Math.max(1,Math.ceil(maximum*percentile));}
 /* 只有歌单真实读完后工作流才会进入 awaiting_limit；上限来自该事件携带的曲目数。 */
 function workflowLimitView(job){
@@ -1064,27 +1095,29 @@ function syncLimitControls(job){
   const rows=playlistHistory(),old=rows.find(r=>r.url===url);
   const row={url,name:name||old?.name||"",usedAt:new Date().toISOString()};
   try{localStorage.setItem(PLAYLIST_HISTORY_KEY,JSON.stringify([row,...rows.filter(r=>r.url!==url)].slice(0,20)));}catch{}
+  if(CURRENT_USER){fetch("/api/me/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,name:row.name})}).then(r=>r.ok?r.json():null).then(payload=>{if(payload?.playlist){SAVED_PLAYLISTS=[payload.playlist,...SAVED_PLAYLISTS.filter(item=>item.source_url!==url)];renderPlaylistHistory();}}).catch(()=>{});}
   renderPlaylistHistory();
  }
- function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;select.innerHTML='<option value="">选择最近使用的歌单</option>'+playlistHistory().map(r=>`<option value="${esc(r.url)}">${esc(r.name||r.url)}</option>`).join("");}
+ function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;const local=playlistHistory();const remote=SAVED_PLAYLISTS.map(item=>({url:item.source_url,name:item.name,usedAt:item.updated_at}));const rows=[...remote,...local].filter((row,index,all)=>row.url&&all.findIndex(item=>item.url===row.url)===index).slice(0,20);select.innerHTML='<option value="">选择最近使用的歌单</option>'+rows.map(r=>`<option value="${esc(r.url)}">${esc(r.name||r.url)}</option>`).join("");}
  const rememberedPlaylistJobs=new Set();
  function rememberJobPlaylist(job){if(!job||rememberedPlaylistJobs.has(job.id))return;for(const e of job?.events||[]){if(e.stage==="snapshot"&&e.event==="completed"&&e.source?.url){rememberPlaylist(e.source.url,e.playlist_name||"");rememberedPlaylistJobs.add(job.id);break;}}}
  function bindWorkflowControls(){
   const form=document.getElementById("workflow-form");if(!form)return;
   const input=document.getElementById("wf-source-url");
   renderPlaylistHistory();
-  if(input&&!input.value)input.value=playlistHistory()[0]?.url||"";
+  if(input&&!input.value)input.value=document.querySelector("#wf-history option:nth-child(2)")?.value||"";
   document.getElementById("wf-history")?.addEventListener("change",event=>{if(input&&event.target.value){input.value=event.target.value;workflowFieldError("");}});
   if(input)input.addEventListener("input",()=>workflowFieldError(""));
   form.addEventListener("submit",async event=>{
    event.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}
+   if(AUTH_REQUIRED&&!CURRENT_USER){authModal("login","请先登录后再运行工作流",true);return;}
    const sourceUrl=input?input.value.trim():"";
    if(!sourceUrl){workflowFieldError("请粘贴歌单公开链接。");if(input)input.focus();return;}
    if(input&&!input.validity.valid){workflowFieldError("链接格式不正确，请粘贴公开歌单链接。");input.focus();return;}
    workflowFieldError("");
    const body={source_url:sourceUrl};
    const button=form.querySelector("button[type=submit]");if(button)button.disabled=true;
-    try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");rememberPlaylist(sourceUrl);ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
+    try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(response.status===401){authModal("login","登录状态已失效，请重新登录",true);throw new Error("请先登录后再运行工作流");}if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");rememberPlaylist(sourceUrl);ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
    catch(error){if(button)button.disabled=false;toast(error.message||"无法启动工作流");}
   });
   const limitChips=document.getElementById("wf-limit-chips");
@@ -1291,6 +1324,14 @@ function render(){const h=location.hash.replace(/^#/,"")||"/discover";let html=h
   bindWorkflowControls();}
 /* global click delegation */
 document.addEventListener("click",async e=>{
+ const authOpen=e.target.closest("[data-auth-open]");
+ if(authOpen){e.preventDefault();authModal("login");return;}
+ const authClose=e.target.closest("[data-auth-close]");
+ if(authClose&&(authClose===e.target||authClose.classList.contains("auth-close"))){e.preventDefault();closeAuth();return;}
+ const authMode=e.target.closest("[data-auth-mode]");
+ if(authMode){e.preventDefault();authModal(authMode.dataset.authMode||"login");return;}
+ const authLogout=e.target.closest("[data-auth-logout]");
+ if(authLogout){e.preventDefault();try{await fetch("/api/auth/logout",{method:"POST"});}catch{}CURRENT_USER=null;refreshAuthChrome();toast("已退出登录");return;}
  const open=e.target.closest("[data-settings-open]");
  if(open){e.preventDefault();openSettings();return;}
  const close=e.target.closest("[data-settings-close]");
@@ -1322,6 +1363,7 @@ document.addEventListener("click",async e=>{
  if(tab){const f=tab.getAttribute("data-tab");location.hash="#/atlas/"+(f==="all"?"":f);if(f==="all"){render();}return;}
  const go=e.target.closest("[data-go]");
  if(go){if(!e.target.closest("[data-open]")){location.hash=go.getAttribute("data-go");}return;}});
+document.addEventListener("submit",event=>{const form=event.target.closest("[data-auth-form]");if(form){event.preventDefault();submitAuth(form);}});
 window.addEventListener("hashchange",()=>{render();});
 document.addEventListener("keydown",event=>{if(event.key==="Escape"&&document.getElementById("settings-root")?.firstElementChild)closeSettings();});
 bootAtlas();

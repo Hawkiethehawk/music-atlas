@@ -19,6 +19,9 @@ pwsh -File install.ps1        # Windows
 ```
 music-atlas-web/
 ├── editorial-atlas.html          # Editorial Atlas 页面（服务根路径返回它）
+├── admin.html                    # 独立管理员控制台（/admin）
+├── auth_store.js                 # SQLite 用户、会话、歌单与偏好存储
+├── admin_bootstrap.js            # 首次创建管理员账号的一次性命令
 ├── favicon.ico                   # Hawkie logo 标签页图标（16/32/48 多尺寸）
 ├── server.js                     # 零依赖 Node 静态服务器、Atlas API 与受控工作流 API
 ├── package.json                 # npm start 入口
@@ -134,6 +137,21 @@ AI API Key 单独由 `GET/PUT/DELETE /api/secrets` 管理，保存到系统密�
 - 接口地址与模型未填写、或未配置 API Key 时给出明确提示。
 
 接口为 `POST /api/ai/test`（仅本机），不会写入任何运行产物，也不影响当前运行中的任务。
+
+### 用户账号与管理员后台
+
+生产环境默认要求普通用户登录后才能提交工作流；Atlas 首页仍可匿名浏览当前公开结果。注册、登录和退出分别使用
+`/api/auth/register`、`/api/auth/login`、`/api/auth/logout`，用户歌单与偏好保存在 `runtime/web/auth.sqlite`，
+每个用户的七天推荐去重缓存也通过 `MUSIC_ATLAS_USER_ID` 隔离。任务状态接口只允许任务所属用户读取，管理员可以在后台查看全部用户任务。
+
+管理员入口为 `/admin`，不在主页面导航中显示，且所有 `/api/admin/*` 接口都要求独立的管理员会话。后台沿用主页面的字体、色彩、边框和卡片样式，
+可管理用户启停与角色、编辑完整网页设置、查看密钥配置状态、更新密钥并测试 AI 连通性；密钥值不会回显。首次部署后在服务器上执行一次：
+
+```bash
+node web/admin_bootstrap.js <管理员用户名>
+```
+
+命令会从交互输入或 `MUSIC_ATLAS_ADMIN_PASSWORD` 读取至少 8 位密码；已有管理员时不会覆盖。Node 运行时需为 **22.5 或更高版本**（使用内置 `node:sqlite`）。
 
 模型 API 本身不提供联网检索：执行器提示词明确要求只凭既有知识给出可事后核验的公开来源，
 不确定就留空；事实核验与证据分级仍由程序（`evidence.py`）与契约层负责，页面不会因流程

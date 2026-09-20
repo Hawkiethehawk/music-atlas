@@ -82,11 +82,11 @@ test("真实任务生命周期：SSE 收到完整失败事件流，seq 单调递
     finalJob = (await poll.json()).job;
   }
 
-  // 终态任务详情：退出码 2、stderr 有诊断内容、运行目录落在隔离 jobs 目录。
+  // 终态任务详情：退出码与诊断保留；服务端不向浏览器暴露运行目录。
   assert.equal(finalJob.status, "failed");
   assert.equal(finalJob.exit_code, 2);
   assert.ok(finalJob.stderr_tail.trim().length > 0, "失败任务应保留 stderr 诊断尾部");
-  assert.match(finalJob.runtime_dir.replace(/\\/g, "/"), /web-e2e-job[^/]*\/jobs\//);
+  assert.equal(Object.prototype.hasOwnProperty.call(finalJob, "runtime_dir"), false);
   // 失败后任务目录保留事件产物，不在本测试中清理（runtime/ 已被 Git 忽略）。
 });
 

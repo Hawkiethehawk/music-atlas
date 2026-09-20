@@ -13,6 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
+const { createAuthStore } = require("./auth_store");
 
 const ROOT = __dirname; // 服务目录固定为本文件所在目录
 const PROJECT_ROOT = path.resolve(ROOT, "..");
@@ -46,6 +47,13 @@ const SETTINGS_PATH = process.env.ATLAS_WEB_SETTINGS
 const SECRET_STORE_SCRIPT = process.env.ATLAS_WEB_SECRET_SCRIPT
   ? path.resolve(process.env.ATLAS_WEB_SECRET_SCRIPT)
   : path.join(PROJECT_ROOT, "secret_store.py");
+const AUTH_DB_PATH = process.env.ATLAS_AUTH_DB
+  ? path.resolve(process.env.ATLAS_AUTH_DB)
+  : path.join(PROJECT_ROOT, "runtime", "web", "auth.sqlite");
+const AUTH_REQUIRED = String(process.env.ATLAS_AUTH_REQUIRED || (process.env.NODE_ENV === "production" ? "1" : "0")) !== "0";
+const USER_SESSION_COOKIE = "atlas_session";
+const ADMIN_SESSION_COOKIE = "atlas_admin_session";
+const authStore = createAuthStore(AUTH_DB_PATH);
 const DEFAULT_CRAWLER_SETTINGS = {
   request_timeout_seconds: 30,
   request_retries: 1,
@@ -462,6 +470,67 @@ function sendJson(res, status, value, extraHeaders = {}) {
   res.end(JSON.stringify(value));
 }
 
+function parseCookies(req) {
+  const header = String(req.headers.cookie || "");
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index < 0) continue;
+    const key = part.slice(0, index).trim();
+    if (!key) continue;
+    try { cookies[key] = decodeURIComponent(part.slice(index + 1).trim()); } catch { cookies[key] = part.slice(index + 1).trim(); }
+  }
+  return cookies;
+}
+
+function cookieSecure(req) {
+  return process.env.ATLAS_COOKIE_SECURE === "1"
+    || String(req.headers["x-forwarded-proto"] || "").toLowerCase() === "https";
+}
+
+function setSessionCookie(res, req, name, token, maxAge) {
+  const parts = [`${name}=${encodeURIComponent(token)}`, "Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${maxAge}`];
+  if (cookieSecure(req)) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+function clearSessionCookie(res, req, name) {
+  const parts = [`${name}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0", "Expires=Thu, 01 Jan 1970 00:00:00 GMT"];
+  if (cookieSecure(req)) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+function currentUser(req, kind = "user") {
+  const cookieName = kind === "admin" ? ADMIN_SESSION_COOKIE : USER_SESSION_COOKIE;
+  return authStore.getSessionUser(parseCookies(req)[cookieName], kind);
+}
+
+function rejectAuth(res, status, error) {
+  sendJson(res, status, { ok: false, error });
+  return null;
+}
+
+function requireUser(req, res, { allowAnonymous = false } = {}) {
+  const user = currentUser(req, "user");
+  if (user) return user;
+  if (allowAnonymous || !AUTH_REQUIRED) return null;
+  return rejectAuth(res, 401, "请先登录后再运行工作流");
+}
+
+function requireAdmin(req, res) {
+  const user = currentUser(req, "admin");
+  if (user && user.role === "admin") return user;
+  rejectAuth(res, 404, "页面不存在");
+  return null;
+}
+
+function canAccessJob(job, user, { admin = false } = {}) {
+  if (!job) return false;
+  if (admin && user && user.role === "admin") return true;
+  if (!AUTH_REQUIRED && !job.user_id) return true;
+  return Boolean(user && job.user_id && Number(job.user_id) === Number(user.id));
+}
+
 /* 跨平台系统密钥库：通过 python secret_store.py 读写（Windows Credential Manager / Keychain / Secret Service）。 */
 function runSecretStore(args, { input } = {}) {
   return new Promise((resolve, reject) => {
@@ -612,7 +681,6 @@ function publicJob(job) {
     stage: job.stage,
     created_at: job.created_at,
     updated_at: job.updated_at,
-    runtime_dir: job.runtime_dir,
     events: job.events,
     stderr_tail: job.stderr_tail || "",
     exit_code: job.exit_code === undefined ? null : job.exit_code,
@@ -623,7 +691,7 @@ function publicJob(job) {
 function persistJobState(job) {
   try {
     fs.mkdirSync(job.runtime_dir, { recursive: true });
-    fs.writeFileSync(path.join(job.runtime_dir, JOB_STATE_FILENAME), JSON.stringify(publicJob(job), null, 2) + "\n", "utf8");
+    fs.writeFileSync(path.join(job.runtime_dir, JOB_STATE_FILENAME), JSON.stringify({ ...publicJob(job), user_id: job.user_id || null }, null, 2) + "\n", "utf8");
   } catch (error) {
     console.error(`无法保存任务状态 ${job.id}：${error.message}`);
   }
@@ -648,7 +716,7 @@ function restoredLegacyJob(id, runtimeDir) {
       { event: "completed", status: "completed", stage: "export", recommendation_count: recommendationCount, at: updatedAt, seq: 4 },
     ];
     return { id, status: "completed", stage: "export", created_at: createdAt, updated_at: updatedAt,
-      runtime_dir: runtimeDir, events, stderr_tail: "", exit_code: 0, event_seq: events.length,
+      runtime_dir: runtimeDir, user_id: null, events, stderr_tail: "", exit_code: 0, event_seq: events.length,
       workflow_mode: report.reused_analysis_id ? "recommendation_only" : "full" };
   } catch {
     return null;
@@ -667,7 +735,7 @@ function restoreRecentJobs() {
       if (fs.existsSync(statePath)) {
         const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
         if (state && state.id === entry.name && ["completed", "failed"].includes(state.status) && Array.isArray(state.events)) {
-          job = { ...state, runtime_dir: runtimeDir, event_seq: Math.max(0, ...state.events.map((event) => Number(event.seq) || 0)) };
+          job = { ...state, runtime_dir: runtimeDir, user_id: state.user_id || null, event_seq: Math.max(0, ...state.events.map((event) => Number(event.seq) || 0)) };
         }
       }
     } catch {}
@@ -700,9 +768,9 @@ function recordJobEvent(job, event) {
   }
 }
 
-function latestCompletedJob() {
+function latestCompletedJob(userId = null) {
   return Array.from(jobs.values())
-    .filter((job) => job && job.status === "completed")
+    .filter((job) => job && job.status === "completed" && (userId == null ? !AUTH_REQUIRED : Number(job.user_id) === Number(userId)))
     .sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""))[0] || null;
 }
 
@@ -760,6 +828,7 @@ async function startWorkflowJob(config, options = {}) {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     runtime_dir: runtimeDir,
+    user_id: options.user && options.user.id ? Number(options.user.id) : null,
     events: [],
     stderr_tail: "",
     event_seq: 0,
@@ -808,6 +877,7 @@ async function startWorkflowJob(config, options = {}) {
   delete childEnvironment.ATLAS_WEB_SETTINGS;
   delete childEnvironment.ATLAS_WEB_ANALYSIS_COMMAND;
   delete childEnvironment.ATLAS_WEB_RECOMMENDATION_COMMAND;
+  if (job.user_id) childEnvironment.MUSIC_ATLAS_USER_ID = String(job.user_id);
   // 从系统密钥库获取 API Key 并注入子进程环境变量，方便执行器直接读取。
   try {
     const apiKeyValue = await runSecretStore(["get"]).then((r) => r.stdout).catch(() => "");
@@ -997,6 +1067,193 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* 认证：普通用户与管理员使用两套互不复用的会话 Cookie。 */
+  if (urlPath === "/api/auth/me" && req.method === "GET") {
+    sendJson(res, 200, { ok: true, user: currentUser(req, "user"), auth_required: AUTH_REQUIRED });
+    return;
+  }
+
+  if (urlPath === "/api/auth/register" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const user = authStore.createUser(body.username, body.password, "user");
+      const session = authStore.createSession(user.id, "user");
+      authStore.writeAudit(user.id, "user.register");
+      setSessionCookie(res, req, USER_SESSION_COOKIE, session.token, 30 * 24 * 60 * 60);
+      sendJson(res, 201, { ok: true, user: session.user, expires_at: session.expires_at });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error && error.message ? error.message : "注册失败" });
+    }
+    return;
+  }
+
+  if (urlPath === "/api/auth/login" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const user = authStore.authenticate(body.username, body.password, "user");
+      const session = authStore.createSession(user.id, "user");
+      authStore.writeAudit(user.id, "user.login");
+      setSessionCookie(res, req, USER_SESSION_COOKIE, session.token, 30 * 24 * 60 * 60);
+      sendJson(res, 200, { ok: true, user: session.user, expires_at: session.expires_at });
+    } catch (error) {
+      sendJson(res, 401, { ok: false, error: error && error.message ? error.message : "登录失败" });
+    }
+    return;
+  }
+
+  if (urlPath === "/api/auth/logout" && req.method === "POST") {
+    const cookies = parseCookies(req);
+    authStore.revokeSession(cookies[USER_SESSION_COOKIE], "user");
+    clearSessionCookie(res, req, USER_SESSION_COOKIE);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (urlPath === "/api/me/preferences" && (req.method === "GET" || req.method === "PUT")) {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    try {
+      if (req.method === "GET") {
+        sendJson(res, 200, { ok: true, preferences: authStore.getPreferences(user.id) });
+      } else {
+        const body = await readJsonBody(req);
+        const current = authStore.getPreferences(user.id);
+        const allowed = {};
+        if (body.track_percentile_default !== undefined) {
+          const percentile = Number(body.track_percentile_default);
+          if (!TRACK_PERCENTILE_OPTIONS.includes(percentile)) throw new Error("默认分析分位只能是 25%、50% 或 100%");
+          allowed.track_percentile_default = percentile;
+        }
+        if (body.display_name !== undefined) {
+          if (typeof body.display_name !== "string" || body.display_name.length > 80) throw new Error("显示名称不能超过 80 个字符");
+          allowed.display_name = body.display_name.trim();
+        }
+        sendJson(res, 200, { ok: true, preferences: authStore.savePreferences(user.id, { ...current, ...allowed }) });
+      }
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "偏好设置保存失败" }); }
+    return;
+  }
+
+  if (urlPath === "/api/me/playlists" && req.method === "GET") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    sendJson(res, 200, { ok: true, playlists: authStore.listPlaylists(user.id) });
+    return;
+  }
+
+  if (urlPath === "/api/me/playlists" && req.method === "POST") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    try {
+      const body = await readJsonBody(req);
+      sendJson(res, 201, { ok: true, playlist: authStore.upsertPlaylist(user.id, body) });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "歌单保存失败" }); }
+    return;
+  }
+
+  if (urlPath === "/api/admin/login" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const user = authStore.authenticate(body.username, body.password, "admin");
+      const session = authStore.createSession(user.id, "admin");
+      authStore.writeAudit(user.id, "admin.login");
+      setSessionCookie(res, req, ADMIN_SESSION_COOKIE, session.token, 8 * 60 * 60);
+      sendJson(res, 200, { ok: true, user: session.user, expires_at: session.expires_at });
+    } catch (error) {
+      sendJson(res, 401, { ok: false, error: error && error.message ? error.message : "管理员登录失败" });
+    }
+    return;
+  }
+
+  if (urlPath === "/api/admin/logout" && req.method === "POST") {
+    const cookies = parseCookies(req);
+    authStore.revokeSession(cookies[ADMIN_SESSION_COOKIE], "admin");
+    clearSessionCookie(res, req, ADMIN_SESSION_COOKIE);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (urlPath === "/api/admin/me" && req.method === "GET") {
+    const user = currentUser(req, "admin");
+    sendJson(res, 200, { ok: true, user: user && user.role === "admin" ? user : null });
+    return;
+  }
+
+  if (urlPath === "/api/admin/users" && req.method === "GET") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    sendJson(res, 200, { ok: true, users: authStore.listUsers() });
+    return;
+  }
+
+  const adminUserMatch = urlPath.match(/^\/api\/admin\/users\/(\d+)$/);
+  if (adminUserMatch && (req.method === "PATCH" || req.method === "PUT")) {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const body = await readJsonBody(req);
+      const targetId = Number(adminUserMatch[1]);
+      if (targetId === Number(admin.id) && (body.status === "disabled" || body.role === "user")) {
+        throw new Error("不能停用或撤销当前管理员账号");
+      }
+      const updated = authStore.updateUser(targetId, body);
+      authStore.writeAudit(admin.id, "admin.user.update", { target_user_id: targetId, fields: Object.keys(body) });
+      sendJson(res, 200, { ok: true, user: updated });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "用户更新失败" }); }
+    return;
+  }
+
+  const adminSettings = urlPath === "/api/admin/settings" && ["GET", "PUT", "DELETE"].includes(req.method);
+  if (adminSettings) {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      if (req.method === "GET") sendSettings(res);
+      else if (req.method === "DELETE") { if (fs.existsSync(SETTINGS_PATH)) fs.rmSync(SETTINGS_PATH, { force: true }); sendSettings(res); }
+      else {
+        const body = await readJsonBody(req);
+        const patch = validateSettingsPatch(body.settings ?? body);
+        const merged = deepMerge(loadSettingsOverride(), patch);
+        validateSettingsPatch(merged); writeSettingsOverride(merged); sendSettings(res);
+      }
+      authStore.writeAudit(admin.id, `admin.settings.${req.method.toLowerCase()}`);
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "设置保存失败" }); }
+    return;
+  }
+
+  const adminSecrets = urlPath === "/api/admin/secrets" && ["GET", "PUT", "DELETE"].includes(req.method);
+  if (adminSecrets) {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      if (req.method === "GET") sendJson(res, 200, { ok: true, ...await secretStatus() });
+      else if (req.method === "DELETE") { await clearApiKey(); sendJson(res, 200, { ok: true, ...await secretStatus() }); }
+      else {
+        const body = await readJsonBody(req); const apiKey = String(body.api_key || "").trim();
+        if (!apiKey || apiKey.length > 10000) throw new Error("API Key 无效");
+        await saveApiKey(apiKey); sendJson(res, 200, { ok: true, ...await secretStatus() });
+      }
+      authStore.writeAudit(admin.id, `admin.secrets.${req.method.toLowerCase()}`);
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "密钥操作失败" }); }
+    return;
+  }
+
+  if (urlPath === "/api/admin/ai/test" && req.method === "POST") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try { const result = await probeAiConnection(); authStore.writeAudit(admin.id, "admin.ai.test"); sendJson(res, 200, { ok: true, ...result }); }
+    catch (error) { sendJson(res, 502, { ok: false, error: error.message || "连通性测试失败" }); }
+    return;
+  }
+
+  if ((urlPath === "/admin" || urlPath === "/admin/") && req.method === "GET") {
+    const adminPath = path.join(ROOT, "admin.html");
+    fs.stat(adminPath, (error, stat) => {
+      if (error || !stat.isFile()) { res.writeHead(404).end("Not Found"); return; }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": stat.size, "Cache-Control": "no-cache" });
+      fs.createReadStream(adminPath).pipe(res);
+    });
+    return;
+  }
+
   if (urlPath === "/api/settings" && (req.method === "GET" || req.method === "PUT" || req.method === "DELETE")) {
     if (!isLocalRequest(req)) {
       sendJson(res, 403, { ok: false, error: "设置接口仅允许本机访问" });
@@ -1084,33 +1341,39 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/api/config" && req.method === "GET") {
     try {
       const runtime = runtimeConfigSnapshot();
+      const local = isLocalRequest(req);
+      const viewer = currentUser(req, "user");
+      const visibleJob = (id) => {
+        const job = id ? jobs.get(id) : null;
+        return !AUTH_REQUIRED || (viewer && job && Number(job.user_id) === Number(viewer.id)) ? id || null : null;
+      };
       sendJson(res, 200, {
         ok: true,
-        config_file: path.relative(PROJECT_ROOT, CONFIG_PATH),
-        paths: {
-          published: path.relative(PROJECT_ROOT, DATA_PATH),
-          jobs: path.relative(PROJECT_ROOT, JOB_ROOT),
-          input: path.relative(PROJECT_ROOT, INPUT_ROOT),
-        },
+        ...(local ? {
+          config_file: path.relative(PROJECT_ROOT, CONFIG_PATH),
+          paths: { published: path.relative(PROJECT_ROOT, DATA_PATH), jobs: path.relative(PROJECT_ROOT, JOB_ROOT), input: path.relative(PROJECT_ROOT, INPUT_ROOT) },
+        } : {}),
         workflow: {
           analysis_executor_configured: runtime.analysisExecutor.configured,
           recommendation_executor_configured: runtime.recommendationExecutor.configured,
-          analysis_executor_error: runtime.analysisExecutor.error,
-          recommendation_executor_error: runtime.recommendationExecutor.error,
-          analysis_parallelism: runtime.analysisParallelism,
-          recommendation_parallelism: runtime.recommendationParallelism,
-          max_research_rounds: runtime.maxResearchRounds,
-          max_candidates: runtime.maxCandidates,
-          recommendation_parallelism_options: [1, 2, 3, 4, 5, 6, 7, 8],
+          ...(local ? {
+            analysis_executor_error: runtime.analysisExecutor.error,
+            recommendation_executor_error: runtime.recommendationExecutor.error,
+            analysis_parallelism: runtime.analysisParallelism,
+            recommendation_parallelism: runtime.recommendationParallelism,
+            max_research_rounds: runtime.maxResearchRounds,
+            max_candidates: runtime.maxCandidates,
+            recommendation_parallelism_options: [1, 2, 3, 4, 5, 6, 7, 8],
+            await_limit_timeout_seconds: runtime.awaitLimitTimeoutSeconds,
+            analysis_timeout_seconds: runtime.analysisTimeoutSeconds,
+            recommendation_timeout_seconds: runtime.recommendationTimeoutSeconds,
+          } : {}),
           track_percentile_options: runtime.trackPercentileOptions,
           track_percentile_default: runtime.trackPercentileDefault,
-          await_limit_timeout_seconds: runtime.awaitLimitTimeoutSeconds,
-          analysis_timeout_seconds: runtime.analysisTimeoutSeconds,
-          recommendation_timeout_seconds: runtime.recommendationTimeoutSeconds,
           apple_requires_expected_count: false,
         },
-        active_job_id: activeJobId,
-        latest_job_id: latestJobId,
+        active_job_id: visibleJob(activeJobId),
+        latest_job_id: visibleJob(latestJobId),
       });
     } catch (error) {
       sendJson(res, 500, { ok: false, error: error && error.message ? error.message : "配置读取失败" });
@@ -1120,8 +1383,10 @@ const server = http.createServer(async (req, res) => {
 
   if (urlPath === "/api/atlas/new" && req.method === "POST") {
     try {
+      const user = requireUser(req, res);
+      if (!user && AUTH_REQUIRED) return;
       if (activeJobId) throw new Error("已有网页工作流正在运行，请等待其完成");
-      const baseJob = latestCompletedJob();
+      const baseJob = latestCompletedJob(user && user.id);
       if (!baseJob) throw new Error("当前没有可复用的已完成 Step 2 分析");
       const runtime = runtimeConfigSnapshot();
       if (!runtime.analysisExecutor.command || !runtime.recommendationExecutor.command) {
@@ -1129,7 +1394,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const config = { kind: "local_json", source_url: "", input: "", playlist_id: "", playlist_name: "", platform: "", expected_count: null };
-      const job = await startWorkflowJob(config, { recommendationOnly: true, sourceRuntimeDir: baseJob.runtime_dir });
+      const job = await startWorkflowJob(config, { recommendationOnly: true, sourceRuntimeDir: baseJob.runtime_dir, user });
       sendJson(res, 202, { ok: true, job, regenerated_from: baseJob.id });
     } catch (error) {
       const message = error && error.message ? error.message : "无法启动新 Atlas";
@@ -1140,6 +1405,8 @@ const server = http.createServer(async (req, res) => {
 
   if (urlPath === "/api/jobs" && req.method === "POST") {
     try {
+      const user = requireUser(req, res);
+      if (!user && AUTH_REQUIRED) return;
       const body = await readJsonBody(req);
       const config = allowedSource(body);
       const runtime = runtimeConfigSnapshot();
@@ -1147,7 +1414,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 503, { ok: false, error: "当前暂不可生成推荐" });
         return;
       }
-      const job = await startWorkflowJob(config);
+      const job = await startWorkflowJob(config, { user });
+      if (user) authStore.upsertPlaylist(user.id, { source_url: config.source_url, name: config.playlist_name, platform: config.platform, config });
       sendJson(res, 202, { ok: true, job });
     } catch (error) {
       const message = error && error.message ? error.message : "无法创建网页工作流";
@@ -1163,6 +1431,8 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" });
       return;
     }
+    const user = requireUser(req, res);
+    if (!canAccessJob(job, user)) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
     if (job.status !== "awaiting_limit") {
       sendJson(res, 409, { ok: false, error: "当前任务未在等待选择处理数量" });
       return;
@@ -1206,6 +1476,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" });
       return;
     }
+    const user = requireUser(req, res);
+    const admin = currentUser(req, "admin");
+    if (!canAccessJob(job, user, { admin: Boolean(admin) })) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
     if (!job.child) {
       sendJson(res, 409, { ok: false, error: "当前任务已经结束" });
       return;
@@ -1223,6 +1496,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" });
       return;
     }
+    const user = requireUser(req, res);
+    const admin = currentUser(req, "admin");
+    if (!canAccessJob(job, user, { admin: Boolean(admin) })) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
     if (jobMatch[2] === "/events") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",

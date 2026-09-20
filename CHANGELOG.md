@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-20（用户账号与管理员后台，维护标签 patch-20260920-102531）
+
+- 新增普通用户注册、登录、退出和会话管理；生产环境要求登录后提交工作流，匿名访问仍可浏览公开 Atlas。
+- 新增按用户保存歌单配置与偏好；推荐七天去重缓存通过用户标识隔离，任务查询只允许所属用户访问，服务端不再向浏览器暴露运行目录。
+- 新增独立 `/admin` 管理后台及独立管理员会话，可统一管理用户、角色、状态、网页设置、密钥状态和 AI 连通性；后台沿用主页面视觉规范，主页面不显示后台入口。
+- 使用 Node 内置 `node:sqlite` 保存用户、会话、偏好、歌单和审计记录；新增一次性管理员初始化命令 `node web/admin_bootstrap.js <用户名>`。
+- 更新生产 systemd 模板、Node 运行时要求（22.5+）、接口/浏览器/用户隔离测试与部署说明。
+
+实际验证：
+
+- `npm --prefix web test`：15 项通过。
+- `npm --prefix web run test:browser`：21 项通过。
+- `python -m unittest discover -s tests -p "test_*.py"`：386 项通过。
+- `node --check web/server.js`、`node --check web/auth_store.js`、`node --check web/admin_bootstrap.js`、`python -m compileall -q web_workflow.py`、`git diff --check`：通过。
+
 ## 2026-09-20（补齐云服务器 Last.fm 密钥回退，维护标签 patch-20260920-092942）
 
 - Last.fm 客户端在无桌面系统密钥库时回退读取受保护的 `LASTFM_API_KEY` 环境变量，仍优先使用系统密钥库。

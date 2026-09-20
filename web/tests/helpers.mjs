@@ -45,7 +45,7 @@ function projectRelative(absolutePath) {
  * 启动隔离的 server.js 实例。
  * options.executors 为 false 时模拟"执行器未配置"（POST /api/jobs 应返回 503）。
  */
-export async function createIsolatedServer({ label, executors = true, settings = null } = {}) {
+export async function createIsolatedServer({ label, executors = true, settings = null, authRequired = false } = {}) {
   const runtimeDir = uniqueRuntimeDir(label || "server");
   await mkdir(runtimeDir, { recursive: true });
   const port = await getFreePort();
@@ -81,6 +81,7 @@ export async function createIsolatedServer({ label, executors = true, settings =
 
   // 密钥库隔离：用夹具脚本 + 临时状态文件，测试不会触碰真实系统密钥库。
   const secretStatePath = path.join(runtimeDir, "fake-secret.json");
+  const authDbPath = path.join(runtimeDir, "auth.sqlite");
   const secretScript = path.join(PROJECT_ROOT, "tests", "fixtures", "fake_secret_store.py");
 
   const childEnv = {
@@ -88,6 +89,8 @@ export async function createIsolatedServer({ label, executors = true, settings =
     ATLAS_WEB_CONFIG: configPath,
     ATLAS_WEB_SECRET_SCRIPT: secretScript,
     ATLAS_SECRET_STATE_FILE: secretStatePath,
+    ATLAS_AUTH_DB: authDbPath,
+    ATLAS_AUTH_REQUIRED: authRequired ? "1" : "0",
   };
   // 测试确定性：不让宿主机的真实 API Key 环境变量影响探测结果。
   delete childEnv.MUSIC_ATLAS_API_KEY;
@@ -128,6 +131,7 @@ export async function createIsolatedServer({ label, executors = true, settings =
     runtimeDir,
     configPath,
     secretStatePath,
+    authDbPath,
     exited,
     stderr: () => stderr,
     async stop() {
