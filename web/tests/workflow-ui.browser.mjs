@@ -581,50 +581,17 @@ test("失败终态：保留进度框、失败原因与可展开日志，刷新�
   }
 });
 
-test("设置入口：打开配置表单、测试 AI 连通性并可关闭", async () => {
+test("设置入口隐藏：页面不显示配置选项但工作流页面正常渲染", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
-  const probes = [];
   try {
-    // 拦截 AI 探测与密钥写入，避免测试依赖外部模型服务。
-    await page.route("**/api/ai/test", (route) => {
-      probes.push(route.request().method());
-      return route.fulfill({ status: 200, json: { ok: true, model: "probe-model", base_url: "https://example.invalid/v1",
-        key_source: "keyring", latency_ms: 812, reply_preview: "pong" } });
-    });
-    await page.route("**/api/secrets", (route) => {
-      if (route.request().method() !== "PUT") return route.fallback();
-      return route.fulfill({ status: 200, json: { ok: true, configured: true, backend: "fake-file" } });
-    });
     await page.goto(`${server.baseUrl}/#/sources`);
-    await page.waitForSelector("[data-settings-open]");
-    await page.click("[data-settings-open]");
-    await page.waitForSelector("#settings-form");
-    assert.equal(await page.locator("#settings-ai-model").count(), 1);
-    assert.equal(await page.locator("#settings-ai-key").getAttribute("type"), "password");
-    assert.equal(await page.locator("#settings-ai-key-env").count(), 0, "不应再有环境变量名输入框");
-    assert.equal(await page.locator("#settings-crawler-timeout").inputValue(), "30");
-    // 底部操作条固定在弹窗正下方，不随内容滚动。
-    assert.equal(await page.locator(".settings-actions").evaluate((node) => getComputedStyle(node).position), "static");
-    assert.ok(await page.locator(".settings-dialog").evaluate((node) => node.scrollHeight <= node.clientHeight + 1),
-      "弹窗自身不应滚动，而由内容区滚动");
-    await page.fill("#settings-ai-base-url", "https://example.invalid/v1");
-    await page.fill("#settings-ai-model", "test-model");
-    await page.fill("#settings-ai-key", "sk-ui-test");
-    await page.click("[data-settings-test-ai]");
-    await page.waitForFunction(() => document.getElementById("settings-ai-test-result")?.textContent.includes("连通正常"));
-    const note = await page.locator("#settings-ai-test-result").textContent();
-    assert.match(note, /812 ms/);
-    assert.match(note, /probe-model/);
-    assert.match(note, /系统密钥库/);
-    assert.deepEqual(probes, ["POST"]);
-    await page.click("#settings-form button[type=submit]");
-    await page.waitForFunction(() => document.getElementById("settings-message")?.textContent.includes("已保存"));
-    page.on("dialog", (dialog) => dialog.accept());
-    await page.click("[data-settings-reset]");
-    await page.waitForFunction(() => document.getElementById("settings-message")?.textContent.includes("已恢复"));
-    await page.click(".settings-close");
+    assert.equal(await page.locator("[data-settings-open]").count(), 0);
     assert.equal(await page.locator("#settings-form").count(), 0);
+    assert.equal(await page.locator("#settings-root").innerText(), "");
+    assert.equal(await page.locator(".settings-dialog").count(), 0);
+    assert.equal(await page.locator(".settings-field").count(), 0);
+    assert.ok(!(await page.locator("body").innerText()).includes("设置"));
   } finally {
     await context.close();
   }

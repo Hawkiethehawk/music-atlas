@@ -552,7 +552,7 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
 
 /* ================= HEADER / FOOTER ================= */
 const NAV=[["#/discover","发现"],["#/atlas","Atlas"],["#/taste","音乐版图"],["#/sources","推荐源"]];
-const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav><button type="button" class="settings-trigger" data-settings-open>设置</button></div></div></header>${statusBanner()}`;
+const header=()=>`<header><div class="wrap hd"><a class="logo" href="#/discover">MUSIC <em>ATLAS</em></a><div class="header-tools"><nav>${NAV.map(([h,l])=>`<a href="${h}" ${location.hash.startsWith(h.replace("#",""))||(h==="#/discover"&&(location.hash===""||location.hash==="#"))?'class="on"':""}>${l}</a>`).join("")}</nav></div></div></header>${statusBanner()}`;
 const footer=()=>`<footer><div class="wrap ft"><span>MUSIC ATLAS</span><span>推荐源 ${SOURCES.length} · 推荐曲目 ${RECS.length} · 证据分级</span><span>${ATLAS?statusText(ATLAS.status.run||ATLAS.status.publication):"数据加载中"}</span></div></footer>`;
 
 /* ================= VIEWS ================= */
