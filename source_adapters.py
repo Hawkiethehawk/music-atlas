@@ -596,6 +596,9 @@ class NeteasePublicPlaylistReader:
         tracks, declared_from_api, api_playlist_name = _parse_netease_detail(payload)
         raw_parts = [raw]
         song_detail_request_count = 0
+        # 网易云歌曲详情接口对下架/无版权曲目不返回条目，这些 id 属于平台侧
+        # 不可用，不应该让整个歌单卡在“不完整”。
+        unavailable_ids: list[str] = []
         if "playlist" in payload:
             container = _netease_container(payload)
             track_ids = _netease_track_ids(container)
@@ -622,12 +625,17 @@ class NeteasePublicPlaylistReader:
                 if track is not None:
                     ordered.append({**track, "position": len(ordered) + 1})
             tracks = ordered
+            unavailable_ids = [track_id for track_id in track_ids if track_id not in by_id]
         declared = _declared_count(
             {"declared_track_count": declared_from_api},
             explicit=declared_count,
             count_file=declared_count_file,
         )
         actual = len(tracks)
+        # 容忍少量平台侧缺失（下架/无版权）：只有确实记录到“请求了但平台
+        # 未返回”的 id 时才允许容差；比例与绝对数双重上限。
+        missing_tolerance = max(5, int(declared * 0.02))
+        complete = declared == actual or (bool(unavailable_ids) and len(unavailable_ids) <= missing_tolerance)
         digest = hashlib.sha256()
         for raw_part in raw_parts:
             digest.update(len(raw_part).to_bytes(8, "big"))
@@ -641,7 +649,7 @@ class NeteasePublicPlaylistReader:
             "playlist_name": api_playlist_name or normalized_text(playlist_name),
             "declared_track_count": declared,
             "track_count": actual,
-            "reader_status": "complete" if declared == actual else "incomplete",
+            "reader_status": "complete" if complete else "incomplete",
             "captured_at": utc_now(),
             "input_sha256": input_sha256,
             "reader": {
@@ -652,6 +660,8 @@ class NeteasePublicPlaylistReader:
                     "netease_song_detail_batch_size", NETEASE_SONG_DETAIL_BATCH_SIZE, 1, 1000
                 ),
                 "song_detail_request_count": song_detail_request_count,
+                "unavailable_track_count": len(unavailable_ids),
+                "unavailable_track_ids": unavailable_ids[:20],
                 "declared_count_source": (
                     "argument" if declared_count is not None else "api_track_ids"
                 ),

@@ -67,16 +67,24 @@ def _snapshot_with(count: int, tmp: Path, platform: str = "local") -> dict:
 class ResolveAnalysisModeTest(unittest.TestCase):
     def test_boundaries(self):
         self.assertEqual(resolve_analysis_mode(0), "track_research")
-        self.assertEqual(resolve_analysis_mode(30), "track_research")
-        self.assertEqual(resolve_analysis_mode(31), "taste_summary")
-        self.assertEqual(resolve_analysis_mode(500), "taste_summary")
-        self.assertEqual(resolve_analysis_mode(501), "artist_summary")
+        self.assertEqual(resolve_analysis_mode(200), "track_research")
+        self.assertEqual(resolve_analysis_mode(201), "taste_summary")
+        self.assertEqual(resolve_analysis_mode(2000), "taste_summary")
+        self.assertEqual(resolve_analysis_mode(2001), "artist_summary")
 
     def test_invalid_count(self):
         with self.assertRaises(ContractError):
             resolve_analysis_mode(-1)
         with self.assertRaises(ContractError):
             resolve_analysis_mode(True)
+
+    def test_verify_concurrency_scales_with_size(self):
+        from web_workflow import analysis_verify_concurrency
+
+        self.assertEqual(analysis_verify_concurrency(10), 12)
+        self.assertEqual(analysis_verify_concurrency(50), 12)
+        self.assertEqual(analysis_verify_concurrency(51), 20)
+        self.assertEqual(analysis_verify_concurrency(2000), 20)
 
 
 class TracklistStatsTest(unittest.TestCase):
@@ -204,7 +212,7 @@ class RunTasteAnalysisTest(unittest.TestCase):
     def test_end_to_end_packet(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            snapshot = _snapshot_with(35, tmp_path)
+            snapshot = _snapshot_with(210, tmp_path)
             snapshot_path = tmp_path / "snapshot.json"
             from contracts import write_json
             write_json(snapshot_path, snapshot)
@@ -290,65 +298,62 @@ class WebWorkflowTasteModeTest(unittest.TestCase):
             self.assertFalse(current_data.exists())
 
 
-class WorkflowCliScaleTest(unittest.TestCase):
-    """workflow.py run/analyze 的规模分档：35 首走品味摘要，3 首走原逐曲路径。"""
+class WebWorkflowScaleRouteTest(unittest.TestCase):
+    """规模路由：201–2000 首的网页歌单自动切到品味摘要模式并跳过逐曲核验。"""
 
-    def _args(self, tmp_path, playlist, extra=()):
-        from workflow import build_parser
-        return build_parser().parse_args([
-            "analyze",
-            "--snapshot", str(playlist),
-            "--output", str(tmp_path / "musician_analysis.json"),
-            "--analysis-command", f'{sys.executable} tests/fixtures/fake_taste_agent.py',
-            "--analysis-timeout", "120",
-            *extra,
-        ])
-
-    def test_analyze_large_playlist_uses_taste_summary(self):
+    def test_210_tracks_use_taste_summary_and_skip_track_facts(self):
         import os
-        from workflow import command_analyze
+        from unittest.mock import patch
+        from contracts import read_json
+        from web_workflow import build_parser, run_web_workflow
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            snapshot = _snapshot_with(35, tmp_path)
-            from contracts import write_json
-            snapshot_path = tmp_path / "snapshot.json"
-            write_json(snapshot_path, snapshot)
-            args = self._args(tmp_path, snapshot_path)
-            cwd = os.getcwd()
-            os.chdir(ROOT)
-            try:
-                code = command_analyze(args)
-            finally:
-                os.chdir(cwd)
-            self.assertEqual(code, 0)
-            packet = json.loads((tmp_path / "musician_analysis.json").read_text(encoding="utf-8"))
-            self.assertEqual(packet["analysis_mode"], "taste_summary")
-            validate_analysis_packet(packet)
-            self.assertIn("品味摘要", (tmp_path / "musician_analysis.md").read_text(encoding="utf-8"))
-
-    def test_analyze_rejects_import_mode_for_large_playlist(self):
-        from workflow import build_parser, command_analyze
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            snapshot = _snapshot_with(35, tmp_path)
-            from contracts import write_json
-            snapshot_path = tmp_path / "snapshot.json"
-            write_json(snapshot_path, snapshot)
+            playlist = tmp_path / "playlist.json"
+            tracks = [
+                {"title": f"Song {index:03d}", "artist": f"Artist {index % 9}",
+                 "artists": [f"Artist {index % 9}"], "album": "Album",
+                 "song_url": f"https://music.apple.com/us/song/s/{3000 + index}"}
+                for index in range(210)
+            ]
+            playlist.write_text(json.dumps({"declared_track_count": 210, "tracks": tracks},
+                                           ensure_ascii=False), encoding="utf-8")
+            runtime_dir = tmp_path / "run"
             args = build_parser().parse_args([
-                "analyze",
-                "--snapshot", str(snapshot_path),
-                "--output", str(tmp_path / "musician_analysis.json"),
-                "--import-analysis-results",
+                "--runtime-dir", str(runtime_dir),
+                "--current-data", str(tmp_path / "current.json"),
+                "--source-kind", "local_json",
+                "--input", str(playlist),
+                "--platform", "local",
+                "--analysis-command", f'{sys.executable} tests/fixtures/fake_taste_agent.py',
+                "--recommendation-command", f'{sys.executable} tests/fixtures/fake_agent.py',
+                "--analysis-timeout", "120", "--recommendation-timeout", "120",
             ])
             cwd = os.getcwd()
             os.chdir(ROOT)
             try:
-                with self.assertRaises(ContractError):
-                    command_analyze(args)
+                with patch("relationship_sources.collect_relationships", return_value={}), \
+                     patch("lastfm_pipeline.LastFM"), \
+                     patch("lastfm_pipeline.discover", return_value=([], {})), \
+                     patch("metadata_verify.verify_many", return_value=[]):
+                    # 合成曲目没有公开候选，推荐阶段按预期失败；分析产物在此之前已写入。
+                    with self.assertRaises(ContractError):
+                        run_web_workflow(args)
             finally:
                 os.chdir(cwd)
+
+            analysis = read_json(runtime_dir / "musician_analysis.json")
+            self.assertEqual(analysis.get("analysis_mode"), "taste_summary",
+                             "210 首应走品味摘要模式")
+            tags = read_json(runtime_dir / "lastfm_analysis.json")
+            self.assertEqual(tags.get("provider"), "taste_summary")
+            records = tags.get("records") or []
+            self.assertEqual(len(records), 210, "source_tags 应逐曲覆盖全部输入")
+            self.assertEqual(len({record.get("track_key") for record in records}), 210)
+            self.assertTrue(any(record.get("tags") for record in records),
+                            "摘要来源应携带风格引用")
+            self.assertFalse((runtime_dir / "track_facts.json").exists(),
+                             "摘要模式应跳过逐曲事实核验")
 
 
 if __name__ == "__main__":

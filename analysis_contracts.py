@@ -291,7 +291,7 @@ def validate_taste_summary_result(value: Any, *, snapshot: dict, taxonomy: dict,
     fields = {"schema_version", "bundle_type", "request_id", "source_snapshot_id", "generated_at",
               "analysis_mode", "knowledge_basis", "artist_clusters", "style_tags", "taste_profile",
               "editorial_review", "limitations", "uncertainties"}
-    optional: set[str] = {"semantic_themes"}
+    optional: set[str] = {"semantic_themes", "overall_summary", "islands"}
     _object(value, fields, "TasteSummaryResult", optional=optional)
     if value["schema_version"] != SCHEMA_VERSION or value["bundle_type"] != "taste_summary_result":
         raise ContractError("TasteSummaryResult 类型/schema 无效")
@@ -326,7 +326,8 @@ def validate_taste_summary_result(value: Any, *, snapshot: dict, taxonomy: dict,
         if marker not in artist_keys:
             raise ContractError(f"artist_clusters[{index}] 引用了清单之外的艺人：{cluster['artist']}")
         if marker in seen_artists:
-            raise ContractError(f"artist_clusters[{index}] 重复艺人：{cluster['artist']}")
+            # 不同写法可能归一化到同一歌手：跳过重复簇，而不是拒绝整份摘要。
+            continue
         seen_artists.add(marker)
         _text(cluster["scene"], f"artist_clusters[{index}].scene", 200)
         _confidence(cluster["confidence"])
@@ -367,6 +368,29 @@ def validate_taste_summary_result(value: Any, *, snapshot: dict, taxonomy: dict,
 
     if mode == "artist_summary" and "semantic_themes" in value:
         raise ContractError("artist_summary 模式没有歌名清单，不得提交 semantic_themes")
+
+    # 摘要可以选择一并给出整体总结与三个兴趣岛（一次调用完成分析）。
+    if "overall_summary" in value:
+        summary_text = value["overall_summary"]
+        if not isinstance(summary_text, str) or not 80 <= len(summary_text.strip()) <= 300:
+            raise ContractError("overall_summary 必须是 80–300 字的文本")
+    if "islands" in value:
+        islands = value["islands"]
+        if not isinstance(islands, list) or len(islands) != 3:
+            raise ContractError("islands 必须是 3 个兴趣岛")
+        seen_islands: set[str] = set()
+        for index, item in enumerate(islands):
+            island = _object(item, {"name", "summary", "artists"}, f"islands[{index}]")
+            name = _text(island["name"], f"islands[{index}].name", 20)
+            if name in seen_islands:
+                raise ContractError(f"islands[{index}] 重复名称")
+            seen_islands.add(name)
+            _text(island["summary"], f"islands[{index}].summary", 300)
+            island_artists = island["artists"]
+            if not isinstance(island_artists, list) or not island_artists:
+                raise ContractError(f"islands[{index}].artists 必须是非空数组")
+            if any(normalized_name(name_or_artist) not in artist_keys for name_or_artist in island_artists):
+                raise ContractError(f"islands[{index}].artists 引用了清单之外的歌手")
 
     if mode == "taste_summary":
         seen_themes: set[str] = set()

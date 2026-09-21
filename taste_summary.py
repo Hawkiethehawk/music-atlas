@@ -42,8 +42,10 @@ from contracts import (
 )
 from musician_analyzer import load_recommendation_policy
 
-TRACK_RESEARCH_MAX = 30
-TASTE_SUMMARY_MAX = 500
+TRACK_RESEARCH_MAX = 200
+# 超过这个规模就只统计歌手分布（不含歌名）：逐曲歌名清单既容易触发上游内容
+# 审核，也会让 prompt 过长。
+TASTE_SUMMARY_MAX = 1000
 TASTE_BATCH_SIZE = 10
 # 品味/歌手摘要模式的曲目分类覆盖门槛（用户批准的策略值，非逐曲研究的 50%）。
 TASTE_MIN_CLASSIFIED_SHARE = 0.3
@@ -117,8 +119,27 @@ def _tracklist_lines(snapshot: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _artist_lines(stats: dict[str, Any]) -> list[str]:
-    return [f"歌手:{item['artist']};曲目数:{item['count']}" for item in stats["artist_counts"]]
+def _artist_lines(stats: dict[str, Any], limit: int = 120) -> list[str]:
+    """歌手分布清单：按参与曲目数降序，并区分主艺人数量与仅合作数量。
+
+    大歌单可能有上千位歌手，只列出现次数最多的一批，其余归入长尾；
+    标注主艺人数量可以避免把“只在合作曲里出现一次”的客串误当作偏好。
+    """
+    primary = stats.get("primary_counter") or {}
+    rows = list(stats["artist_counts"])
+    lines = []
+    for item in rows[:limit]:
+        name = item["artist"]
+        primary_count = int(primary.get(name) or 0)
+        if primary_count and primary_count < item["count"]:
+            lines.append(f"歌手:{name};曲目数:{item['count']};主艺人{primary_count}首")
+        elif not primary_count:
+            lines.append(f"歌手:{name};曲目数:{item['count']};仅合作")
+        else:
+            lines.append(f"歌手:{name};曲目数:{item['count']}")
+    if len(rows) > limit:
+        lines.append(f"（其余 {len(rows) - limit} 位长尾歌手未列出，请在摘要中归入长尾层）")
+    return lines
 
 
 def _style_table(taxonomy: dict[str, Any]) -> list[str]:
@@ -154,12 +175,16 @@ def build_taste_prompt(mode: str, snapshot: dict[str, Any], taxonomy: dict[str, 
         listing_header = "以下为完整清单（歌名:xxx;歌手:yyy）："
     else:
         listing = "\n".join(_artist_lines(stats))
-        listing_header = "以下为歌手分布清单（歌手:xxx;曲目数:N，按曲目数降序）："
+        listing_header = ("以下为歌手分布清单（歌手:xxx;曲目数:N[;主艺人M首][;仅合作]，"
+                          "按参与曲目数降序；主艺人M首表示以该歌手署名的曲目数，仅合作表示只在合作曲里出现）：")
     summary = {
         "total_rows": stats["total_rows"],
         "unique_tracks": stats["unique_tracks"],
         "duplicate_rows": stats["duplicate_rows"],
-        "artist_counts": stats["artist_counts"],
+        # 统计摘要也截断：上千位歌手会把 prompt 撑到 60 KB 以上，
+        # 模型输出也容易因此被截断。
+        "artist_counts": list(stats["artist_counts"])[:120],
+        "artist_count_total": len(stats["artist_counts"]),
     }
     return _render_template(template, {
         "{STATISTICS_SUMMARY}": json.dumps(summary, ensure_ascii=False, indent=1),
@@ -433,13 +458,98 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
             {"candidate_type": kind, "target_ratio": round(ratio / total, 6)}
             for kind, ratio in retained
         ]
-        policy["analysis_quality"] = {"min_classified_share": TASTE_MIN_CLASSIFIED_SHARE}
+        # 摘要模式只列代表性艺人，分类覆盖率天然远低于逐曲模式：
+        # 覆盖率门槛在这个模式下没有意义，设为 0 跳过检查。
+        policy["analysis_quality"] = {"min_classified_share": 0}
         packet["recommendation_policy"] = policy
     return validate_analysis_packet(packet)
 
 
 def _request_id(snapshot: dict[str, Any], mode: str) -> str:
     return f"{mode}-{stable_hash({'snapshot_id': snapshot['snapshot_id'], 'input_sha256': snapshot.get('input_sha256', ''), 'mode': mode})[:16]}"
+
+
+def _normalize_style_tags(bundle: Any, taxonomy: dict[str, Any]) -> None:
+    """把 Agent 的 style_tags 规范到契约范围（1–12 条、只引用风格本体）。
+
+    Agent 常把 style_tags 留空或写超条数；一个可用的画像不应该因为这一个字段
+    被整体拒绝，所以优先按艺人聚类聚合补齐。
+    """
+    if not isinstance(bundle, dict):
+        return
+    known = set(taxonomy.get("known_style_refs") or [])
+    clusters = [item for item in (bundle.get("artist_clusters") or []) if isinstance(item, dict)]
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in (bundle.get("style_tags") or []):
+        if not isinstance(item, dict):
+            continue
+        ref = item.get("tag")
+        if not isinstance(ref, str) or ref not in known or ref in seen:
+            continue
+        seen.add(ref)
+        cleaned.append(item)
+    if 1 <= len(cleaned) <= 12:
+        bundle["style_tags"] = cleaned
+        return
+    counts: dict[str, int] = {}
+    artists_by_ref: dict[str, list[str]] = {}
+    for cluster in clusters:
+        artist = cluster.get("artist")
+        for ref in (cluster.get("style_refs") or []):
+            if ref in known:
+                counts[ref] = counts.get(ref, 0) + 1
+                if isinstance(artist, str) and artist:
+                    artists_by_ref.setdefault(ref, []).append(artist)
+    total = max(1, len(clusters))
+    bundle["style_tags"] = [
+        {"tag": ref, "weight": min(100, max(1, int(round(count / total * 100)))),
+         "matched_artists": list(dict.fromkeys(artists_by_ref.get(ref) or []))[:8]}
+        for ref, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:12]
+    ]
+
+
+def _normalize_summary_text(bundle: Any) -> None:
+    """overall_summary 超长时截断、过短时用锐评正文兜底：一次重试约花 1–2 分钟，不值得。"""
+    if not isinstance(bundle, dict):
+        return
+    text = bundle.get("overall_summary")
+    if not isinstance(text, str):
+        return
+    text = text.strip()
+    if len(text) > 300:
+        cut = text[:300]
+        for mark in ("。", "；", "，", " "):
+            index = cut.rfind(mark)
+            if index >= 160:
+                cut = cut[:index + 1]
+                break
+        text = cut
+    if len(text) < 80:
+        review = bundle.get("editorial_review") if isinstance(bundle.get("editorial_review"), dict) else {}
+        fallback = str(review.get("review") or review.get("headline") or "").strip()
+        if len(fallback) >= 80:
+            text = fallback[:300]
+    bundle["overall_summary"] = text
+
+
+def _normalize_clusters(bundle: Any, taxonomy: dict[str, Any]) -> None:
+    """把 artist_clusters.style_refs 规范到风格本体：去掉编造引用，空则退化到本体首项。
+
+    契约要求每个聚类至少一个本体引用；模型偶尔会写出不存在的 style:... 引用，
+    这里统一过滤而不是让整包失败。
+    """
+    if not isinstance(bundle, dict):
+        return
+    known = [ref for ref in (taxonomy.get("known_style_refs") or []) if isinstance(ref, str)]
+    known_set = set(known)
+    fallback = known[0] if known else ""
+    for cluster in (bundle.get("artist_clusters") or []):
+        if not isinstance(cluster, dict):
+            continue
+        refs = [ref for ref in (cluster.get("style_refs") or [])
+                if isinstance(ref, str) and ref in known_set]
+        cluster["style_refs"] = list(dict.fromkeys(refs)) or ([fallback] if fallback else [])
 
 
 def run_taste_analysis(snapshot_path: Path, taxonomy_path: Path, directory: Path, *,
@@ -492,8 +602,29 @@ def run_taste_analysis(snapshot_path: Path, taxonomy_path: Path, directory: Path
                       "task_status": "running", "mode": mode,
                       "track_completed": 0, "track_total": snapshot["track_count"],
                       "message": f"按歌单规模采用{'品味摘要' if mode == 'taste_summary' else '歌手摘要'}模式（单任务）"})
-        raw = execute(command, prompt, timeout=timeout)
-        bundle = validate_taste_summary_result(raw, snapshot=snapshot, taxonomy=taxonomy, mode=mode)
+        # 大歌单的摘要响应可达数十 KB，模型偶尔会截断或偏离结构；保留每次原始
+        # 响应并允许两轮修复，避免一次差输出直接判负整个任务。
+        bundle = None
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            raw = execute(command, prompt, timeout=timeout)
+            write_json(directory / f"taste_response_{attempt}.json", raw if isinstance(raw, (dict, list)) else {"raw": str(raw)[:2000]})
+            _normalize_clusters(raw, taxonomy)
+            _normalize_style_tags(raw, taxonomy)
+            _normalize_summary_text(raw)
+            _normalize_summary_text(raw)
+            try:
+                bundle = validate_taste_summary_result(raw, snapshot=snapshot, taxonomy=taxonomy, mode=mode)
+                break
+            except ContractError as error:
+                last_error = error
+                if attempt == 3:
+                    break
+                if progress:
+                    progress({"event": "stage_detail", "stage": "analysis", "mode": mode,
+                              "message": f"摘要校验未通过，正在重试（第 {attempt} 次）：{error}"})
+        if bundle is None:
+            raise ContractError(f"摘要响应连续 3 次未通过契约校验：{last_error}")
         bundle["request_id"] = request_id
         write_json(bundle_path, bundle)
         if progress:

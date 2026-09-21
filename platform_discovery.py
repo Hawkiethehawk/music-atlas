@@ -77,7 +77,8 @@ def _candidate_from_hit(hit: dict[str, Any], *, source: str, anchor: dict[str, A
         "candidate_type": "artist_continuation",
         "analysis_refs": [entity_ref],
         "style_status": "unclassified",
-        "style_refs": [], "style_mix": [], "style_axes": dict.fromkeys(STYLE_AXIS_IDS),
+        "style_refs": [], "style_mix": [],
+        "style_axes": {axis: None for axis in STYLE_AXIS_IDS},
         "style_confidence": "low",
         "relation_path": ["当前歌单", anchor["artist"], "平台公开歌曲记录"],
         "evidence_grade": "C", "evidence_items": [evidence],
@@ -89,9 +90,11 @@ def _candidate_from_hit(hit: dict[str, Any], *, source: str, anchor: dict[str, A
 
 
 def discover_platform_candidates(packet: dict[str, Any], *, max_candidates: int = 80, concurrency: int = 4,
-                                 progress: Callable[[int, int], None] | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+                                 progress: Callable[[int, int], None] | None = None, tags_client: Any | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """按当前 Step 2 艺人分布并发查询平台，构造唯一的真实候选池。"""
-    anchors = [item for item in packet.get("primary_distribution", []) if item.get("artist") and item.get("entity_ref")]
+    # 大歌单只对出现频率最高的一批艺人做平台搜索：控制召回耗时与后续编排体量。
+    anchors = [item for item in packet.get("primary_distribution", [])
+               if item.get("artist") and item.get("entity_ref")][:12]
     # 高频艺人优先，且只请求每个艺人优先级最高的公开来源，避免为同一事实做三倍请求。
     jobs = [(anchor, SOURCE_PRIORITY[0]) for anchor in anchors]
     retrieved_at = utc_now()
@@ -128,28 +131,65 @@ def discover_platform_candidates(packet: dict[str, Any], *, max_candidates: int 
                 progress(completed, len(jobs))
             if len(candidates) >= max_candidates:
                 break
+    if tags_client is not None and candidates:
+        # 平台记录只有歌曲身份，没有风格资料；沿用与相似艺人候选相同的 Last.fm
+        # 标签机制补全，否则候选会因“缺少风格证据”被文案 Agent 全部排除。
+        from lastfm_pipeline import collect_tags
+        records = collect_tags(
+            {**packet, "favorite_tracks": [
+                {"title": item.get("title"), "artist": item.get("artist"),
+                 "album": (item.get("metadata_verified") or {}).get("album")}
+                for item in candidates]},
+            tags_client, concurrency=concurrency)["records"]
+        for candidate, record in zip(candidates, records):
+            candidate["style_evidence"] = {key: record[key] for key in ("scope", "tags", "url", "retrieved_at", "status")}
+            if record["tags"]:
+                candidate.setdefault("evidence_items", []).append({
+                    "claim_type": "style",
+                    "claim": {"track": "曲目风格标签", "album": "所属专辑风格标签", "artist": "艺人风格标签"}.get(record["scope"], "风格标签"),
+                    "url": record["url"], "retrieved_at": record["retrieved_at"]})
+                # 证据 URL 必须同时列入 sources，否则候选契约会拒绝整包。
+                candidate["sources"] = list(dict.fromkeys([*candidate.get("sources", []), record["url"]]))
     candidates.sort(key=lambda item: (normalized_name(item["artist"]), normalized_name(item["title"])))
     return candidates, {
         "schema_version": "2.0", "artifact_type": "platform_discovery_report", "analysis_id": packet["analysis_id"],
         "retrieved_at": retrieved_at, "query_count": len(jobs), "cache_hit_count": 0,
         "candidate_count": len(candidates), "failed_queries": failures,
+        "style_tagged_count": sum(1 for item in candidates if (item.get("style_evidence") or {}).get("tags")),
     }
 
 
-def hydrate_netease_covers(candidates: list[dict[str, Any]], *, concurrency: int = 4) -> None:
-    """为最终入选的网易云候选按已绑定歌曲 ID 补取专辑图。"""
+def hydrate_netease_covers(candidates: list[dict[str, Any]], *, concurrency: int = 8) -> None:
+    """为最终入选的网易云候选补取专辑图。
 
-    netease_candidates = [item for item in candidates if item.get("metadata_verified", {}).get("source") == "netease"]
-    with ThreadPoolExecutor(max_workers=min(concurrency, len(netease_candidates) or 1), thread_name_prefix="music-atlas-cover") as pool:
-        futures = {pool.submit(netease_song_cover, str(item["platform_track_id"])): item for item in netease_candidates}
-        for future in as_completed(futures):
-            try:
-                cover = future.result()
-            except Exception:  # noqa: BLE001
-                cover = None
-            if cover and cover_url_status(cover) == "verified":
-                metadata = futures[future]["metadata_verified"]
-                # 不覆盖已经由跨来源回退选出的可达封面。
-                if not metadata.get("cover") or cover_url_status(metadata.get("cover")) != "verified":
-                    metadata["cover"] = cover
-                    metadata["cover_source"] = "netease"
+    改用批量接口（一次最多 50 首）+ 并发校验封面可达性：
+    逐首请求时每个候选要两次网络往返，实测 30 首需要近 50 秒。
+    """
+
+    netease_candidates = [item for item in candidates
+                          if (item.get("metadata_verified") or {}).get("source") == "netease"]
+    if not netease_candidates:
+        return
+    from metadata_verify import cover_url_status, netease_song_covers
+    covers = netease_song_covers([str(item.get("platform_track_id") or "") for item in netease_candidates])
+
+    def verify(item: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        cover = covers.get(str(item.get("platform_track_id") or ""))
+        if not cover:
+            return item, None
+        try:
+            reachable = cover_url_status(cover) == "verified"
+        except Exception:  # noqa: BLE001
+            reachable = False
+        return item, cover if reachable else None
+
+    with ThreadPoolExecutor(max_workers=min(max(1, concurrency), len(netease_candidates)),
+                            thread_name_prefix="music-atlas-cover") as pool:
+        for item, cover in pool.map(verify, netease_candidates):
+            metadata = item.get("metadata_verified")
+            if not isinstance(metadata, dict) or not cover:
+                continue
+            # 不覆盖已经由跨来源回退选出的可达封面。
+            if not metadata.get("cover") or cover_url_status(metadata.get("cover")) != "verified":
+                metadata["cover"] = cover
+                metadata["cover_source"] = "netease"

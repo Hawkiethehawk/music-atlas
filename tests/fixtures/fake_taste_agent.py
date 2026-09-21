@@ -103,11 +103,34 @@ def compose(prompt: str) -> dict:
     return bundle
 
 
+def compose_islands(prompt: str) -> dict:
+    """TEST ONLY：为摘要模式的兴趣岛归纳任务生成合成岛屿（覆盖全部输入）。"""
+    body = prompt[prompt.find("{"):] if "{" in prompt else prompt
+    payload = json.loads(body)
+    records = payload.get("records") or []
+    total = len(records)
+    groups = [list(range(index, total, 3)) for index in range(3)]
+    names = ["暗涌轰鸣岛", "霓虹流光岛", "雾墙回声岛"]
+    return {
+        "overall_summary": "TEST_ONLY 合成归纳：这份清单以金属与另类摇滚为底色，同时带有电子与氛围线索；整体从紧凑的节奏转向开阔的空间，在不同层次之间保持清晰的对照，适合作为研究与推荐的起点。",
+        "islands": [
+            {"name": names[index],
+             "summary": f"TEST_ONLY 合成岛 {index + 1}：以金属与另类摇滚为核心，融合电子与氛围线索。",
+             "record_ids": groups[index]}
+            for index in range(3)
+        ],
+    }
+
+
 def main() -> int:
     for stream in (sys.stdin, sys.stdout):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-    data = json.dumps(compose(sys.stdin.read()), ensure_ascii=False)
+    prompt = sys.stdin.read()
+    if "归纳为三大类兴趣岛" in prompt:
+        data = json.dumps(compose_islands(prompt), ensure_ascii=False)
+    else:
+        data = json.dumps(compose(prompt), ensure_ascii=False)
     sys.stdout.write(data)
     return 0
 

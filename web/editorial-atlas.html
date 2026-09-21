@@ -7,93 +7,73 @@
 <link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="/favicon.ico">
 <link rel="preload" href="/fonts/EBGaramond.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="preload" href="/fonts/EBGaramond-Italic.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/typography.css">
 <style>
-@font-face{
-  font-family:"MA Latin";
-  src:url("/fonts/EBGaramond.ttf") format("truetype-variations");
-  font-weight:400 800;
-  font-style:normal;
-  font-display:block;
-}
-@font-face{
-  font-family:"MA Latin";
-  src:url("/fonts/EBGaramond-Italic.ttf") format("truetype-variations");
-  font-weight:400 800;
-  font-style:italic;
-  font-display:block;
-}
-@font-face{
-  font-family:"MA CJK";
-  src:local("思源宋体 CN"),local("Source Han Serif CN"),local("Noto Serif SC"),local("Source Han Serif SC"),local("SimSun");
-  font-weight:400;
-  font-style:normal;
-  font-display:block;
-}
 :root{
   --bg:#0f0d0a; --bg2:#15120e; --panel:#1a1611; --ink:#eae3d6; --dim:#a39a88; --faint:#6e6759;
   --line:#2b251d; --line2:#3a3226; --acc:#c8622f; --gold:#c9a227;
-  --serif:"MA Latin","MA CJK",serif; --mono:"MA Latin","MA CJK",serif; --sans:"MA Latin","MA CJK",serif;
+  --serif:var(--font-stack); --mono:var(--font-stack); --sans:var(--font-stack);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth;scrollbar-gutter:stable}
 @supports not (scrollbar-gutter:stable){html{overflow-y:scroll}}
-body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:18px;line-height:1.6;font-variant-numeric:lining-nums;font-size-adjust:0.50;font-variation-settings:"wght" 520;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:var(--fs-18);line-height:1.6;font-variant-numeric:lining-nums;font-size-adjust:0.50;font-variation-settings:"wght" 520;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}
 ::selection{background:var(--acc);color:#fff}
-.wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 40px;width:100%}
 .mono{font-family:var(--mono)}
-.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim)}
+.kicker{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.28em;text-transform:uppercase;color:var(--dim)}
 .kicker b{color:var(--acc);font-weight:400}
 /* header */
 header{border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(15,13,10,.94);backdrop-filter:blur(8px);z-index:50}
 .hd{display:flex;align-items:center;justify-content:space-between;height:60px}
-.logo{font-family:var(--serif);font-size:20px;letter-spacing:.12em}
+.logo{font-family:var(--serif);font-size:var(--fs-20);letter-spacing:.12em}
 .logo em{color:var(--acc);font-style:normal}
 nav{display:flex;gap:26px}
-nav a{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);padding:6px 0;border-bottom:1px solid transparent}
+nav a{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;text-transform:uppercase;color:var(--dim);padding:6px 0;border-bottom:1px solid transparent}
 nav a:hover{color:var(--ink)}
 nav a.on{color:var(--ink);border-bottom-color:var(--acc)}
 /* hero */
 .hero{padding:34px 0 56px;border-bottom:1px solid var(--line);position:relative;overflow:hidden}
-.hero h1{font-family:var(--serif);font-weight:500;font-size:52px;line-height:1.04;letter-spacing:-.015em;margin:22px 0 26px;max-width:820px}
-@media(min-width:1100px){.hero h1{font-size:72px}}
-@media(min-width:1500px){.hero h1{font-size:96px}}
+.hero h1{font-family:var(--serif);font-weight:500;font-size:var(--fs-52);line-height:1.04;letter-spacing:-.015em;margin:22px 0 26px;max-width:820px}
+@media(min-width:1100px){.hero h1{font-size:var(--fs-72)}}
+@media(min-width:1500px){.hero h1{font-size:var(--fs-96)}}
 .hero h1 em{font-style:italic;color:var(--acc);display:block;margin-top:12px}
-.lede{max-width:560px;color:var(--dim);font-size:18px;line-height:1.85}
+.lede{max-width:560px;color:var(--dim);font-size:var(--fs-18);line-height:1.85}
 .collage{position:absolute;right:0;top:40px;width:460px;height:400px}
 .cc{position:absolute;border:1px solid var(--line2);box-shadow:0 30px 60px rgba(0,0,0,.55)}
-.cc .tagline{position:absolute;bottom:8px;left:10px;font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:rgba(255,255,255,.75)}
+.cc .tagline{position:absolute;bottom:8px;left:10px;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;color:rgba(255,255,255,.75)}
 /* section head */
 .sec{padding:64px 0 30px}
 .sec-hd{display:flex;align-items:baseline;gap:18px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:8px}
-.sec-hd h2{font-family:var(--serif);font-weight:500;font-size:32px;letter-spacing:.01em}
-.sec-hd .sub{font-family:var(--mono);font-size:12px;letter-spacing:.24em;color:var(--faint);text-transform:uppercase}
-.sec-hd .more{margin-left:auto;font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--acc);text-transform:uppercase}
+.sec-hd h2{font-family:var(--serif);font-weight:500;font-size:var(--fs-32);letter-spacing:.01em}
+.sec-hd .sub{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.24em;color:var(--faint);text-transform:uppercase}
+.sec-hd .more{margin-left:auto;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;color:var(--acc);text-transform:uppercase}
 .sec-hd .more:hover{color:var(--ink)}
 /* atlas list (editorial index) */
 .trow{display:grid;grid-template-columns:56px 92px minmax(230px,0.9fr) 1.7fr 200px;align-items:stretch;border-bottom:1px solid var(--line)}
 .trow>*{position:relative;padding:20px 0}
-.trow .rank{display:flex;align-items:center;justify-content:flex-end;padding-right:18px;font-family:var(--serif);font-size:36px;color:var(--faint);font-style:italic}
+.trow .rank{display:flex;align-items:center;justify-content:flex-end;padding-right:18px;font-family:var(--serif);font-size:var(--fs-36);color:var(--faint);font-style:italic}
 .trow .cvgo{cursor:pointer;align-self:center;display:flex}
 .trow .info{display:flex;flex-direction:column;justify-content:center;cursor:pointer;padding:20px 18px;gap:6px}
 .trow .info::after{content:"";position:absolute;top:0;bottom:0;right:0;width:1px;background:var(--line)}
 .trow .info:hover .tt{color:var(--acc)}
 .trow .cvgo:hover .ci{color:#fff}
 .trow .cvgo:hover ~ .info .tt{color:var(--acc)}
-.trow .ol{display:flex;flex-direction:column;justify-content:center;color:var(--dim);font-size:16px;line-height:1.6;padding:20px 18px}
+.trow .ol{display:flex;flex-direction:column;justify-content:center;color:var(--dim);font-size:var(--fs-16);line-height:1.6;padding:20px 18px}
 .trow .ol::after{content:"";position:absolute;top:0;bottom:0;right:0;width:1px;background:var(--line)}
 .trow .plcol{display:flex;flex-direction:column;justify-content:center;padding:20px 0 20px 18px}
-.trow .tt{font-family:var(--serif);font-weight:500;font-size:22px;line-height:24px;margin:0}
-.trow .ar{color:var(--dim);font-size:16px;line-height:24px;margin:0}
-.trow .ar .alb{font-size:14px;color:var(--faint);line-height:24px;margin:0;display:block}
+.trow .tt{font-family:var(--serif);font-weight:500;font-size:var(--fs-22);line-height:24px;margin:0}
+.trow .ar{color:var(--dim);font-size:var(--fs-16);line-height:24px;margin:0}
+.trow .ar .alb{font-size:var(--fs-14);color:var(--faint);line-height:24px;margin:0;display:block}
 .trow .typechip{margin-bottom:0;transform:translateY(-2px)}
 .trow .info>:nth-child(3){transform:translateY(-2px)}
-.typechip{display:inline-block;width:fit-content;align-self:flex-start;font-family:var(--mono);font-size:12px;letter-spacing:.2em;padding:2px 2px 2px calc(2px + .2em);border:1px solid var(--line2);color:var(--dim);margin-bottom:8px}
+.typechip{display:inline-block;width:fit-content;align-self:flex-start;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;padding:2px 2px 2px calc(2px + .2em);border:1px solid var(--line2);color:var(--dim);margin-bottom:8px}
 .typechip.t-style{color:#d99a5b;border-color:#5b4632}
 .typechip.t-ext{color:var(--gold);border-color:#5c5220}
 .typechip.t-rel{color:#b8a6e8;border-color:#4a3f63}
 .typechip.t-exp{color:#7fb8a4;border-color:#33544a}
-.plink{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--dim);display:block;padding:7px 0;border-top:1px solid var(--line)}
+.plink{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.14em;color:var(--dim);display:block;padding:7px 0;border-top:1px solid var(--line)}
 .plink:first-child{border-top:none}
 .plink:hover{color:var(--acc)}
 /* orbit cards */
@@ -102,106 +82,201 @@ nav a.on{color:var(--ink);border-bottom-color:var(--acc)}
 .card:hover{border-color:var(--line2)}
 .card .cover{height:230px}
 .card .cbody{padding:20px 22px 22px}
-.card h3{font-family:var(--serif);font-weight:500;font-size:22px;margin:8px 0 2px}
-.card .car{color:var(--dim);font-size:14px}
-.card p{color:var(--dim);font-size:16px;line-height:1.7;margin-top:12px}
+.card h3{font-family:var(--serif);font-weight:500;font-size:var(--fs-22);margin:8px 0 2px}
+.card .car{color:var(--dim);font-size:var(--fs-14)}
+.card p{color:var(--dim);font-size:var(--fs-16);line-height:1.7;margin-top:12px}
 /* musicians chain */
 .chain{border:1px solid var(--line);background:var(--bg2);padding:44px 48px;display:grid;grid-template-columns:1fr 380px;gap:44px;align-items:center;margin:22px 0}
-.chainbig{font-family:var(--serif);font-weight:500;font-size:32px;line-height:1.2}
-.chainstep{display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:14px;letter-spacing:.12em;color:var(--dim);padding:10px 0}
+.chainbig{font-family:var(--serif);font-weight:500;font-size:var(--fs-32);line-height:1.2}
+.chainstep{display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:var(--fs-14);letter-spacing:.12em;color:var(--dim);padding:10px 0}
 .chainstep .node{width:9px;height:9px;background:var(--acc);flex:none}
 .chainstep .ln{flex:1;border-top:1px dashed var(--line2)}
 /* further out */
 .outgrid{display:grid;grid-template-columns:1fr 1fr;gap:26px;padding:22px 0}
 .outcard{border:1px dashed var(--line2);padding:26px;cursor:pointer;position:relative}
 .outcard:hover{border-color:#33544a;background:#12100d}
-.outcard .ob{font-family:var(--mono);font-size:12px;letter-spacing:.3em;color:#7fb8a4;margin-bottom:12px}
-.outcard h3{font-family:var(--serif);font-weight:500;font-size:24px}
-.outcard .car{color:var(--dim);font-size:14px;margin-bottom:10px}
-.outcard p{color:var(--dim);font-size:16px;line-height:1.7}
+.outcard .ob{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.3em;color:#7fb8a4;margin-bottom:12px}
+.outcard h3{font-family:var(--serif);font-weight:500;font-size:var(--fs-24)}
+.outcard .car{color:var(--dim);font-size:var(--fs-14);margin-bottom:10px}
+.outcard p{color:var(--dim);font-size:var(--fs-16);line-height:1.7}
 /* cover */
 .cover{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:2px;background:var(--bg);border:1px solid var(--line2)}
 .cover:not(.has-img){background:var(--cover-fallback,var(--bg))}
 .cover img.cover-img{position:absolute;inset:3px;width:calc(100% - 6px);height:calc(100% - 6px);object-fit:cover;opacity:0;transition:opacity .45s ease}
 body.covers-ready .cover img.cover-img{opacity:1}
 .cover.has-img .ci,.cover.has-img .frame,.cover.has-img .cl{display:none}
-.cover .ci{font-family:var(--serif);font-style:italic;font-size:36px;color:rgba(255,255,255,.82);text-shadow:0 2px 18px rgba(0,0,0,.5)}
+.cover .ci{font-family:var(--serif);font-style:italic;font-size:var(--fs-36);color:rgba(255,255,255,.82);text-shadow:0 2px 18px rgba(0,0,0,.5)}
 .cover .frame{position:absolute;inset:9px;border:1px solid rgba(255,255,255,.18);z-index:1}
-.cover .cl{position:absolute;top:12px;left:13px;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:rgba(255,255,255,.65);z-index:1}
+.cover .cl{position:absolute;top:12px;left:13px;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;color:rgba(255,255,255,.65);z-index:1}
 .plink.wait{color:var(--faint);pointer-events:none}
 .plink.nodata{color:var(--faint)}
 /* buttons */
 .btnrow{display:flex;gap:10px;flex-wrap:wrap}
-.btn{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;padding:10px 16px;border:1px solid var(--line2);color:var(--dim);cursor:pointer;background:none}
+.btn{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.16em;text-transform:uppercase;padding:10px 16px;border:1px solid var(--line2);color:var(--dim);cursor:pointer;background:none}
 .btn:hover{color:var(--ink);border-color:var(--acc)}
 .btn.primary{border-color:var(--acc);color:var(--acc)}
 .btn.primary:hover{background:var(--acc);color:#fff}
-.auth-link{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--dim);background:none;border:0;border-bottom:1px solid transparent;padding:6px 0;cursor:pointer}
-.auth-link:hover{color:var(--ink);border-bottom-color:var(--acc)}
-.auth-user{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--faint);display:flex;align-items:center;gap:12px}
-.auth-user button{font:inherit;color:var(--dim);background:none;border:0;border-bottom:1px solid transparent;padding:6px 0;cursor:pointer}
-.auth-user button:hover{color:var(--ink);border-bottom-color:var(--acc)}
-.auth-backdrop{position:fixed;inset:0;z-index:80;background:rgba(15,13,10,.82);display:grid;place-items:center;padding:24px}
-.auth-dialog{width:min(440px,100%);border:1px solid var(--line2);background:var(--panel);box-shadow:0 30px 80px rgba(0,0,0,.55);padding:28px}
-.auth-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:22px}
-.auth-head h2{font-family:var(--serif);font-size:30px;font-weight:500}
-.auth-head p{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;margin-top:4px}
-.auth-close{font-family:var(--serif);font-size:28px;line-height:1;color:var(--dim);border:0;background:none;cursor:pointer}
-.auth-tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:18px}
-.auth-tab{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--faint);border:0;border-bottom:1px solid transparent;background:none;padding:7px 0;cursor:pointer}
-.auth-tab.on{color:var(--acc);border-bottom-color:var(--acc)}
-.auth-form{display:grid;gap:14px}.auth-field{display:grid;gap:6px}.auth-field label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--faint)}
-.auth-field input{font:inherit;font-family:var(--mono);font-size:14px;color:var(--ink);background:var(--bg2);border:1px solid var(--line2);padding:10px 12px;outline:none}.auth-field input:focus{border-color:var(--acc)}
-.auth-message{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--dim);min-height:20px}.auth-message.error{color:#d98a7a}.auth-message.ok{color:#8fce9b}
-.auth-form .btn{width:100%;min-height:42px}
+/* auth buttons in header */
+.auth-link{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;text-transform:uppercase;color:var(--dim);background:none;border:1px solid var(--line2);padding:8px 14px;cursor:pointer;transition:color .16s,border-color .16s}
+.auth-link:hover{color:var(--ink);border-color:var(--acc)}
+.auth-user{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;color:var(--dim);display:flex;align-items:center;gap:22px}
+.auth-user button{font:inherit;letter-spacing:.2em;color:var(--dim);background:none;border:0;padding:6px 0;cursor:pointer}
+.auth-user button:hover{color:var(--ink)}
+/* guest gate */
+.gate{flex:1 0 auto;display:flex;align-items:center;padding:56px 0 72px}
+.gate-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr);gap:56px;align-items:center;width:100%}
+.gate-copy{min-width:0}
+.gate-kicker{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.28em;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:14px}
+.gate-kicker b{color:var(--acc);font-weight:400}
+.gate-kicker::after{content:"";width:150px;height:1px;background:var(--line)}
+.gate h1{font-family:var(--serif);font-weight:500;font-size:clamp(42px,4.6vw,70px);line-height:1.06;letter-spacing:-.015em;margin:26px 0 22px;max-width:840px}
+.gate h1 em{font-style:italic;color:var(--acc);display:block;margin-top:10px}
+.gate-lede{max-width:520px;color:var(--dim);font-size:var(--fs-18);line-height:1.85}
+.gate-points{list-style:none;margin-top:30px;border-top:1px solid var(--line);max-width:560px}
+.gate-points li{display:flex;gap:16px;align-items:baseline;border-bottom:1px solid var(--line);padding:13px 0;color:var(--dim);font-size:var(--fs-16)}
+.gate-points b{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;color:var(--faint);font-weight:400}
+.gate-card{border:1px solid var(--line2);background:var(--bg2);padding:34px 32px;box-shadow:0 36px 90px rgba(0,0,0,.5);position:relative}
+.gate-card::before{content:"";position:absolute;top:-1px;left:-1px;right:-1px;height:2px;background:linear-gradient(90deg,var(--acc),transparent 65%)}
+.gate-card-kicker{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.24em;color:var(--faint);text-transform:uppercase;margin-bottom:14px}
+.gate-card h2{font-family:var(--serif);font-weight:500;font-size:var(--fs-30);margin-bottom:10px}
+.gate-card p{color:var(--dim);font-size:var(--fs-14);line-height:1.8}
+.gate-actions{display:grid;gap:10px;margin:22px 0 16px}
+.gate-actions .btn{width:100%;padding:13px 16px}
+.gate-note{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.06em;color:var(--faint);line-height:1.8;border-top:1px solid var(--line);padding-top:14px}
+@media(max-width:900px){.gate{padding:34px 0 48px}.gate-grid{grid-template-columns:1fr;gap:30px}.gate h1{font-size:clamp(38px,10vw,54px)}}
+/* auth modal */
+.auth-backdrop{position:fixed;inset:0;z-index:80;background:rgba(10,8,6,.86);backdrop-filter:blur(6px);display:grid;place-items:center;padding:24px;animation:auth-fade .18s ease-out}
+.auth-dialog{width:min(460px,100%);border:1px solid var(--line2);background:var(--bg2);box-shadow:0 40px 100px rgba(0,0,0,.6);position:relative;animation:auth-rise .22s ease-out}
+.auth-dialog::before{content:"";position:absolute;top:-1px;left:-1px;right:-1px;height:2px;background:linear-gradient(90deg,var(--acc),transparent 65%)}
+.auth-head{display:flex;justify-content:space-between;align-items:flex-start;padding:26px 28px 18px}
+.auth-head h2{font-family:var(--serif);font-size:var(--fs-30);font-weight:500;margin-top:10px}
+.auth-head p{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);letter-spacing:.06em;margin-top:6px;line-height:1.7}
+.auth-close{font-family:var(--serif);font-size:var(--fs-26);line-height:1;color:var(--dim);border:0;background:none;cursor:pointer;padding:2px 6px}
+.auth-close:hover{color:var(--acc)}
+.auth-tabs{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.auth-tab{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;color:var(--faint);border:0;background:none;padding:13px 0;cursor:pointer;position:relative;transition:color .16s}
+.auth-tab:hover{color:var(--dim)}
+.auth-tab:focus-visible{outline:1px solid var(--acc);outline-offset:2px}
+.auth-tab.on{color:var(--ink)}
+.auth-tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:var(--acc)}
+.auth-tab+.auth-tab{border-left:1px solid var(--line)}
+.auth-form{display:grid;gap:16px;padding:24px 28px 28px}
+.auth-field{display:grid;gap:7px}
+.auth-field label{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.16em;color:var(--faint);text-transform:uppercase}
+.auth-field input{font:inherit;font-family:var(--mono);font-size:var(--fs-14);color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:12px 13px;outline:none;transition:border-color .16s}
+.auth-field input:focus{border-color:var(--acc)}
+.auth-input{position:relative;display:block}
+.auth-input input{width:100%;padding-right:64px}
+.auth-remember{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.08em;color:var(--dim);cursor:pointer;user-select:none;margin:-2px 0 2px}
+.auth-remember input{-webkit-appearance:none;appearance:none;width:15px;height:15px;border:1px solid var(--line2);background:var(--panel);margin:0;cursor:pointer;position:relative;flex:none;transition:border-color .16s,background .16s}
+.auth-remember input:hover{border-color:var(--acc)}
+.auth-remember input:checked{border-color:var(--acc);background:var(--acc)}
+.auth-remember input:checked::after{content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;border:solid #fff;border-width:0 1.5px 1.5px 0;transform:rotate(45deg)}
+.auth-remember input:focus-visible{outline:1px solid var(--acc);outline-offset:2px}
+.auth-eye{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.14em;color:var(--faint);background:none;border:0;cursor:pointer;padding:4px}
+.auth-eye:hover{color:var(--acc)}
+.auth-message{font-family:var(--mono);font-size:var(--fs-12);line-height:1.7;color:var(--dim);min-height:18px}.auth-message.error{color:#d98a7a}.auth-message.ok{color:#8fce9b}
+.auth-form .btn{width:100%;min-height:46px}
+@keyframes auth-fade{from{opacity:0}to{opacity:1}}
+@keyframes auth-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.auth-backdrop,.auth-dialog{animation:none}}
 /* article / detail */
-.crumb{font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--faint);padding:26px 0 0;text-transform:uppercase}
+.crumb{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;color:var(--faint);padding:26px 0 0;text-transform:uppercase}
 .crumb a:hover{color:var(--acc)}
 .dgrid{display:grid;grid-template-columns:320px 1fr;gap:52px;padding:30px 0 70px}
 .dcover{border:1px solid var(--line2);height:320px;box-shadow:0 40px 80px rgba(0,0,0,.5)}
-.dtitle{font-family:var(--serif);font-weight:500;font-size:44px;line-height:1.1;margin:8px 0 6px}
-.dsub{color:var(--dim);font-size:18px;margin-bottom:20px}
-.metatab{font-family:var(--mono);font-size:12px;color:var(--dim);border-top:1px solid var(--line);margin:20px 0}
+.dtitle{font-family:var(--serif);font-weight:500;font-size:var(--fs-44);line-height:1.1;margin:8px 0 6px}
+.dsub{color:var(--dim);font-size:var(--fs-18);margin-bottom:20px}
+.metatab{font-family:var(--mono);font-size:var(--fs-12);color:var(--dim);border-top:1px solid var(--line);margin:20px 0}
 .metatab div{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}
-.metatab span{color:var(--faint);letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+.metatab span{color:var(--faint);letter-spacing:.14em;text-transform:uppercase;font-size:var(--fs-12)}
 .metatab a:hover{color:var(--acc)}
-.explain{font-size:18px;line-height:1.9;color:var(--ink);max-width:620px}
-.quoted{border-left:2px solid var(--acc);padding-left:18px;font-family:var(--serif);font-size:20px;line-height:1.7;font-style:italic;color:var(--ink)}
+/* interest island meta (fixed label column + one item per line) */
+.interest-meta{border-top:1px solid var(--line);margin:20px 0}
+.interest-meta>div{display:grid;grid-template-columns:96px minmax(0,1fr);gap:16px;padding:10px 0;border-bottom:1px solid var(--line);align-items:start}
+.interest-meta>div>span{color:var(--faint);letter-spacing:.14em;text-transform:uppercase;font-size:var(--fs-12);white-space:nowrap;padding-top:2px}
+.interest-meta .meta-line{font-family:var(--mono);font-size:var(--fs-12);color:var(--dim);line-height:1.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.interest-meta .meta-line+.meta-line{margin-top:2px}
+.interest-meta a{color:var(--dim)}
+.interest-meta a:hover{color:var(--acc)}
+.artist-groups{display:grid;gap:16px;min-width:0}
+.artist-group{display:grid;grid-template-columns:150px minmax(0,1fr);gap:16px;align-items:start;min-width:0}
+.artist-name{font-size:var(--fs-14);color:var(--ink);line-height:1.6;white-space:normal;overflow-wrap:anywhere}
+.artist-name a:hover{color:var(--acc)}
+.artist-tracks{display:grid;gap:2px;min-width:0}
+@media(max-width:700px){.artist-group{grid-template-columns:1fr;gap:4px}}
+/* island sources list */
+.island-sources{margin:16px 0 0;border-top:1px solid var(--line)}
+.island-sources summary{cursor:pointer;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.14em;color:var(--dim);text-transform:uppercase;padding:12px 0;list-style:none;display:flex;align-items:center;gap:8px}
+.island-sources summary::-webkit-details-marker{display:none}
+.island-sources summary::before{content:"▸";color:var(--faint);transition:transform .16s}
+.island-sources[open] summary::before{transform:rotate(90deg)}
+.island-sources summary:hover{color:var(--ink)}
+.source-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:4px 0 12px}
+.source-sizes{display:flex;gap:6px}
+.source-size{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.1em;color:var(--faint);background:none;border:1px solid var(--line);padding:5px 10px;cursor:pointer;transition:color .16s,border-color .16s,background .16s}
+.source-size:hover{color:var(--ink)}
+.source-size.on{color:var(--acc);border-color:var(--acc);background:rgba(200,98,47,.12)}
+.source-pager{display:flex;align-items:center;gap:10px}
+.source-page{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.1em;color:var(--dim);background:none;border:1px solid var(--line2);padding:5px 10px;cursor:pointer;transition:color .16s,border-color .16s}
+.source-page:not(:disabled):hover{color:var(--ink);border-color:var(--acc)}
+.source-page.on{color:var(--acc);border-color:var(--acc);background:rgba(200,98,47,.12)}
+.source-page:disabled{opacity:.35;cursor:not-allowed}
+.source-page-info{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint)}
+.source-list{border-top:1px solid var(--line)}
+.source-row{display:grid;grid-template-columns:96px minmax(0,1fr) 120px;gap:16px;align-items:start;padding:14px 0;border-bottom:1px solid var(--line);transition:background .16s}
+.source-row:hover{background:var(--bg2)}
+.source-rank{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);padding-top:2px;text-align:right}
+.source-title{font-size:var(--fs-14);color:var(--ink);line-height:1.5}
+.source-artist{font-family:var(--mono);font-size:var(--fs-12);color:var(--dim);margin-top:3px}
+.source-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.source-tag{font-family:var(--mono);font-size:var(--fs-12);color:var(--dim);border:1px solid var(--line2);padding:3px 8px;white-space:nowrap}
+.source-tag.rest{color:var(--dim)}
+.source-tag.more{color:var(--faint);border-style:dashed;cursor:pointer;position:relative}
+.source-tag.more:hover::after{content:attr(data-rest);position:absolute;right:0;bottom:calc(100% + 8px);z-index:30;background:var(--panel);border:1px solid var(--line2);box-shadow:0 18px 40px rgba(0,0,0,.55);color:var(--dim);font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.04em;padding:8px 10px;white-space:normal;width:max-content;max-width:320px;line-height:1.8;text-align:left}
+.source-tag.more:hover::before{content:"";position:absolute;right:12px;bottom:calc(100% + 2px);border:5px solid transparent;border-top-color:var(--line2)}
+.source-side{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.source-scope{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.12em;color:var(--faint);border:1px solid var(--line);padding:3px 8px;white-space:nowrap}
+.source-link{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.08em;color:var(--dim);white-space:nowrap}
+.source-link:hover{color:var(--acc)}
+@media(max-width:820px){.source-row{grid-template-columns:36px minmax(0,1fr)}.source-side{grid-column:2;flex-direction:row;align-items:center;justify-content:flex-start;flex-wrap:wrap}}
+.explain{font-size:var(--fs-18);line-height:1.9;color:var(--ink);max-width:620px}
+.quoted{border-left:2px solid var(--acc);padding-left:18px;font-family:var(--serif);font-size:var(--fs-20);line-height:1.7;font-style:italic;color:var(--ink)}
 /* why layers */
 .layer{padding:34px 0;border-top:1px solid var(--line)}
-.layer .lnum{font-family:var(--serif);font-style:italic;font-size:18px;color:var(--acc);margin-bottom:6px}
-.layer h3{font-family:var(--mono);font-size:12px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+.layer .lnum{font-family:var(--serif);font-style:italic;font-size:var(--fs-18);color:var(--acc);margin-bottom:6px}
+.layer h3{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
 /* taste connection */
 .tconn{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
 .tnode{border:1px solid var(--line2);background:var(--bg2);padding:14px 18px;min-width:170px}
-.tnode .tk{font-family:var(--mono);font-size:12px;letter-spacing:.22em;color:var(--faint);text-transform:uppercase;margin-bottom:6px}
-.tnode .tv{font-family:var(--serif);font-size:16px;line-height:1.35}
+.tnode .tk{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.22em;color:var(--faint);text-transform:uppercase;margin-bottom:6px}
+.tnode .tv{font-family:var(--serif);font-size:var(--fs-16);line-height:1.35}
 .tnode.cur{border-color:var(--acc)}
 .tnode.cur .tv{color:var(--acc);font-style:italic}
 .tarrow{display:flex;align-items:center;padding:0 12px;color:var(--faint);font-family:var(--mono)}
 /* route */
 .routelist{max-width:560px}
 .rstep{display:flex;gap:16px;align-items:flex-start}
-.rstep .rk{width:22px;font-family:var(--mono);font-size:12px;color:var(--acc);padding-top:3px;text-align:center;flex:none}
+.rstep .rk{width:22px;font-family:var(--mono);font-size:var(--fs-12);color:var(--acc);padding-top:3px;text-align:center;flex:none}
 .rstep .rv{padding:0 0 4px}
-.rstep .rv .l1{font-size:18px}
-.rstep .rv .l2{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--faint);text-transform:uppercase}
-.rline{width:22px;display:flex;justify-content:center;color:var(--faint);font-family:var(--mono);font-size:12px;padding:0 0 10px}
+.rstep .rv .l1{font-size:var(--fs-18)}
+.rstep .rv .l2{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;color:var(--faint);text-transform:uppercase}
+.rline{width:22px;display:flex;justify-content:center;color:var(--faint);font-family:var(--mono);font-size:var(--fs-12);padding:0 0 10px}
 /* evidence */
 .evgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
 .evcard{border:1px solid var(--line2);background:var(--panel);padding:18px 20px}
-.evcard .ek{font-family:var(--mono);font-size:12px;letter-spacing:.26em;color:var(--acc);text-transform:uppercase;margin-bottom:10px}
-.evcard .ep{font-family:var(--serif);font-size:16px;margin-bottom:8px}
-.evcard .ed{color:var(--dim);font-size:14px;line-height:1.65;margin-bottom:12px}
-.evmeta{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.1em;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-.badge{padding:2px 8px;border:1px solid;letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+.evcard .ek{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.26em;color:var(--acc);text-transform:uppercase;margin-bottom:10px}
+.evcard .ep{font-family:var(--serif);font-size:var(--fs-16);margin-bottom:8px}
+.evcard .ed{color:var(--dim);font-size:var(--fs-14);line-height:1.65;margin-bottom:12px}
+.evmeta{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);letter-spacing:.1em;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.badge{padding:2px 8px;border:1px solid;letter-spacing:.14em;text-transform:uppercase;font-size:var(--fs-12)}
 .b-confirmed{color:#8fce9b;border-color:#2f4a35}
 .b-has-source{color:#9db8d9;border-color:#33415a}
 .b-pending{color:#d9b96a;border-color:#57491f}
 .b-speculative{color:#d98a7a;border-color:#572d24}
 .b-computed{color:var(--dim);border-color:var(--line2)}
 /* axes */
-.axbar{display:grid;grid-template-columns:150px 1fr 40px;gap:14px;align-items:center;margin:7px 0;font-family:var(--mono);font-size:12px}
+.axbar{display:grid;grid-template-columns:150px 1fr 40px;gap:14px;align-items:center;margin:7px 0;font-family:var(--mono);font-size:var(--fs-12)}
 .axbar .an{color:var(--dim);letter-spacing:.14em;text-transform:uppercase}
 .axbar .tr{height:3px;background:var(--line)}
 .axbar .fl{height:3px;background:var(--acc)}
@@ -209,48 +284,51 @@ body.covers-ready .cover img.cover-img{opacity:1}
 /* taste map */
 .islands{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;padding:26px 0 60px}
 .island{border:1px solid var(--line);background:var(--bg2);padding:26px}
-.island .code{font-family:var(--serif);font-style:italic;font-size:18px;color:var(--acc)}
-.island h3{font-family:var(--serif);font-weight:500;font-size:26px;margin:4px 0 10px}
-.island .genres{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase;line-height:2;margin-bottom:14px}
-.island p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:16px}
-.island .rep{font-family:var(--mono);font-size:12px;color:var(--faint);line-height:2;border-top:1px solid var(--line);padding-top:12px}
+.island .code{font-family:var(--serif);font-style:italic;font-size:var(--fs-18);color:var(--acc)}
+.island h3{font-family:var(--serif);font-weight:500;font-size:var(--fs-26);margin:4px 0 10px}
+.island .genres{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.16em;color:var(--dim);text-transform:uppercase;line-height:2;margin-bottom:14px}
+.island p{color:var(--dim);font-size:var(--fs-14);line-height:1.7;margin-bottom:16px}
+.island .rep{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);line-height:2;border-top:1px solid var(--line);padding-top:12px}
 .island:hover{border-color:var(--line2);cursor:pointer}
-.disclaim{border:1px dashed var(--line2);padding:16px 20px;font-family:var(--mono);font-size:12px;letter-spacing:.1em;color:var(--faint);margin-bottom:50px}
+.disclaim{border:1px dashed var(--line2);padding:16px 20px;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.1em;color:var(--faint);margin-bottom:50px}
 /* sources */
 .srccard{border:1px solid var(--line);background:var(--bg2);padding:24px 26px;display:grid;grid-template-columns:1fr auto;gap:20px;margin-bottom:16px}
-.srccard h3{font-family:var(--serif);font-weight:500;font-size:20px}
-.srccard .via{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.1em;margin:6px 0 12px}
-.srccard .st{font-family:var(--mono);font-size:12px;letter-spacing:.18em;padding:4px 10px;border:1px solid #2f4a35;color:#8fce9b;display:inline-block}
+.srccard h3{font-family:var(--serif);font-weight:500;font-size:var(--fs-20)}
+.srccard .via{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);letter-spacing:.1em;margin:6px 0 12px}
+.srccard .st{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;padding:4px 10px;border:1px solid #2f4a35;color:#8fce9b;display:inline-block}
 .srccard .st.archived{border-color:var(--line2);color:var(--faint)}
 .flow{border:1px solid var(--line2);background:var(--panel);padding:26px;margin:18px 0 26px;display:none}
 .flow.on{display:block}
 .workflow-panel{border:1px solid var(--line2);background:var(--bg2);padding:26px;margin:26px 0 18px}
-.workflow-panel h3{font-family:var(--serif);font-size:24px;font-weight:500;margin-bottom:6px}
-.workflow-panel .hint{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
+.workflow-panel h3{font-family:var(--serif);font-size:var(--fs-24);font-weight:500;margin-bottom:6px}
+.workflow-panel .hint{color:var(--dim);font-size:var(--fs-14);line-height:1.7;margin-bottom:18px}
 .wf-form{display:grid;grid-template-columns:1fr;gap:14px}
 .wf-field{display:flex;flex-direction:column;gap:6px;min-width:0}
-.wf-field label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
-.wf-field input,.wf-field select{font:inherit;font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:10px 12px;min-height:42px;outline:none}
+.wf-field label{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
+.wf-field input,.wf-field select{font:inherit;font-family:var(--mono);font-size:var(--fs-14);color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:10px 12px;min-height:42px;outline:none}
 .wf-field input:focus,.wf-field select:focus{border-color:var(--acc)}
 .wf-field.has-error label{color:#d99a5b}
 .wf-field input[aria-invalid="true"]{border-color:var(--acc);box-shadow:inset 0 -1px 0 var(--acc)}
-.wf-error{display:none;border-left:2px solid var(--acc);background:rgba(200,98,47,.08);color:#d99a5b;font-family:var(--mono);font-size:12px;letter-spacing:.08em;line-height:1.5;padding:6px 10px}
+.wf-error{display:none;border-left:2px solid var(--acc);background:rgba(200,98,47,.08);color:#d99a5b;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.08em;line-height:1.5;padding:6px 10px}
 .wf-field.has-error .wf-error{display:block}
 .wf-field.hidden{display:none}
 .wf-limit-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .wf-limit-row input{width:150px}
-.wf-chips{display:flex;gap:8px;flex-wrap:wrap}
-.wf-limit-note{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;line-height:1.7}
-.chip{font-family:var(--mono);font-size:12px;letter-spacing:.14em;padding:8px 12px;border:1px solid var(--line);color:var(--dim);cursor:pointer;background:none}
-.chip:hover:not(:disabled){border-color:var(--line2);color:var(--ink)}
-.chip.on{border-color:var(--acc);color:var(--acc)}
+.wf-chips{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+.wf-chips .chip{flex:1 1 0;min-width:0;text-align:center;white-space:nowrap}
+.wf-limit-note{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);letter-spacing:.08em;line-height:1.7}
+.chip{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.14em;padding:8px 12px;border:1px solid var(--line);color:var(--dim);cursor:pointer;background:none;transition:border-color .16s,color .16s,background .16s}
+.chip:hover:not(:disabled):not(.on){border-color:var(--line2);color:var(--ink)}
+.chip.on{border-color:var(--acc);color:var(--acc);background:rgba(200,98,47,.12)}
+.chip.on:hover:not(:disabled){border-color:var(--acc);color:var(--acc);background:rgba(200,98,47,.2)}
+.chip:focus-visible{outline:1px solid var(--acc);outline-offset:2px}
 .chip:disabled{opacity:.35;cursor:not-allowed}
 .wf-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .wf-actions .btn{min-height:42px;white-space:nowrap}
 .wf-actions .btn.hidden{display:none}
 .wf-actions .btn:disabled{opacity:.45;cursor:not-allowed}
-.wf-meta{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.08em;margin-top:14px;line-height:1.8}
-.fstep{font-family:var(--mono);font-size:14px;color:var(--faint);padding:9px 0;letter-spacing:.06em}
+.wf-meta{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);letter-spacing:.08em;margin-top:14px;line-height:1.8}
+.fstep{font-family:var(--mono);font-size:var(--fs-14);color:var(--faint);padding:9px 0;letter-spacing:.06em}
 .fstep.done{color:var(--ink)}
 .fstep.failed{color:#d98a7a}
 .fstep.failed::before{content:"! ";color:#d98a7a}
@@ -258,116 +336,144 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .fstep::before{content:"· "}
 .wf-dashboard{display:grid;gap:18px}
 .wf-stagebar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;border-top:1px solid var(--line);padding-top:14px}
-.wf-stage{min-width:0;border-top:2px solid var(--line2);padding-top:8px;color:var(--faint);font-family:var(--mono);font-size:11px;letter-spacing:.08em}
+.wf-stage{min-width:0;border-top:2px solid var(--line2);padding-top:8px;color:var(--faint);font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.08em}
 .wf-stage.current{border-top-color:var(--acc);color:var(--acc)}
 .wf-stage.done{border-top-color:#70947d;color:var(--ink)}
 .wf-stage.reused{border-top-color:#6f8fa8;color:var(--ink)}
 .wf-stage.failed{border-top-color:#b45f52;color:#d98a7a}
-.wf-stage-index{display:block;font-size:10px;color:var(--faint);margin-bottom:3px}
+.wf-stage-index{display:block;font-size:var(--fs-12);color:var(--faint);margin-bottom:3px}
 .wf-stage.current .wf-stage-index{color:var(--acc)}
 .wf-stage.done .wf-stage-index{color:#8fce9b}
 .wf-stage.reused .wf-stage-index{color:#90b7d0}
 .wf-stage.failed .wf-stage-index{color:#d98a7a}
 .wf-stage-label{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wf-stage-state{display:block;margin-top:3px;color:var(--faint);font-size:10px;letter-spacing:.04em}
+.wf-stage-state{display:block;margin-top:3px;color:var(--faint);font-size:var(--fs-12);letter-spacing:.04em}
 .wf-stage.current .wf-stage-state{color:#d99a5b}
 .wf-stage.done .wf-stage-state{color:#8fce9b}
 .wf-stage.reused .wf-stage-state{color:#90b7d0}
 .wf-stage.failed .wf-stage-state{color:#d98a7a}
-.wf-summary{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:13px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--dim)}
+.wf-summary{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:13px;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.06em;color:var(--dim)}
 .wf-summary-main{color:var(--ink)}
 .wf-summary-count{color:var(--acc)}
 .wf-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .wf-task-panel{min-width:0;border:1px solid var(--line);padding:16px 18px;background:rgba(0,0,0,.08)}
 .wf-stage-panels{display:grid;gap:10px}
 .wf-stage-panel{border:1px solid var(--line);background:rgba(0,0,0,.08)}
-.wf-stage-panel>summary{display:flex;align-items:baseline;justify-content:space-between;gap:12px;cursor:pointer;list-style:none;padding:14px 16px;font-family:var(--serif);font-size:18px;color:var(--ink)}
+.wf-stage-panel>summary{display:flex;align-items:baseline;justify-content:space-between;gap:12px;cursor:pointer;list-style:none;padding:14px 16px;font-family:var(--serif);font-size:var(--fs-18);color:var(--ink)}
 .wf-stage-panel>summary::-webkit-details-marker{display:none}
-.wf-stage-panel>summary::before{content:"＋";font-family:var(--mono);font-size:13px;color:var(--faint);margin-right:8px}
+.wf-stage-panel>summary::before{content:"＋";font-family:var(--mono);font-size:var(--fs-14);color:var(--faint);margin-right:8px}
 .wf-stage-panel[open]>summary::before{content:"－";color:var(--acc)}
 .wf-stage-panel.current{border-color:var(--acc)}
 .wf-stage-panel.done{border-color:#70947d}
 .wf-stage-panel.reused{border-color:#6f8fa8}
 .wf-stage-panel.failed{border-color:#b45f52}
 .wf-stage-panel-body{border-top:1px solid var(--line);padding:14px 16px 16px}
-.wf-stage-panel-state{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap}
+.wf-stage-panel-state{font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);white-space:nowrap}
 .wf-stage-panel.current .wf-stage-panel-state{color:#d99a5b}
 .wf-stage-panel.done .wf-stage-panel-state{color:#8fce9b}
 .wf-stage-panel.reused .wf-stage-panel-state{color:#90b7d0}
 .wf-stage-panel.failed .wf-stage-panel-state{color:#d98a7a}
 
 .wf-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:9px}
-.wf-panel-head h4{font-family:var(--serif);font-weight:500;font-size:18px;color:var(--ink)}
-.wf-panel-stat{font-family:var(--mono);font-size:11px;color:var(--acc);white-space:nowrap}
-.wf-panel-note{min-height:38px;padding:10px 0 8px;color:var(--dim);font-family:var(--mono);font-size:11px;line-height:1.7}
+.wf-panel-head h4{font-family:var(--serif);font-weight:500;font-size:var(--fs-18);color:var(--ink)}
+.wf-panel-stat{font-family:var(--mono);font-size:var(--fs-12);color:var(--acc);white-space:nowrap}
+.wf-panel-note{padding:10px 0 8px;color:var(--dim);font-family:var(--mono);font-size:var(--fs-12);line-height:1.7}
 .wf-task-list{border-top:1px solid var(--line)}
-.wf-task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--dim)}
+.wf-task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:var(--fs-12);color:var(--dim)}
 .wf-task-row:last-child{border-bottom:0}
 .wf-task-name{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wf-task-detail{display:block;color:var(--faint);font-size:10px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf-task-detail{display:block;color:var(--faint);font-size:var(--fs-12);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wf-task-state{color:var(--faint);white-space:nowrap}
 .wf-task-row.running .wf-task-state{color:#d99a5b}
 .wf-task-row.done .wf-task-state{color:#8fce9b}
 .wf-task-row.failed .wf-task-state{color:#d98a7a}
 .wf-task-row.waiting{opacity:.62}
 .wf-task-row.reused .wf-task-state{color:#90b7d0}
-.wf-terminal-error{display:none;border:1px solid #6d3b34;background:rgba(180,95,82,.08);padding:12px 14px;color:#d98a7a;font-family:var(--mono);font-size:12px;line-height:1.7}
+.wf-task-row.skipped .wf-task-state{color:var(--faint)}
+.wf-task-row.skipped{opacity:.7}
+.wf-terminal-error{display:none;border:1px solid #6d3b34;background:rgba(180,95,82,.08);padding:12px 14px;color:#d98a7a;font-family:var(--mono);font-size:var(--fs-12);line-height:1.7}
 .wf-terminal-error.on{display:block}
 .wf-log-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.wf-log-button{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--dim);border:1px solid var(--line2);background:none;padding:7px 10px;cursor:pointer}
+.wf-log-button{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.1em;color:var(--dim);border:1px solid var(--line2);background:none;padding:7px 10px;cursor:pointer}
 .wf-log-button:hover{color:var(--ink);border-color:var(--acc)}
 .wf-log-panel{border:1px solid var(--line);background:#17140f;padding:14px;max-height:360px;overflow:auto}
 .wf-log-panel.hidden{display:none}
-.wf-log-panel pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--dim)}
+.wf-log-panel pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono);font-size:var(--fs-12);line-height:1.65;color:var(--dim)}
 @media (max-width:900px){.wf-detail-grid{grid-template-columns:1fr}}
 .grp{margin:30px 0}
-.grp h4{font-family:var(--mono);font-size:12px;letter-spacing:.26em;color:var(--faint);text-transform:uppercase;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.grp h4{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.26em;color:var(--faint);text-transform:uppercase;margin-bottom:12px;border-bottom:1px solid var(--line);padding-bottom:8px}
 .sres{display:flex;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
 .sres:hover{background:var(--bg2)}
-.sres .t{font-family:var(--serif);font-size:18px}
-.sres .a{color:var(--dim);font-size:14px}
+.sres .t{font-family:var(--serif);font-size:var(--fs-18)}
+.sres .a{color:var(--dim);font-size:var(--fs-14)}
 /* tracklist */
-.trk{display:flex;gap:16px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer}
+.trk{display:flex;gap:16px;padding:11px 0;border-bottom:1px solid var(--line);font-size:var(--fs-14);cursor:pointer}
 .trk:hover{background:var(--bg2)}
-.trk .n{font-family:var(--mono);color:var(--faint);width:26px;font-size:12px;padding-top:2px}
+.trk .n{font-family:var(--mono);color:var(--faint);width:26px;font-size:var(--fs-12);padding-top:2px}
 .trk.reco .t{color:var(--acc)}
-.trk .t{font-family:var(--serif);font-size:16px}
-.trk .why{margin-left:auto;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--gold);align-self:center}
+.trk .t{font-family:var(--serif);font-size:var(--fs-16)}
+.trk .why{margin-left:auto;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;color:var(--gold);align-self:center}
 /* filter tabs */
 .tabs{display:flex;gap:8px;padding:20px 0 8px;flex-wrap:wrap}
-.tab{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;padding:8px 14px;border:1px solid var(--line);color:var(--dim);cursor:pointer}
-.tab:hover{border-color:var(--line2);color:var(--ink)}
-.tab.on{border-color:var(--acc);color:var(--acc)}
+.tab{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;text-transform:uppercase;padding:8px 14px;border:1px solid var(--line);color:var(--dim);cursor:pointer;transition:border-color .16s,color .16s,background .16s}
+.tab:hover:not(.on){border-color:var(--line2);color:var(--ink)}
+.tab.on{border-color:var(--acc);color:var(--acc);background:rgba(200,98,47,.12)}
+.tab.on:hover{border-color:var(--acc);color:var(--acc);background:rgba(200,98,47,.2)}
+.tab.empty{opacity:.55}
+.tab:focus-visible{outline:1px solid var(--acc);outline-offset:2px}
 /* settings */
 .header-tools{display:flex;align-items:center;gap:22px}
-.settings-trigger{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--dim);background:none;border:1px solid var(--line2);padding:6px 10px;cursor:pointer}
+.settings-trigger{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.16em;color:var(--dim);background:none;border:1px solid var(--line2);padding:6px 10px;cursor:pointer}
 .settings-trigger:hover{color:var(--ink);border-color:var(--acc)}
 .settings-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:80;display:grid;place-items:center;padding:24px}
 .settings-dialog{width:min(900px,100%);max-height:min(90vh,820px);overflow:hidden;background:var(--bg2);border:1px solid var(--line2);box-shadow:0 24px 80px rgba(0,0,0,.55);display:flex;flex-direction:column}
 .settings-head{flex:none;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding:26px 26px 16px}
-.settings-head h2{font-family:var(--serif);font-weight:500;font-size:30px}
-.settings-head p,.settings-note{color:var(--dim);font-family:var(--mono);font-size:12px;line-height:1.7;letter-spacing:.04em}
-.settings-close{font-family:var(--mono);font-size:18px;color:var(--dim);background:none;border:0;cursor:pointer;padding:0 4px}
+.settings-head h2{font-family:var(--serif);font-weight:500;font-size:var(--fs-30)}
+.settings-head p,.settings-note{color:var(--dim);font-family:var(--mono);font-size:var(--fs-12);line-height:1.7;letter-spacing:.04em}
+.settings-close{font-family:var(--mono);font-size:var(--fs-18);color:var(--dim);background:none;border:0;cursor:pointer;padding:0 4px}
 .settings-close:hover{color:var(--acc)}
 .settings-section{border-top:1px solid var(--line);padding:18px 0 4px}
 .settings-section:first-child{border-top:0;padding-top:0}
-.settings-section h3{font-family:var(--serif);font-size:20px;font-weight:500;margin-bottom:12px}
+.settings-section h3{font-family:var(--serif);font-size:var(--fs-20);font-weight:500;margin-bottom:12px}
 .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
 .settings-field{display:flex;flex-direction:column;gap:5px;min-width:0}
 .settings-field.wide{grid-column:1/-1}
-.settings-field label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--faint)}
-.settings-field input,.settings-field textarea{font:inherit;font-family:var(--mono);font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:9px 10px;min-height:39px;outline:none}
+.settings-field label{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.1em;color:var(--faint)}
+.settings-field input,.settings-field textarea{font:inherit;font-family:var(--mono);font-size:var(--fs-14);color:var(--ink);background:var(--panel);border:1px solid var(--line2);padding:9px 10px;min-height:39px;outline:none}
 .settings-field textarea{resize:vertical;line-height:1.5}
 .settings-field input:focus,.settings-field textarea:focus{border-color:var(--acc)}
-.settings-check{display:flex;align-items:center;gap:9px;min-height:39px;color:var(--dim);font-family:var(--mono);font-size:12px}
+.settings-check{display:flex;align-items:center;gap:9px;min-height:39px;color:var(--dim);font-family:var(--mono);font-size:var(--fs-12)}
 .settings-check input{accent-color:var(--acc)}
 .settings-key-row{display:flex;align-items:center;gap:8px}
 .settings-key-row input{flex:1;min-width:0}
 .settings-key-row .btn{min-height:39px;white-space:nowrap}
 .settings-form{display:flex;flex-direction:column;min-height:0;flex:1}
 .settings-body{flex:1;min-height:0;overflow:auto;padding:18px 26px 4px}
+/* account center */
+.account-tabs{flex:none;display:flex;gap:8px;border-bottom:1px solid var(--line);padding:0 26px}
+.account-tab{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.18em;color:var(--faint);background:none;border:0;border-bottom:1px solid transparent;padding:12px 4px;cursor:pointer;transition:color .16s,border-color .16s}
+.account-tab:hover{color:var(--dim)}
+.account-tab.on{color:var(--ink);border-bottom-color:var(--acc)}
+.account-section{border-top:1px solid var(--line);padding-top:18px;margin-top:18px}
+.account-section:first-child{border-top:0;padding-top:4px;margin-top:0}
+.account-section h3{font-family:var(--serif);font-weight:500;font-size:var(--fs-22);margin-bottom:4px}
+.account-note{color:var(--dim);font-family:var(--mono);font-size:var(--fs-12);line-height:1.7;letter-spacing:.04em;margin-bottom:12px}
+.account-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;font-family:var(--mono);font-size:var(--fs-12);color:var(--dim)}
+.account-meta span{color:var(--faint);margin-right:8px}
+.account-table{width:100%;border-collapse:collapse;font-size:var(--fs-14)}
+.account-table th,.account-table td{text-align:left;border-top:1px solid var(--line);padding:10px 8px;vertical-align:middle}
+.account-table th{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.12em;color:var(--faint);font-weight:400;text-transform:uppercase}
+.my-history-item{border-top:1px solid var(--line);padding:12px 0}
+.my-history-item:first-child{border-top:0;padding-top:0}
+.my-history-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.history-entries{margin-top:6px}
+.history-entries summary{cursor:pointer;font-family:var(--mono);font-size:var(--fs-12);color:var(--faint);letter-spacing:.08em}
+.history-entries summary:hover{color:var(--dim)}
+.history-entry{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:var(--fs-12);color:var(--dim);padding:4px 0}
+.history-entry .btn{margin-left:auto}
+@media(max-width:700px){.account-meta{grid-template-columns:1fr}.account-table{display:block;overflow:auto;white-space:nowrap}}
 .settings-actions{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--line);padding:18px 26px;background:var(--bg2)}
-.settings-message{color:var(--acc);font-family:var(--mono);font-size:12px;line-height:1.6;min-height:20px;margin-right:auto}
+.settings-message{color:var(--acc);font-family:var(--mono);font-size:var(--fs-12);line-height:1.6;min-height:20px;margin-right:auto}
 .settings-message.error{color:#d98a7a}
 .settings-inline-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-top:14px}
 .settings-inline-actions .btn{min-height:38px;flex:none}
@@ -376,17 +482,34 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .settings-note.error{color:#d98a7a}
 @media(max-width:650px){.header-tools{gap:10px}.header-tools nav{gap:12px}.settings-backdrop{padding:10px}.settings-dialog{max-height:94vh}.settings-head{padding:18px 18px 14px}.settings-body{padding:14px 18px 4px}.settings-actions{padding:16px 18px}.settings-grid{grid-template-columns:1fr}.settings-field.wide{grid-column:auto}}
 /* toast */
-#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:12px;letter-spacing:.08em;padding:13px 22px;transition:.3s;z-index:99;pointer-events:none;max-width:80vw}
+#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--line2);color:var(--ink);font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.08em;padding:13px 22px;transition:.3s;z-index:99;pointer-events:none;max-width:80vw}
 #toast.on{transform:translateX(-50%) translateY(0)}
 body:not(.atlas-ready) #app{visibility:hidden}
 .atlas-status{border-bottom:1px solid #57491f;background:#18140d;color:#d9b96a}
-.atlas-status .wrap{padding-top:9px;padding-bottom:9px;font-family:var(--mono);font-size:12px;letter-spacing:.08em}
-.empty-state{border:1px dashed var(--line2);padding:24px;color:var(--dim);font-family:var(--mono);font-size:13px}
-.load-state{min-height:70vh;display:grid;place-items:center;color:var(--dim);font-family:var(--mono);font-size:14px;letter-spacing:.08em}
-footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px}
-.ft{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;letter-spacing:.2em;color:var(--faint);text-transform:uppercase;line-height:2.2;flex-wrap:wrap;gap:10px}
-.proto-note{font-family:var(--mono);font-size:12px;letter-spacing:.24em;color:var(--faint);text-transform:uppercase;border:1px dashed var(--line2);display:inline-block;padding:5px 12px;margin-bottom:18px}
-.big-sec-title{font-family:var(--serif);font-weight:500;font-size:40px;margin:14px 0 8px}
+.atlas-status .wrap{padding-top:9px;padding-bottom:9px;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.08em}
+.empty-state{border:1px dashed var(--line2);padding:24px;color:var(--dim);font-family:var(--mono);font-size:var(--fs-14)}
+.load-state{min-height:70vh;display:grid;place-items:center;color:var(--dim);font-family:var(--mono);font-size:var(--fs-14);letter-spacing:.08em}
+footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px;flex:none}
+#app{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
+#app>.page{flex:1 0 auto;display:flex;flex-direction:column}
+#app>.page>.v404{flex:1;display:flex;flex-direction:column;justify-content:center}
+/* 系统控件接管：自动填充、密码按钮、数字步进、搜索装饰、滚动条 */
+input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active{-webkit-text-fill-color:var(--ink);-webkit-box-shadow:0 0 0 1000px var(--panel) inset;box-shadow:0 0 0 1000px var(--panel) inset;caret-color:var(--ink);transition:background-color 600000s 0s,color 600000s 0s}
+input::-ms-reveal,input::-ms-clear{display:none}
+input[type=password]::-webkit-credentials-auto-fill-button,input[type=password]::-webkit-strong-password-auto-fill-button{visibility:hidden;display:none!important;pointer-events:none}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+input[type=search]::-webkit-search-cancel-button,input[type=search]::-webkit-search-decoration{-webkit-appearance:none;appearance:none}
+input[type=text],input[type=password],input[type=email],input[type=url],input[type=number],input[type=tel],textarea{-webkit-appearance:none;appearance:none;border-radius:0}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--line2);border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--faint)}
+::-webkit-scrollbar-corner{background:var(--bg)}
+html{scrollbar-width:thin;scrollbar-color:var(--line2) var(--bg)}
+.ft{display:flex;justify-content:space-between;font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.2em;color:var(--faint);text-transform:uppercase;line-height:2.2;flex-wrap:wrap;gap:10px}
+.proto-note{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.24em;color:var(--faint);text-transform:uppercase;border:1px dashed var(--line2);display:inline-block;padding:5px 12px;margin-bottom:18px}
+.big-sec-title{font-family:var(--serif);font-weight:500;font-size:var(--fs-40);margin:14px 0 8px}
 .axis-duo{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:18px}
 @media (max-width:1000px){.trow{grid-template-columns:44px 70px 1fr;gap:16px}.trow>*{padding:16px 0}.trow .info{padding:16px 0}.trow .info::after,.trow .ol::after{display:none}.trow .ol,.trow .plcol{display:none}.collage{display:none}.dgrid{grid-template-columns:1fr}.islands,.cards3,.outgrid{grid-template-columns:1fr}.chain{grid-template-columns:1fr}.axis-duo{grid-template-columns:1fr}}
 @media (max-width:760px){.wf-actions{align-items:stretch}.wf-actions .btn{width:100%}}
@@ -395,6 +518,7 @@ footer{border-top:1px solid var(--line);padding:34px 0 46px;margin-top:30px}
 <body>
 <div id="app"></div>
 <div id="settings-root"></div>
+<div id="account-root"></div>
 <div id="auth-root"></div>
 <div id="toast"></div>
 <script>
@@ -432,7 +556,11 @@ const workflowActive=status=>WORKFLOW_ACTIVE_STATUSES.includes(status);
 const hueFor=s=>{let h=0;for(const c of String(s))h=(h*31+c.charCodeAt(0))%360;return h;};
 const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
  const byId=id=>RECS.find(r=>r.id===decodeURIComponent(id||""));
-const intBy=id=>INTERESTS.find(i=>i.id===id);
+const intBy=raw=>{const key=decodeURIComponent(String(raw||""));const direct=INTERESTS.find(i=>i.id===key)||INTERESTS.find(i=>interestSlug(i)===key);if(direct)return direct;const legacy=key.match(/^(?:agent-|智能助手-)?island-(\d+)$/i);if(legacy)return INTERESTS.find(i=>Number(i.code)===Number(legacy[1]));return undefined;};
+const interestSlug=i=>"island-"+String(Number(i&&i.code)||1);
+const interestHref=v=>{const item=typeof v==="string"?INTERESTS.find(i=>i.id===v):v;return "#/interest/"+(item?interestSlug(item):encodeURIComponent(String(v||"")));};
+const repLines=i=>{const records=Array.isArray(i&&i.sourceRecords)?i.sourceRecords:[];const artists=new Set();for(const r of records){const [title,artist]=String(r.track_key||"").split("\u001f");if(artist)artists.add(artist.trim());}return ((i&&i.repTracks)||[]).map(raw=>{const text=String(raw||"").trim();const parts=text.split(/\s+[—-]\s+/);if(parts.length<2)return text;const [a,b]=parts;if(artists.has(a)&&!artists.has(b))return b+" - "+a;if(artists.has(b)&&!artists.has(a))return a+" - "+b;return b+" - "+a;});};
+const repGroups=i=>{const lines=repLines(i).map(line=>{const parts=String(line||"").split(/\s+-\s+/);return {title:parts[0]||line,artist:parts[1]||""};});return (i.artists||[]).slice(0,10).map(artist=>({artist,items:lines.filter(item=>item.artist===artist).sort((left,right)=>String(left.title).localeCompare(String(right.title),"en",{sensitivity:"base"})).slice(0,5)}));};
 const metaKey=(artist,track)=>artist+"|"+track;
 const metaCache={}; // artist|track → Promise
 function fetchMeta(artist,track){const k=metaKey(artist,track);if(!metaCache[k])metaCache[k]=fetch(`/api/meta?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`).then(r=>r.json()).catch(()=>({ok:false}));return metaCache[k];}
@@ -482,7 +610,7 @@ function hydrate(rootEl){
  });
 }
 
-const cover=(hue,label,o)=>{o=o||{};const data=(o.cover?` data-cover="${esc(o.cover)}"`:"")+(o.artist&&o.track?` data-artist="${esc(o.artist)}" data-track="${esc(o.track)}"`:"");return `<div class="cover ${o.cls||""}" style="${o.style||""}--cover-fallback:linear-gradient(140deg,hsl(${hue} 42% 26%),hsl(${(hue+50)%360} 55% 11%))"${data}>${o.mini?"":'<div class="cl">MA·024</div><div class="frame"></div>'}<span class="ci"${o.ci?` style="${o.ci}"`:""}>${esc(label)}</span></div>`;};
+const cover=(hue,label,o)=>{o=o||{};const data=(o.cover?` data-cover="${esc(o.cover)}"`:"")+(o.artist&&o.track?` data-artist="${esc(o.artist)}" data-track="${esc(o.track)}"`:"");return `<div class="cover ${o.cls||""}" style="${o.style||""}--cover-fallback:linear-gradient(140deg,hsl(${hue} 42% 26%),hsl(${(hue+50)%360} 55% 11%))"${data}>${o.mini?"":'<div class="frame"></div>'}<span class="ci"${o.ci?` style="${o.ci}"`:""}>${esc(label)}</span></div>`;};
 const repKey=i=>{const p=(i.repTracks[0]||"").split(" — ");return {artist:p[0]||"",track:p[1]||""};};
 const tcls=t=>t==="style"?"t-style":t==="ext"?"t-ext":t==="rel"?"t-rel":"t-exp";
 const typeChip=r=>`<span class="typechip ${tcls(r.type)}">${r.typeLabel}</span>`;
@@ -512,8 +640,11 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
 
  let ATLAS=null;
  let ATLAS_GROUP_INDEX=0;
+ let SOURCE_PAGE_SIZE=10;
+ let SOURCE_PAGE_INDEX=1;
+ let myHistoryItems=[];
  let TASTE=null;
- const statusText=s=>({complete:"已完成",completed:"已完成",confirmed:"已确认",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"",pending:"待处理",pending_verification:"待独立核验",completed_with_gaps:"已完成（有资料缺口）",accepted:"已通过",rejected:"未通过",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知",insufficient_evidence:"证据不足",offline:"本地核验",analysis:"程序分析",recommendation:"推荐生成",research:"公开资料研究",lastfm:"音乐资料",lastfm_agent:"公开资料",public_facts_only:"公开资料",csv:"歌单文件",netease_public:"网易云公开歌单",qq_public:"QQ 音乐公开歌单",apple_music:"Apple Music 歌单",PlaylistSnapshot:"歌单快照",ready_for_export:"已准备发布"}[String(s||"").toLowerCase()]||s||"未知");
+ const statusText=s=>{const t={complete:"已完成",completed:"已完成",confirmed:"已确认",running:"运行中",queued:"排队中",failed:"失败",degraded:"覆盖不足",ready:"已生成",draft:"",pending:"待处理",pending_verification:"待独立核验",completed_with_gaps:"已完成（有资料缺口）",accepted:"已通过",rejected:"未通过",unconfirmed:"待确认",incomplete:"不完整",not_available:"不可用",unknown:"未知",insufficient_evidence:"证据不足",offline:"本地核验",analysis:"程序分析",recommendation:"推荐生成",research:"公开资料研究",lastfm:"音乐资料",lastfm_agent:"公开资料",public_facts_only:"公开资料",csv:"歌单文件",netease_public:"网易云公开歌单",qq_public:"QQ 音乐公开歌单",apple_music:"Apple Music 歌单",playlistsnapshot:"歌单快照",ready_for_export:"已准备发布"}[String(s||"").toLowerCase()];return t===undefined?(s||"未知"):t;};
  function statusBanner(){
   if(!ATLAS||!ATLAS.status||guestMode())return"";
   const s=ATLAS.status;const notes=[];
@@ -535,14 +666,33 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
   }
   return [...groups.entries()].sort((a,b)=>b[1].records.length-a[1].records.length||a[0].localeCompare(b[0])).map(([key,g],index)=>{
    const tracks=g.records.map(r=>{const [title,artist]=(r.track_key||"").split("\u001f");return {title:title||"未知曲目",artist:artist||"未知艺人"};});
-   return {id:"lastfm-"+key,code:String(index+1).padStart(2,"0"),name:g.name,genres:[g.name],summary:`${g.records.length} 首曲目 · 按来源中的首个风格标签整理`,hue:(25+index*37)%360,axes:null,artists:[...new Set(tracks.map(t=>t.artist))],repTracks:tracks.map(t=>t.artist+" — "+t.title),sourceRecords:g.records};
+   return {id:"lastfm-"+key,code:String(index+1).padStart(2,"0"),name:g.name,genres:[g.name],summary:`${g.records.length} 首曲目`,hue:(25+index*37)%360,axes:null,artists:[...new Set(tracks.map(t=>t.artist))],repTracks:tracks.map(t=>t.artist+" — "+t.title),sourceRecords:g.records};
   });
  }
- function islandSources(i){if(!i.sourceRecords)return "";return `<details class="island-sources"><summary>曲目与来源（${i.sourceRecords.length} 首）</summary>${i.sourceRecords.map(r=>{const [title,artist]=(r.track_key||"").split("\u001f");const safe=/^https:\/\/www\.last\.fm\//.test(r.url||"");return `<div class="rep" style="margin-top:16px"><strong>${esc(title)} — ${esc(artist)}</strong><br>${(r.tags||[]).map(t=>esc(t.tag)).join(" · ")||"暂无标签"}<br>${esc(({track:"单曲标签",album:"专辑标签",artist:"艺人标签"})[r.scope]||"待补充资料")}${safe?` · <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">资料来源 ↗</a>`:""}</div>`;}).join("")}</details>`;}
- function publicAtlasCopy(value){
-  if(Array.isArray(value))return value.map(publicAtlasCopy);
-  if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,publicAtlasCopy(v)]));
-  if(typeof value==="string"&&!/^https?:\/\//i.test(value)){
+ function islandSources(i){if(!i.sourceRecords)return "";return `<details class="island-sources" data-source-island="${esc(i.id)}">${islandSourcesInner(i)}</details>`;}
+function islandSourcesInner(i){
+ const records=i.sourceRecords||[];const total=records.length;
+ const size=SOURCE_PAGE_SIZE===5?5:10;
+ const pages=Math.max(1,Math.ceil(total/size));
+ const page=Math.min(Math.max(SOURCE_PAGE_INDEX,1),pages);
+ const scopeLabels={track:"单曲标签",album:"专辑标签",artist:"艺人标签"};
+ const rows=records.slice((page-1)*size,page*size).map((r,index)=>{
+  const title=r.title||(r.track_key||"").split("\u001f")[0]||"";
+  const artist=r.artist||(r.track_key||"").split("\u001f")[1]||"";
+  const tags=Array.isArray(r.tags)?r.tags:[];
+  const shown=tags.slice(0,5);const rest=tags.slice(5);const more=tags.length-shown.length;
+  const safe=/^https:\/\/www\.last\.fm\//.test(r.url||"");
+  return `<div class="source-row"><div class="source-rank">${String((page-1)*size+index+1).padStart(2,"0")}</div><div class="source-main"><div class="source-title">${esc(title)}</div><div class="source-artist">${esc(artist)}</div><div class="source-tags">${shown.map(t=>`<span class="source-tag">${esc(t.tag)}</span>`).join("")}${more>0?`<span class="source-tag more" data-rest="${esc(rest.map(t=>t.tag).join("、"))}" data-source-tags-toggle data-expanded="0">+${more}</span>${rest.map(t=>`<span class="source-tag rest" hidden>${esc(t.tag)}</span>`).join("")}`:""}${tags.length?"":'<span class="source-tag more">暂无标签</span>'}</div></div><div class="source-side"><span class="source-scope">${esc(scopeLabels[r.scope]||"待补充资料")}</span>${safe?`<a class="source-link" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">资料来源 ↗</a>`:""}</div></div>`;
+ }).join("");
+ const pageButtons=[];let ellipsis=false;
+ for(let n=1;n<=pages;n++){if(pages<=7||n===1||n===pages||Math.abs(n-page)<=1){pageButtons.push(`<button type="button" class="source-page${n===page?" on":""}" data-source-page="${n}"${n===page?" disabled":""}>${n}</button>`);ellipsis=false;}else if(!ellipsis){pageButtons.push('<span class="source-page-info">…</span>');ellipsis=true;}}
+ return `<summary>曲目与来源（${total} 首）</summary><div class="source-toolbar"><div class="source-sizes">${[5,10].map(n=>`<button type="button" class="source-size${n===size?" on":""}" data-source-size="${n}">${n} 首/页</button>`).join("")}</div><div class="source-pager"><button type="button" class="source-page" data-source-page="${page-1}"${page<=1?" disabled":""}>上一页</button>${pageButtons.join("")}<button type="button" class="source-page" data-source-page="${page+1}"${page>=pages?" disabled":""}>下一页</button><span class="source-page-info">共 ${pages} 页</span></div></div><div class="source-list">${rows}</div>`;
+}
+  const COPY_SKIP_KEYS=new Set(["id","interest","track_key","snapshot_id","analysis_id","job_id","playlist_id","platform_track_id","reused_analysis_id"]);
+ function publicAtlasCopy(value,skip=false){
+  if(Array.isArray(value))return value.map(item=>publicAtlasCopy(item,skip));
+  if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,publicAtlasCopy(v,skip||COPY_SKIP_KEYS.has(k))]));
+  if(!skip&&typeof value==="string"&&!/^https?:\/\//i.test(value)){
    return value.replace(/last[\s.\-]*fm/gi,"音乐资料").replace(/\bFavorite Songs\b/gi,"喜欢的歌曲").replace(/\bAgent\b/gi,"智能助手");
   }
   return value;
@@ -563,12 +713,12 @@ const detailHTML=d=>Object.entries({preference_basis:"偏好底色",music_fit:"�
   document.title=ISSUE.title?"Music Atlas · "+ISSUE.title:"Music Atlas";
  }
  function applyWorkflowConfig(payload){const incoming=payload&&payload.workflow?payload.workflow:null;if(incoming)WORKFLOW=Object.assign({},WORKFLOW,incoming);if(payload&&payload.active_job_id&&!ACTIVE_JOB_ID)ACTIVE_JOB_ID=payload.active_job_id;if(!LATEST_JOB_ID)LATEST_JOB_ID=payload&&payload.latest_job_id||storedWorkflowJobId();}
- function authHeader(){return CURRENT_USER?`<span class="auth-user"><span>${esc(CURRENT_USER.username)}</span><button type="button" data-auth-logout>退出</button></span>`:`<button type="button" class="auth-link" data-auth-open>登录</button>`;}
- function authModal(mode="login",message="",error=false){const root=document.getElementById("auth-root");if(!root)return;const isRegister=mode==="register";root.innerHTML=`<div class="auth-backdrop" data-auth-close><section class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div class="auth-head"><div><h2 id="auth-title">${isRegister?"创建账号":"登录 Music Atlas"}</h2><p>${AUTH_REQUIRED?"登录后保存歌单并运行分析":"登录后保存个人歌单与运行记录"}</p></div><button type="button" class="auth-close" data-auth-close>×</button></div><div class="auth-tabs"><button type="button" class="auth-tab ${isRegister?"":"on"}" data-auth-mode="login">登录</button><button type="button" class="auth-tab ${isRegister?"on":""}" data-auth-mode="register">注册</button></div><form class="auth-form" data-auth-form data-mode="${mode}"><div class="auth-field"><label for="auth-username">用户名</label><input id="auth-username" name="username" autocomplete="username" minlength="3" maxlength="64" required></div><div class="auth-field"><label for="auth-password">密码</label><input id="auth-password" name="password" type="password" autocomplete="${isRegister?"new-password":"current-password"}" minlength="8" maxlength="200" required></div><div class="auth-message ${error?"error":message?"ok":""}" data-auth-message>${esc(message)}</div><button class="btn primary" type="submit">${isRegister?"创建账号":"登录"}</button></form></section></div>`;root.querySelector("#auth-username")?.focus();}
+ function authHeader(){return CURRENT_USER?`<span class="auth-user"><button type="button" class="auth-name" data-account-open>${esc(CURRENT_USER.username)}</button><button type="button" data-auth-logout>退出</button></span>`:`<button type="button" class="auth-link" data-auth-open>登录</button>`;}
+ function authModal(mode="login",message="",error=false){const root=document.getElementById("auth-root");if(!root)return;const isRegister=mode==="register";const remembered=(()=>{try{return localStorage.getItem("atlas_remembered_username")||"";}catch{return "";}})();root.innerHTML=`<div class="auth-backdrop" data-auth-close><section class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div class="auth-head"><div><div class="gate-card-kicker">MUSIC ATLAS</div><h2 id="auth-title">${isRegister?"创建账号":"登录 Music Atlas"}</h2><p>${AUTH_REQUIRED?"登录后保存歌单并运行分析":"登录后保存歌单与运行记录"}</p></div><button type="button" class="auth-close" data-auth-close aria-label="关闭">×</button></div><div class="auth-tabs" role="tablist"><button type="button" role="tab" class="auth-tab ${isRegister?"":"on"}" data-auth-mode="login" aria-selected="${isRegister?"false":"true"}">登录</button><button type="button" role="tab" class="auth-tab ${isRegister?"on":""}" data-auth-mode="register" aria-selected="${isRegister?"true":"false"}">注册</button></div><form class="auth-form" data-auth-form data-mode="${mode}"><div class="auth-field"><label for="auth-username">用户名</label><input id="auth-username" name="username" value="${isRegister?"":esc(remembered)}" autocomplete="username" minlength="3" maxlength="64" required></div><div class="auth-field"><label for="auth-password">密码</label><span class="auth-input"><input id="auth-password" name="password" type="password" autocomplete="${isRegister?"new-password":"current-password"}" minlength="8" maxlength="200" required><button type="button" class="auth-eye" data-auth-eye aria-label="显示密码">显示</button></span></div>${isRegister?`<div class="auth-field"><label for="auth-password2">确认密码</label><span class="auth-input"><input id="auth-password2" name="password_confirm" type="password" autocomplete="new-password" minlength="8" maxlength="200" required><button type="button" class="auth-eye" data-auth-eye aria-label="显示确认密码">显示</button></span></div>`:""}${isRegister?"":`<label class="auth-remember"><input type="checkbox" data-auth-remember checked><span>记住账号</span></label>`}<div class="auth-message ${error?"error":message?"ok":""}" data-auth-message aria-live="polite">${esc(message)}</div><button class="btn primary" type="submit">${isRegister?"创建账号":"登录"}</button></form></section></div>`;const dialog=root.querySelector(".auth-dialog"),usernameInput=root.querySelector("#auth-username"),pwd=root.querySelector("#auth-password");if(!isRegister&&remembered&&pwd)pwd.focus();else usernameInput?.focus();root.querySelectorAll("[data-auth-eye]").forEach(button=>{const input=button.closest(".auth-input")?.querySelector("input");if(!input)return;button.addEventListener("click",()=>{const show=input.type==="password";input.type=show?"text":"password";button.textContent=show?"隐藏":"显示";button.setAttribute("aria-label",show?"隐藏密码":"显示密码");input.focus();});});if(dialog)dialog.addEventListener("keydown",e=>{if(e.key!=="Tab")return;const nodes=Array.from(dialog.querySelectorAll("button,input")).filter(n=>!n.disabled);if(!nodes.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});if(!authModal._escBound){authModal._escBound=true;document.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.getElementById("auth-root")?.innerHTML)closeAuth();});}}
  function closeAuth(){const root=document.getElementById("auth-root");if(root)root.innerHTML="";}
  async function loadAuth(){try{const response=await fetch("/api/auth/me",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){CURRENT_USER=payload.user||null;AUTH_REQUIRED=Boolean(payload.auth_required);}}catch{}refreshAuthChrome();}
  function refreshAuthChrome(){const node=document.querySelector("[data-auth-slot]");if(node)node.innerHTML=authHeader();}
- async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();render();renderPlaylistHistory();toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
+ async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");const password=form.querySelector("#auth-password")?.value||"";const confirm=form.querySelector("#auth-password2");if(mode==="register"&&confirm&&confirm.value!==password){if(message){message.textContent="两次输入的密码不一致";message.className="auth-message error";}confirm.focus();return;}if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());delete body.password_confirm;const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const rememberNode=form.querySelector("[data-auth-remember]");const remember=mode==="register"?true:Boolean(rememberNode?.checked);const name=String(body.username||CURRENT_USER.username||"").trim();if(remember&&name)localStorage.setItem("atlas_remembered_username",name);else if(!remember)localStorage.removeItem("atlas_remembered_username");}catch{}try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();render();renderPlaylistHistory();toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
  async function bootAtlas(){
   const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
   const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
@@ -588,12 +738,24 @@ const footer=()=>guestMode()?`<footer><div class="wrap ft"><span>MUSIC ATLAS</sp
 
 /* ================= VIEWS ================= */
 const guestMode=()=>AUTH_REQUIRED&&!CURRENT_USER;
-function vGuest(){return`<section class="hero"><div class="wrap" style="position:relative;min-height:62vh;display:flex;flex-direction:column;justify-content:center">
- <div class="proto-note">音乐版图</div>
- <h1>把你的歌单，<br><em>变成一张音乐版图。</em></h1>
- <p class="lede">登录或注册后，保存你的歌单配置，生成专属的兴趣岛、音乐人路径与推荐。</p>
- <div class="btnrow" style="margin-top:28px"><button type="button" class="btn primary" data-auth-open>登录</button><button type="button" class="btn" data-auth-open data-auth-open-mode="register">创建账号</button></div>
- </div></section>`;}
+function vGuest(){return`<section class="gate"><div class="wrap gate-grid">
+ <div class="gate-copy">
+  <div class="gate-kicker"><b>01</b> 音乐版图</div>
+  <h1>把你的歌单，<em>变成一张音乐版图。</em></h1>
+  <p class="gate-lede">登录或注册后，保存你的歌单配置，生成专属的兴趣岛、音乐人路径与推荐。</p>
+  <ul class="gate-points">
+   <li><b>01</b> 保存歌单与每一次运行记录</li>
+   <li><b>02</b> 把收藏整理成专属兴趣岛</li>
+   <li><b>03</b> 每条推荐都附公开证据与来源</li>
+  </ul>
+ </div>
+ <aside class="gate-card">
+  <h2>进入你的 Atlas</h2>
+  <p>已有账号直接登录；创建账号后即可保存歌单、运行分析。</p>
+  <div class="gate-actions"><button type="button" class="btn primary" data-auth-open>登录</button><button type="button" class="btn" data-auth-open data-auth-open-mode="register">创建账号</button></div>
+  <p class="gate-note">登录只用于保存歌单与运行记录，不会用于个性化推荐。</p>
+ </aside>
+</div></section>`;}
 function vDiscover(){
  if(guestMode())return vGuest();
  const n=RECS.length;
@@ -603,7 +765,7 @@ function vDiscover(){
   "left:60px;top:170px;width:180px;height:180px;transform:rotate(6deg);z-index:4;",
   "left:280px;top:170px;width:170px;height:170px;transform:rotate(-2deg);z-index:1;",
  ];
- const collage=RECS.slice(0,4).map((r,i)=>cover(r.hue,r.track,{cls:"cc",style:collageSpec[i],ci:"font-size:24px",cover:r.cover,artist:r.artist,track:r.track})).join("");
+ const collage=RECS.slice(0,4).map((r,i)=>cover(r.hue,r.track,{cls:"cc",style:collageSpec[i],ci:"font-size:var(--fs-24)",cover:r.cover,artist:r.artist,track:r.track})).join("");
   const related=RECS.filter(r=>r.type==="rel")[0];
   const similarPath=RECS.find(r=>r.type!=="rel"&&Array.isArray(r.route)&&r.route.some(step=>step&&step[1]==="相似艺人"));
   const chainItem=related||similarPath;
@@ -619,43 +781,45 @@ ${TASTE?`<div class="wrap"><section class="sec" id="taste-review">
   <div class="sec-hd"><h2>品味锐评</h2><span class="sub">${TASTE.mode==="artist_summary"?"歌手分布 · 整体分析":"歌名与歌手 · 整体分析"}</span></div>
   <div style="border:1px solid var(--line2);background:var(--bg2,#15120d);padding:22px 24px">
    <p class="kicker" style="margin-bottom:8px">${esc(TASTE.headline)}</p>
-   <p class="lede" style="font-size:16px">${esc(TASTE.review)}</p>
+   <p class="lede" style="font-size:var(--fs-16)">${esc(TASTE.review)}</p>
    <p class="kicker" style="margin:18px 0 8px">内心世界</p>
-   <p class="lede" style="font-size:16px">${esc(TASTE.inner_world)}</p>
-   ${(TASTE.humor_notes||[]).map(note=>`<p class="lede" style="font-size:15px;color:var(--dim);margin-top:10px">◈ ${esc(note.note)} <span style="font-size:12px">（幽默化推演，非心理学判断）</span></p>`).join("")}
-   <p style="margin-top:14px;font-size:12px;color:var(--dim)">以上为基于清单整体推断的描述性锐评，不代表事实核验结果。</p>
+   <p class="lede" style="font-size:var(--fs-16)">${esc(TASTE.inner_world)}</p>
+   ${(TASTE.humor_notes||[]).map(note=>`<p class="lede" style="font-size:var(--fs-16);color:var(--dim);margin-top:10px">◈ ${esc(note.note)} <span style="font-size:var(--fs-12)">（幽默化推演，非心理学判断）</span></p>`).join("")}
+   <p style="margin-top:14px;font-size:var(--fs-12);color:var(--dim)">以上为基于清单整体推断的描述性锐评，不代表事实核验结果。</p>
   </div>
  </section></div>`:""}
 <div class="wrap">
  <section class="sec">
   <div class="sec-hd"><h2>Atlas</h2>${atlasGroupTools()||`<span class="sub">${n} 首 · 按推荐顺序</span>`}</div>
-  ${n?RECS.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",cover:r.cover,artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join(""):`<div class="empty-state">当前运行没有可展示的推荐结果。</div>`}
+  ${n?RECS.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:var(--fs-32)",cover:r.cover,artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join(""):`<div class="empty-state">本期还没有推荐结果。</div>`}
  </section>
  <section class="sec">
   <div class="sec-hd"><h2>轨道延伸</h2><span class="sub">从本期兴趣组向外一步</span></div>
-  <div class="cards3">${RECS.slice(0,3).map(r=>`<div class="card" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track,{style:"height:230px;",ci:"font-size:36px",cover:r.cover,artist:r.artist,track:r.track})}<div class="cbody">${typeChip(r)}<h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)}</div><p>${esc(r.oneLiner)}</p></div></div>`).join("")||`<div class="empty-state">暂无轨道延伸。</div>`}</div>
+  <div class="cards3">${RECS.slice(0,3).map(r=>`<div class="card" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track,{style:"height:230px;",ci:"font-size:var(--fs-36)",cover:r.cover,artist:r.artist,track:r.track})}<div class="cbody">${typeChip(r)}<h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)}</div><p>${esc(r.oneLiner)}</p></div></div>`).join("")||`<div class="empty-state">还没有轨道延伸。</div>`}</div>
  </section>
  <section class="sec">
-   <div class="sec-hd"><h2>音乐人链路</h2><span class="sub">${chainItem?(chainIsRelation?"真实音乐人关系 · 本期路径":"相似艺人路径 · 公开相似线索"):"本期没有可展示的音乐人路径"}</span></div>
-   ${chainItem?`<div class="chain"><div><div class="kicker">${chainIsRelation?"音乐人关系":"相似艺人路径"}</div><div class="chainbig">${esc(chainItem.artist)}<br><span style="color:var(--dim);font-size:12px;font-style:normal;margin-bottom:6px;display:inline-block">→ ${chainIsRelation?"关系路径":"相似路径"}</span><br>${esc(chainItem.track)}</div><p class="lede" style="margin-top:14px;font-size:16px">${esc(chainItem.oneLiner)}</p></div><div class="chainstep-col">${chainItem.route.map(s=>`<div class="chainstep"><span class="node"></span><span>${esc(s[1])}</span><span class="ln"></span></div>`).join("")}</div></div>`:`<div class="empty-state">当前推荐包没有可展示的音乐人路径。</div>`}
+   <div class="sec-hd"><h2>音乐人链路</h2><span class="sub">${chainItem?(chainIsRelation?"真实音乐人关系 · 本期路径":"相似艺人路径 · 公开相似线索"):"本期还没有音乐人路径"}</span></div>
+   ${chainItem?`<div class="chain"><div><div class="kicker">${chainIsRelation?"音乐人关系":"相似艺人路径"}</div><div class="chainbig">${esc(chainItem.artist)}<br><span style="color:var(--dim);font-size:var(--fs-12);font-style:normal;margin-bottom:6px;display:inline-block">→ ${chainIsRelation?"关系路径":"相似路径"}</span><br>${esc(chainItem.track)}</div><p class="lede" style="margin-top:14px;font-size:var(--fs-16)">${esc(chainItem.oneLiner)}</p></div><div class="chainstep-col">${chainItem.route.map(s=>`<div class="chainstep"><span class="node"></span><span>${esc(s[1])}</span><span class="ln"></span></div>`).join("")}</div></div>`:`<div class="empty-state">本期还没有音乐人路径。</div>`}
  </section>
  <section class="sec">
   <div class="sec-hd"><h2>更远处</h2><span class="sub">主动离开舒适区 · 探索推荐</span></div>
-  <div class="outgrid">${explorers.map(r=>`<div class="outcard" data-go="#/why/${encodeURIComponent(r.id)}"><div class="ob">轨道之外 · ${r.typeLabel}</div><h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)} · ${esc(r.album)}${r.year&&r.year!=="—"?` (${r.year})`:""}</div><p>${esc(r.oneLiner)}</p></div>`).join("")||`<div class="empty-state">本期没有探索推荐。</div>`}</div>
+  <div class="outgrid">${explorers.map(r=>`<div class="outcard" data-go="#/why/${encodeURIComponent(r.id)}"><div class="ob">轨道之外 · ${r.typeLabel}</div><h3>${esc(r.track)}</h3><div class="car">${esc(r.artist)} · ${esc(r.album)}${r.year&&r.year!=="—"?` (${r.year})`:""}</div><p>${esc(r.oneLiner)}</p></div>`).join("")||`<div class="empty-state">本期还没有探索推荐。</div>`}</div>
  </section>
 </div>`;}
 function vAtlas(f){f=f||"all";const list=RECS.filter(r=>f==="all"||r.type===f);
- const tabs=[["all",`全部 ${RECS.length} 首`],["style","风格邻近"],["ext","艺人延伸"],["rel","音乐人关系"],["exp","探索推荐"]];
+ const counts={};RECS.forEach(r=>{counts[r.type]=(counts[r.type]||0)+1;});
+ const tabs=[["all",`全部 ${RECS.length} 首`],["style",`风格邻近 ${counts.style||0}`],["ext",`艺人延伸 ${counts.ext||0}`],["rel",`音乐人关系 ${counts.rel||0}`],["exp",`探索推荐 ${counts.exp||0}`]];
+ const emptyHints={style:"本期没有风格邻近候选。",ext:"本期没有艺人延伸候选（平台召回为空）。",rel:"本期没有音乐人关系候选（公开关系资料不足）。",exp:"本期没有探索推荐候选。"};
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / Atlas</div>
  <div class="sec-hd"><h1 class="big-sec-title">Atlas</h1>${atlasGroupTools()}</div>
- <div class="tabs">${tabs.map(([k,l])=>`<span class="tab ${f===k?"on":""}" data-tab="${k}">${l}</span>`).join("")}</div>
- ${list.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:32px",cover:r.cover,artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join("")||`<div class="empty-state">当前筛选没有结果。</div>`}
+ <div class="tabs">${tabs.map(([k,l])=>`<span class="tab ${f===k?"on":""}${k!=="all"&&!counts[k]?" empty":""}" data-tab="${k}">${l}</span>`).join("")}</div>
+ ${list.map(r=>`<div class="trow"><div class="rank">${String(r.rank).padStart(2,"0")}</div><div class="cvgo" data-go="#/why/${encodeURIComponent(r.id)}">${cover(r.hue,r.track.substring(0,2),{style:"width:92px;height:92px;flex:none;",ci:"font-size:var(--fs-32)",cover:r.cover,artist:r.artist,track:r.track})}</div><div class="info" data-go="#/why/${encodeURIComponent(r.id)}">${typeChip(r)}<div class="tt">${esc(r.track)}</div><div class="ar">${esc(r.artist)}<br><span class="alb">${esc(r.album)}</span></div></div><div class="ol">${esc(r.oneLiner)}</div>${openRow(r)}</div>`).join("")||`<div class="empty-state">${emptyHints[f]||"本期没有该类型的推荐。"}</div>`}
  <div style="height:60px"></div></div>`;}
 function vWhy(id){const r=byId(id);if(!r)return v404();
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / <a href="#/atlas">Atlas</a> / 推荐依据</div>
  <div class="dgrid"><div>
    <div class="dcover">
-   ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",cover:r.cover,artist:r.artist,track:r.track})}
+   ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:var(--fs-56)",cover:r.cover,artist:r.artist,track:r.track})}
  </div>
    ${openBtns(r)}
  </div><div>
@@ -672,7 +836,7 @@ function vTrack(id){const r=byId(id);if(!r)return v404();
  const interest=intBy(r.interest);
  return`<div class="wrap"><div class="crumb"><a href="#/atlas">Atlas</a> / 曲目</div>
  <div class="dgrid"><div>
-  ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:56px",cover:r.cover,artist:r.artist,track:r.track})}
+  ${cover(r.hue,r.track.substring(0,2),{style:"height:320px;",ci:"font-size:var(--fs-56)",cover:r.cover,artist:r.artist,track:r.track})}
   ${openBtns(r)}
  </div><div>
   <div class="proto-note">${r.typeLabel} · 第 ${String(r.rank).padStart(2,"0")} 位</div>
@@ -681,7 +845,7 @@ function vTrack(id){const r=byId(id);if(!r)return v404();
   <div class="metatab">
    <div><span>发行项目</span><a href="#/album/${encodeURIComponent(r.album)}">${esc(r.album)}</a></div>
    ${r.year&&r.year!=="—"?`<div><span>年份</span>${esc(r.year)}</div>`:""}${r.country?`<div><span>地区</span>${esc(r.country)}</div>`:""}
-   <div><span>兴趣岛</span>${interest?`<a href="#/interest/${encodeURIComponent(interest.id)}">${esc(interest.code+" · "+interest.name)}</a>`:"—"}</div>
+   <div><span>兴趣岛</span>${interest?`<a href="${interestHref(interest)}">${esc(interest.code+" · "+interest.name)}</a>`:"—"}</div>
   </div>
   <p class="quoted" style="margin:18px 0">${esc(r.oneLiner)}</p>
   ${r.details?detailHTML(r.details):`<p class="explain">${esc(r.why)}</p>`}
@@ -693,7 +857,7 @@ function vAlbum(name){const al=ALBUMS[decodeURIComponent(name)];if(!al)return v4
  const recsHere=RECS.filter(r=>r.album===nm);const r0=recsHere[0];
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 专辑</div>
  <div class="dgrid"><div>
-  ${cover(r0?r0.hue:220,nm.substring(0,2),{style:"height:320px;",ci:"font-size:56px",cover:al.cover||(r0&&r0.cover),artist:al.artist,track:recsHere[0]?recsHere[0].track:al.tracks[0]})}
+  ${cover(r0?r0.hue:220,nm.substring(0,2),{style:"height:320px;",ci:"font-size:var(--fs-56)",cover:al.cover||(r0&&r0.cover),artist:al.artist,track:recsHere[0]?recsHere[0].track:al.tracks[0]})}
   ${r0?openBtns(r0):""}
  </div><div>
    <div class="proto-note">发行项目</div>
@@ -703,7 +867,7 @@ function vAlbum(name){const al=ALBUMS[decodeURIComponent(name)];if(!al)return v4
   <p class="explain" style="margin-bottom:20px">${esc(al.blurb)}</p>
   <div class="metatab"><div><span>本期收录数</span>${al.tracks.length}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>esc(r.track)).join(" · "):"—"}</div></div>
   <h3 class="kicker" style="margin:14px 0 8px">本期收录曲目</h3>
-   ${al.tracks.length?al.tracks.map((t,i)=>{const rec=recsHere.find(r=>r.track===t);return`<div class="trk ${rec?"reco":""}" ${rec?`data-go="#/track/${encodeURIComponent(rec.id)}"`:""}><span class="n">${String(i+1).padStart(2,"0")}</span><span class="t">${esc(t)}</span>${rec?`<span class="why">入选曲目 ↗</span>`:""}</div>`;}).join(""):`<div class="empty-state">当前运行没有该发行项目的曲目清单。</div>`}
+   ${al.tracks.length?al.tracks.map((t,i)=>{const rec=recsHere.find(r=>r.track===t);return`<div class="trk ${rec?"reco":""}" ${rec?`data-go="#/track/${encodeURIComponent(rec.id)}"`:""}><span class="n">${String(i+1).padStart(2,"0")}</span><span class="t">${esc(t)}</span>${rec?`<span class="why">入选曲目 ↗</span>`:""}</div>`;}).join(""):`<div class="empty-state">这张发行项目还没有曲目清单。</div>`}
  </div></div></div>`;}
 function vArtist(name){const nm=decodeURIComponent(name);const a=ARTISTS[nm];
  if(!a){return v404("艺术家研究记录尚未建立");}
@@ -713,14 +877,14 @@ function vArtist(name){const nm=decodeURIComponent(name);const a=ARTISTS[nm];
  const axis=a.axis|| (recsHere[0]?recsHere[0].axis:(anchor?anchor.axes:null));
  return`<div class="wrap"><div class="crumb"><a href="#/discover">发现</a> / 艺术家</div>
  <div class="dgrid"><div>
-  ${cover(hueFor(nm),nm,{style:"height:320px;",ci:"font-size:44px;font-style:normal;letter-spacing:.04em",artist:nm,track:recsHere[0]?recsHere[0].track:(rep?rep.track:"")})}
+  ${cover(hueFor(nm),nm,{style:"height:320px;",ci:"font-size:var(--fs-44);font-style:normal;letter-spacing:.04em",artist:nm,track:recsHere[0]?recsHere[0].track:(rep?rep.track:"")})}
   ${recsHere[0]?openBtns(recsHere[0]):""}
  </div><div>
   <div class="proto-note">艺术家档案 · 研究笔记</div>
   <h1 class="dtitle">${esc(nm)}</h1>
   <div class="dsub">${[a.origin,a.years].filter(Boolean).map(esc).join(" · ")}</div>
   ${recsHere[0]&&recsHere[0].details?`<h3 class="kicker" style="margin:18px 0 8px">本期风格连接</h3><p class="explain">${esc(recsHere[0].details.music_fit)}</p><h3 class="kicker" style="margin:18px 0 8px">探索方向</h3><p class="explain">${esc(recsHere[0].details.novelty)}</p>`:`<p class="explain">${esc(a.bio||"本期研究未提供艺人简介。")}</p>`}
-  <div class="metatab"><div><span>风格</span>${esc((a.genres||[]).join(" / ")||"—")}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>`<a href="#/track/${encodeURIComponent(r.id)}">${esc(r.track)}</a>`).join(" · "):"—"}</div><div><span>品味连接</span>${anchor?`<a href="#/interest/${encodeURIComponent(anchor.id)}">${esc(anchor.code+" · "+anchor.name)}</a>`:recsHere[0]&&intBy(recsHere[0].interest)?`<a href="#/interest/${encodeURIComponent(recsHere[0].interest)}">${esc(intBy(recsHere[0].interest).code+" · "+intBy(recsHere[0].interest).name)}</a>`:"—"}</div></div>
+  <div class="metatab"><div><span>风格</span>${esc((a.genres||[]).join(" / ")||"—")}</div><div><span>入选曲目</span>${recsHere.length?recsHere.map(r=>`<a href="#/track/${encodeURIComponent(r.id)}">${esc(r.track)}</a>`).join(" · "):"—"}</div><div><span>品味连接</span>${anchor?`<a href="${interestHref(anchor)}">${esc(anchor.code+" · "+anchor.name)}</a>`:recsHere[0]&&intBy(recsHere[0].interest)?`<a href="${interestHref(recsHere[0].interest)}">${esc(intBy(recsHere[0].interest).code+" · "+intBy(recsHere[0].interest).name)}</a>`:"—"}</div></div>
   ${a.relations&&a.relations.length?`<h3 class="kicker" style="margin:16px 0 8px">艺术家关联</h3>${a.relations.map(([to,ty,note])=>`<div class="metatab" style="border-top:none"><div style="border-bottom:1px solid var(--line)"><span>${esc(ty)}</span><span style="color:var(--ink)">${esc(to)}</span></div><div style="border-bottom:none"><span>备注</span>${esc(note)}</div></div>`).join("")}`:""}
   ${axis?`<h3 class="kicker" style="margin:16px 0 8px">听感画像</h3><div class="axis-duo"><div>${axisBars(axis)}</div><div>${radar(axis,"#c9a227",220)}<div class="disclaim" style="margin-top:8px">描述性画像 · 非实测音频特征</div></div></div>`:""}
  </div></div></div>`;}
@@ -728,19 +892,19 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  <h1 class="big-sec-title">音乐版图</h1>
  <p class="lede" style="max-width:640px">本期歌单被整理为 ${INTERESTS.length} 个兴趣区域，展示熟悉的声音，也标出下一步的延伸方向。</p>
   <div class="islands">${INTERESTS.map(i=>{const ext=RECS.filter(r=>r.interest===i.id).length;
-   return`<div class="island" data-go="#/interest/${encodeURIComponent(i.id)}"><div class="code">${esc(i.code)} ·</div><h3>${esc(i.name)}</h3><div class="genres">${(i.genres||[]).map(esc).join("<br>")||"—"}</div><p>${esc(i.summary)}</p>${i.axes?radar(i.axes,"hsl("+i.hue+" 45% 55%)",180):""}<div class="rep">代表艺人<br>${(i.artists||[]).slice(0,4).map(esc).join("<br>")||"—"}<br><br>${i.sourceRecords?`查看 ${i.sourceRecords.length} 首曲目与来源`:`延伸推荐 ${ext} 条`} ↗</div></div>`;}).join("")||`<div class="empty-state">当前运行没有兴趣组。</div>`}</div>
+   return`<div class="island" data-go="${interestHref(i)}"><div class="code">${esc(i.code)} ·</div><h3>${esc(i.name)}</h3><div class="genres">${(i.genres||[]).map(esc).join("<br>")||"—"}</div><p>${esc(i.summary)}</p>${i.axes?radar(i.axes,"hsl("+i.hue+" 45% 55%)",180):""}<div class="rep">代表艺人<br>${(i.artists||[]).slice(0,4).map(esc).join("<br>")||"—"}<br><br>${i.sourceRecords?`查看 ${i.sourceRecords.length} 首曲目与来源`:`延伸推荐 ${ext} 条`} ↗</div></div>`;}).join("")||`<div class="empty-state">本期还没有兴趣岛。</div>`}</div>
  <div class="disclaim">${ATLAS?.sourceTags?.length?"按来源标签整理兴趣岛；专辑与艺人标签保留其适用范围。":"描述性画像 · 非实测音频特征"}</div></div>`;}
- function vInterest(id){const interestId=decodeURIComponent(id||"");const i=intBy(interestId);if(!i)return v404();const ext=RECS.filter(r=>r.interest===interestId);
+ function vInterest(id){const interestId=decodeURIComponent(id||"");const i=intBy(interestId);if(!i)return v404();SOURCE_PAGE_INDEX=1;const ext=RECS.filter(r=>r.interest===i.id);
  const rep=repKey(i);
- return`<div class="wrap"><div class="crumb"><a href="#/taste">音乐版图</a> / 兴趣岛 ${i.code}</div>
+ return`<div class="wrap"><div class="crumb"><a href="#/taste">音乐版图</a> / ${esc(i.name)}</div>
  <div class="dgrid"><div>
-  ${cover(i.hue,i.name,{style:"height:320px;",ci:"font-size:40px;font-style:normal",artist:rep.artist,track:rep.track})}
+  ${cover(i.hue,i.name,{style:"height:320px;",ci:"font-size:var(--fs-40);font-style:normal",artist:rep.artist,track:rep.track})}
  </div><div>
-  <div class="proto-note">兴趣岛 ${i.code}</div>
+  <div class="proto-note">兴趣岛 ${i.code} · ${esc(i.name)}</div>
   <h1 class="dtitle">${esc(i.name)}</h1>
-  <div class="dsub">${(i.genres||[]).map(esc).join(" · ")||"—"}</div>
+  ${(i.genres||[]).length?`<div class="dsub">${(i.genres||[]).map(esc).join(" · ")}</div>`:""}
   <p class="explain">${esc(i.summary)}</p>
-  <div class="metatab"><div><span>核心艺人</span>${(i.artists||[]).map(a=>i.sourceRecords?esc(a):`<a href="#/artist/${encodeURIComponent(a)}">${esc(a)}</a>`).join(" · ")||"—"}</div><div><span>代表曲目</span>${(i.repTracks||[]).slice(0,5).map(esc).join(" · ")||"—"}</div></div>
+  <div class="interest-meta"><div><span>代表艺人</span><div class="artist-groups">${repGroups(i).length?repGroups(i).map(group=>`<div class="artist-group"><div class="artist-name">${i.sourceRecords?esc(group.artist):`<a href="#/artist/${encodeURIComponent(group.artist)}">${esc(group.artist)}</a>`}</div>${group.items.length?`<div class="artist-tracks">${group.items.map(item=>`<div class="meta-line">${esc(item.title)}</div>`).join("")}</div>`:""}</div>`).join(""):'<div class="meta-line">—</div>'}</div></div></div>
   ${i.axes?`<h3 class="kicker" style="margin:16px 0 8px">听感轮廓</h3><div class="axis-duo"><div>${axisBars(i.axes)}</div><div>${radar(i.axes,"hsl("+i.hue+" 45% 55%)",220)}</div></div>`:""}
   ${islandSources(i)}
   <h3 class="kicker" style="margin:22px 0 8px">延伸自本岛的推荐（${ext.length}）</h3>
@@ -753,19 +917,19 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  function workflowStageRank(stage){return WORKFLOW_STAGE_ORDER.indexOf(stage);}
  function workflowEventText(event){
   if(event.event==="queued")return event.workflow_mode==="recommendation_only"?"新 Atlas 已加入生成队列":"已进入处理队列";
-  if(event.event==="started"&&event.stage==="recommendation"&&event.reused_analysis_id)return"复用当前分析，开始生成新 Atlas";
+  if(event.event==="started"&&event.stage==="recommendation"&&event.reused_analysis_id)return"沿用已有分析，生成新 Atlas";
   if(event.event==="failed")return event.error?`本次处理未完成 · ${event.error}`:"本次处理未完成";
   if(event.event==="stage_detail")return event.message||"正在准备当前阶段";
   if(event.event==="awaiting_limit")return`歌单已读取 · ${event.track_count||0} 首`;
   if(event.event==="limit_applied")return`已确定分析范围 · 前 ${event.track_count||0} 首`;
-  if(event.event==="limit_rejected")return`分析分位未被接受 · ${event.error||"请重新选择"}`;
+  if(event.event==="limit_rejected")return`分析范围未被接受 · ${event.error||"请重新选择"}`;
   if(event.task_kind==="snapshot_import")return event.event==="task_completed"?`歌单已读取 · ${event.track_count||event.track_completed||0} 首`:"正在读取歌单";
-  if(event.task_kind==="track_limit")return event.task_status==="validated"?`已确定分析范围 · 前 ${event.track_count||0} 首`:"等待选择分析分位";
+  if(event.task_kind==="track_limit")return event.task_status==="validated"?`已确定分析范围 · 前 ${event.track_count||0} 首`:"等待选择分析范围";
   if(event.task_kind==="analysis_batch"){
    const index=event.task_index||0,total=event.task_total||0,count=event.track_count||0;
    if(event.event==="task_started")return`第 ${index}/${total} 批进入分析 · ${count} 首`;
    if(event.event==="task_completed")return`第 ${index}/${total} 批已完成 · 累计 ${event.track_completed||0}/${event.track_total||0} 首`;
-   if(event.event==="task_failed")return`第 ${index}/${total} 批未完成 · ${event.error||"请检查任务日志"}`;
+   if(event.event==="task_failed")return`第 ${index}/${total} 批未完成 · ${event.error||"展开运行日志查看详情"}`;
   }
   if(event.task_kind==="analysis_aggregate")return event.event==="task_completed"?"分析内容通过校验":"正在整理分析结果";
   if(event.task_kind==="context_prepare")return event.event==="task_completed"?"推荐研究上下文已准备":"正在准备候选研究上下文";
@@ -785,7 +949,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   if(event.task_kind==="recommendation_round"){
    if(event.event==="round_started")return event.message||`第 ${event.round||0}/${event.round_total||0} 轮开始`;
    if(event.event==="round_completed")return event.message||`第 ${event.round||0} 轮完成 · 已接收 ${event.accepted_candidate_count||0} 个候选`;
-   if(event.event==="round_failed")return`第 ${event.round||0} 轮未完成 · ${event.error||"请检查任务日志"}`;
+   if(event.event==="round_failed")return`第 ${event.round||0} 轮未完成 · ${event.error||"展开运行日志查看详情"}`;
   }
   if(event.stage==="snapshot"&&event.event==="started")return"正在读取歌单";
   if(event.stage==="snapshot"&&event.event==="completed")return`歌单已读取 · ${event.track_count||0} 首`;
@@ -823,27 +987,28 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  function workflowEventKey(event,index){return String(event&&event.seq!==undefined?event.seq:`legacy-${index}`);}
  const WORKFLOW_PIPELINE_STEPS={
   snapshot:[
-   {key:"snapshot_import",title:"歌单读取",detail:"读取平台歌单并核对曲目数量"},
-   {key:"track_limit",title:"分析分位选择",detail:"按歌单总数确定本次分析范围"},
+   {key:"snapshot_import",title:"歌单读取",detail:"读取歌单并核对曲目数量"},
+   {key:"track_limit",title:"分析范围",detail:"确定本次分析范围"},
   ],
   analysis:[
-   {key:"track_fact_collect",title:"曲目事实与版本核验",detail:"从公开平台记录核对曲名、艺人、版本与来源"},
-   {key:"agent_style_analysis",title:"智能助手整体风格与兴趣岛",detail:"根据已取得的资料总结整体风格并归纳三大兴趣岛"},
-   {key:"relationship_collect",title:"成员、合作与共享音乐人核验",detail:"从公开目录取得可追溯的音乐人关系"},
-   {key:"analysis_packet_validate",title:"分析包最终校验",detail:"核对曲目覆盖、来源边界与兴趣岛结构"},
+   {key:"track_fact_collect",title:"曲目核验",detail:"核对曲名、艺人与版本"},
+   {key:"agent_style_analysis",title:"风格与兴趣岛",detail:"归纳整体风格与三大兴趣岛"},
+   {key:"relationship_collect",title:"音乐人关系",detail:"取得可追溯的音乐人关系"},
+   {key:"analysis_packet_validate",title:"分析校验",detail:"核对曲目覆盖与来源边界"},
   ],
   recommendation:[
-   {key:"platform_discovery",title:"公开平台候选召回",detail:"排除完整原歌单及一周缓存后构造真实候选池"},
-   {key:"agent_recommendation_curate",title:"智能助手候选编排与推荐文案",detail:"只使用真实候选编号，生成三组 Atlas 所需编排与文案"},
-   {key:"recommendation_review",title:"本地事实、来源与去重复核",detail:"校验候选数量、来源、跨组重复和三组 Atlas 结构"},
-   {key:"atlas_export",title:"三组 Atlas 导出",detail:"生成网页数据并更新当前 Atlas"},
+   {key:"platform_discovery",title:"候选召回",detail:"排除原歌单与近期缓存，构造候选池"},
+   {key:"agent_recommendation_curate",title:"候选编排与文案",detail:"编排候选顺序并生成推荐文案"},
+   {key:"recommendation_review",title:"事实与去重复核",detail:"复核数量、来源与跨组重复"},
+   {key:"atlas_export",title:"Atlas 导出",detail:"生成三组 Atlas 并更新页面"},
   ],
   export:[
-   {key:"atlas_export",title:"Atlas 导出",detail:"生成网页数据并更新当前 Atlas"},
+   {key:"atlas_export",title:"Atlas 导出",detail:"生成网页数据并更新页面"},
   ],
  };
  function workflowTaskState(event){return event&&(
   event.event==="task_failed"||event.task_status==="failed"||event.task_status==="timeout")?"failed":event&&(
+  event.event==="task_skipped"||event.task_status==="skipped")?"skipped":event&&(
   event.event==="task_started"||event.task_status==="running")?"running":"done";}
  function workflowLatestTask(events,kind){let found=null,order=-1;events.forEach((event,index)=>{if(event.task_kind!==kind)return;const next=Number.isFinite(Number(event.seq))?Number(event.seq):index;if(next>=order){found=event;order=next;}});return found;}
  function workflowHasEvent(events,predicate){return events.some(predicate);}
@@ -863,40 +1028,56 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
    if(workflowHasEvent(events,event=>event.stage==="recommendation"&&event.event==="stage_detail"&&String(event.message||"").includes("Agent")))return"running";
   }
   if(key==="recommendation_review"){
-   if(recommendationDone||workflowHasEvent(events,event=>event.task_kind==="platform_discovery"&&event.event==="task_completed"))return"done";
+   if(recommendationDone)return"done";
+   if(workflowHasEvent(events,event=>event.task_kind==="agent_recommendation_curate"&&event.event==="task_completed"))return"running";
   }
   return"waiting";
  }
  function workflowStepDetail(step,event){
   if(!event)return step.detail;
-  if(step.key==="track_fact_collect"&&event.event==="task_completed")return`已核验 ${event.verified_count||0} 首 · 有来源 ${event.source_recorded_count||0} 首 · 未确认 ${event.unverified_count||0} 首`;
-  if(step.key==="agent_style_analysis"&&event.event==="task_completed")return"已生成兴趣岛";
-  if(step.key==="relationship_collect"&&event.event==="task_completed")return"已选出代表歌手";
-  if(step.key==="analysis_packet_validate"&&event.event==="task_completed")return"分析内容通过校验";
-  if(step.key==="platform_discovery"&&event.event==="task_completed")return"Atlas 候选已准备";
-  if(step.key==="agent_recommendation_curate"&&event.event==="task_completed")return"Atlas 匹配完成";
-  if(step.key==="recommendation_review"&&event.event==="task_completed")return"Atlas 校验完成";
-  if(step.key==="atlas_export"&&event.event==="task_completed")return"迎接你的 Atlas";
+  if(step.key==="track_fact_collect"&&event.event==="task_completed")return`核验 ${event.verified_count||0} 首`;
+  if(step.key==="agent_style_analysis"&&event.event==="task_completed")return"兴趣岛已生成";
+  if(step.key==="relationship_collect"&&event.event==="task_completed")return"代表艺人已核验";
+  if(step.key==="analysis_packet_validate"&&event.event==="task_completed")return"校验通过";
+  if(step.key==="platform_discovery"&&event.event==="task_completed")return`候选 ${event.candidate_count||0} 首已准备`;
+  if(step.key==="agent_recommendation_curate"&&event.event==="task_completed")return"编排完成";
+  if(step.key==="recommendation_review"&&event.event==="task_completed")return"复核通过";
+  if(step.key==="atlas_export"&&event.event==="task_completed")return"页面已更新";
   return event.error||event.message||step.detail;
  }
  function workflowPipelineRecords(job,group,recommendationOnly=false){
   const events=Array.isArray(job&&job.events)?job.events:[];
   const definitions=WORKFLOW_PIPELINE_STEPS[group]||[];
   const records=definitions.map(step=>{
-   if(recommendationOnly&&(group==="snapshot"||group==="analysis"))return{...step,state:"reused",detail:"沿用当前音乐版图中已校验的结果",event:null};
+   if(recommendationOnly&&(group==="snapshot"||group==="analysis"))return{...step,state:"reused",detail:"沿用已有分析",event:null};
    const event=workflowLatestTask(events,step.key);let state=event?workflowTaskState(event):workflowLegacyStepState(events,step.key);
    if(job.status==="failed"&&state==="running")state="failed";
-   return{...step,state,detail:workflowStepDetail(step,event),event};
+   let detail=workflowStepDetail(step,event);
+   // 失败时最后一条事件可能仍是“进行中”，不能把进行中的话术当作失败说明。
+   if(state==="failed"&&event&&event.event==="task_started")detail="未完成（任务中断或超时）";
+   return{...step,state,detail,event};
   });
   if(job.status==="failed"&&!records.some(item=>item.state==="failed")){
    const effectiveStage=workflowEffectiveStage(job,events);const targetGroup=effectiveStage==="analysis"?"analysis":effectiveStage==="recommendation"||effectiveStage==="export"?"recommendation":"";
    if(group===targetGroup){const target=[...records].reverse().find(item=>item.state==="done")||null;const index=target?records.indexOf(target)+1:0;if(index<records.length&&records[index].state==="waiting")records[index].state="failed";}
   }
+  // 顺序一致性：推荐阶段是流水线，下游任务不能越过上游（多轮交替事件下防止“后面的已完成、前面的还在进行”）。
+  if(group==="recommendation"){
+   let blocked=false;
+   for(const item of records){
+    if(blocked&&(item.state==="done"||item.state==="running"||item.state==="reused")){
+     item.state="waiting";item.event=null;const base=definitions.find(step=>step.key===item.key);if(base)item.detail=base.detail;
+    }
+    if(item.state==="running"||item.state==="waiting"||item.state==="failed")blocked=true;
+   }
+  }
   return records;
  }
  function workflowPipelineMarkup(item){
-  const status=item.state==="running"?"进行中":item.state==="failed"?"失败":item.state==="done"?"已完成":item.state==="reused"?"已复用":"等待";
-  return`<div class="wf-task-row ${esc(item.state)}" data-task-key="${esc(item.key)}"><div><span class="wf-task-name">${esc(item.title)}</span><span class="wf-task-detail">${esc(item.detail)}</span></div><span class="wf-task-state">${status}</span></div>`;
+  const status=item.state==="running"?"进行中":item.state==="failed"?"失败":item.state==="done"?"已完成":item.state==="reused"?"已复用":item.state==="skipped"?"已跳过":"等待";
+  // 只说明这一步做什么：等待、进行中与失败保留说明，完成态不再叠统计。
+  const showDetail=item.state!=="done"&&item.state!=="reused"&&item.state!=="skipped";
+  return`<div class="wf-task-row ${esc(item.state)}" data-task-key="${esc(item.key)}"><div><span class="wf-task-name">${esc(item.title)}</span>${showDetail?`<span class="wf-task-detail">${esc(item.detail)}</span>`:""}</div><span class="wf-task-state">${status}</span></div>`;
  }
  function workflowSyncPipelineList(container,records){
   if(!container)return;const signature=JSON.stringify(records.map(item=>[item.key,item.state,item.title,item.detail]));if(container.dataset.signature===signature)return;container.dataset.signature=signature;container.innerHTML=records.map(workflowPipelineMarkup).join("");
@@ -953,8 +1134,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   events.forEach(event=>{const error=event&&event.error?` | 错误: ${String(event.error).replace(/\s+/g," ")}`:"";lines.push(`[${workflowEventTime(event.at)}] ${workflowStageLabel(event.stage)} | ${workflowEventText(event)}${error}`);});
   const stderr=String(job&&job.stderr_tail||"").trim();lines.push("","标准错误输出（最近 2000 字）",stderr||"无标准错误输出");return lines.join("\n");
  }
- function workflowPanelStat(records){const done=records.filter(item=>item.state==="done"||item.state==="reused").length,failed=records.some(item=>item.state==="failed"),running=records.some(item=>item.state==="running"),reused=records.length>0&&records.every(item=>item.state==="reused");return failed?`失败 · ${done}/${records.length}`:running?`进行中 · ${done}/${records.length}`:reused?`分析包已复用 · ${done}/${records.length}`:done===records.length?`已完成 · ${done}/${records.length}`:`等待 · ${done}/${records.length}`;}
- function workflowStageStateText(state){return state==="done"?"已完成":state==="reused"?"已复用":state==="failed"?"失败":state==="current"?"进行中":"等待";}
+  function workflowStageStateText(state){return state==="done"?"已完成":state==="reused"?"已复用":state==="failed"?"失败":state==="current"?"进行中":"等待";}
  function workflowSyncStagePanels(flow,job,events,recommendationOnly){
   WORKFLOW_STAGE_ORDER.forEach(stage=>{
    const panel=flow.querySelector(`[data-wf-stage-panel="${stage}"]`);if(!panel)return;
@@ -971,7 +1151,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   if(!active&&!terminal){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
   flow.classList.add("on");const jobId=String(job.id||"");let step=flow.querySelector(".fstep");
   if(!step||flow.dataset.jobId!==jobId){
-   flow.innerHTML=`<div class="wf-dashboard"><div class="fstep"></div><div class="wf-stagebar" role="list">${WORKFLOW_STAGE_ORDER.map((stage,index)=>`<div class="wf-stage" data-stage="${stage}" role="listitem"><span class="wf-stage-index">0${index+1}</span><span class="wf-stage-label">${workflowStageLabel(stage)}</span><span class="wf-stage-state">等待</span></div>`).join("")}</div><div class="wf-summary"><span class="wf-summary-main" data-wf-summary>正在处理歌单</span><span data-wf-elapsed>00:00</span><span class="wf-summary-count" data-wf-count>准备中</span></div><div class="wf-terminal-error" data-wf-terminal-error></div><div class="wf-stage-panels"><details class="wf-stage-panel" data-wf-stage-panel="snapshot"><summary><span>第一步 · 整理歌单</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="snapshot">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note">读取歌单、确认曲目数量并确定分析分位。</p><div class="wf-task-list" data-wf-tasks="snapshot"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="analysis"><summary><span>第二步 · 分析歌单</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="analysis">等待</span></summary><div class="wf-stage-panel-body"><div class="wf-panel-head"><span class="wf-panel-stat" data-wf-stat="analysis">等待 · 0/4</span></div><p class="wf-panel-note" data-wf-note="analysis">按真实性边界逐项取得资料、生成总结并完成校验。</p><div class="wf-task-list" data-wf-tasks="analysis"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="recommendation"><summary><span>第三步 · 生成推荐</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="recommendation">等待</span></summary><div class="wf-stage-panel-body"><div class="wf-panel-head"><span class="wf-panel-stat" data-wf-stat="recommendation">等待 · 0/4</span></div><p class="wf-panel-note" data-wf-note="recommendation">第二步校验通过后，依次召回、编排、复核和生成 Atlas。</p><div class="wf-task-list" data-wf-tasks="recommendation"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="export"><summary><span>第四步 · 更新 Atlas</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="export">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note">整理最终结果并更新当前 Atlas。</p><div class="wf-task-list" data-wf-tasks="export"></div></div></details></div><div class="wf-log-tools"><button type="button" class="wf-log-button" data-wf-log-toggle aria-expanded="false">查看运行日志</button><button type="button" class="wf-log-button" data-wf-log-copy>复制日志</button></div><div class="wf-log-panel hidden" data-wf-log-panel><pre data-wf-log-text></pre></div></div>`;
+   flow.innerHTML=`<div class="wf-dashboard"><div class="fstep"></div><div class="wf-stagebar" role="list">${WORKFLOW_STAGE_ORDER.map((stage,index)=>`<div class="wf-stage" data-stage="${stage}" role="listitem"><span class="wf-stage-index">0${index+1}</span><span class="wf-stage-label">${workflowStageLabel(stage)}</span><span class="wf-stage-state">等待</span></div>`).join("")}</div><div class="wf-summary"><span class="wf-summary-main" data-wf-summary>正在处理歌单</span><span data-wf-elapsed>00:00</span><span class="wf-summary-count" data-wf-count>准备中</span></div><div class="wf-terminal-error" data-wf-terminal-error></div><div class="wf-stage-panels"><details class="wf-stage-panel" data-wf-stage-panel="snapshot"><summary><span>第一步 · 整理歌单</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="snapshot">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note">读取歌单，确定本次分析范围。</p><div class="wf-task-list" data-wf-tasks="snapshot"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="analysis"><summary><span>第二步 · 分析歌单</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="analysis">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note" data-wf-note="analysis">逐曲核验公开资料，归纳风格与兴趣岛。</p><div class="wf-task-list" data-wf-tasks="analysis"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="recommendation"><summary><span>第三步 · 生成推荐</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="recommendation">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note" data-wf-note="recommendation">寻找候选、复核后生成三组 Atlas。</p><div class="wf-task-list" data-wf-tasks="recommendation"></div></div></details><details class="wf-stage-panel" data-wf-stage-panel="export"><summary><span>第四步 · 更新 Atlas</span><span class="wf-stage-panel-state" data-wf-stage-panel-state="export">等待</span></summary><div class="wf-stage-panel-body"><p class="wf-panel-note">发布结果，更新当前 Atlas。</p><div class="wf-task-list" data-wf-tasks="export"></div></div></details></div><div class="wf-log-tools"><button type="button" class="wf-log-button" data-wf-log-toggle aria-expanded="false">查看运行日志</button><button type="button" class="wf-log-button" data-wf-log-copy>复制日志</button></div><div class="wf-log-panel hidden" data-wf-log-panel><pre data-wf-log-text></pre></div></div>`;
    flow.dataset.jobId=jobId;step=flow.querySelector(".fstep");
   }
   const view=workflowProgressView(job),events=view.events;
@@ -980,19 +1160,27 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   WORKFLOW_STAGE_ORDER.forEach(stage=>{const node=flow.querySelector(`[data-stage="${stage}"]`);if(!node)return;const state=workflowStageState(stage,job,events,view.recommendationOnly);node.className=`wf-stage ${state}`;const stateNode=node.querySelector(".wf-stage-state");if(stateNode)stateNode.textContent=state==="done"?"已完成":state==="reused"?"已复用":state==="failed"?"失败":state==="current"?"进行中":"等待";});
   const snapshotRecords=workflowPipelineRecords(job,"snapshot",view.recommendationOnly),analysisRecords=workflowPipelineRecords(job,"analysis",view.recommendationOnly),recommendationRecords=workflowPipelineRecords(job,"recommendation",view.recommendationOnly),exportRecords=workflowPipelineRecords(job,"export",view.recommendationOnly);
   workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="snapshot"]'),snapshotRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="analysis"]'),analysisRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="recommendation"]'),recommendationRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="export"]'),exportRecords);workflowSyncStagePanels(flow,job,events,view.recommendationOnly);
-  const analysisStat=flow.querySelector('[data-wf-stat="analysis"]'),recommendationStat=flow.querySelector('[data-wf-stat="recommendation"]');if(analysisStat)analysisStat.textContent=workflowPanelStat(analysisRecords);if(recommendationStat)recommendationStat.textContent=workflowPanelStat(recommendationRecords);
   const summary=flow.querySelector("[data-wf-summary]"),count=flow.querySelector("[data-wf-count]"),analysisNote=flow.querySelector('[data-wf-note="analysis"]'),recommendationNote=flow.querySelector('[data-wf-note="recommendation"]');
   if(summary)summary.textContent=completed?(view.recommendationOnly?"新 Atlas 已生成 · 网页数据已更新":"运行已完成 · Atlas 已更新"):failed?`运行未完成 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`:view.recommendationOnly?(job.status==="queued"?"新 Atlas 排队中":"正在生成新 Atlas"):`${job.status==="queued"?"排队中":job.status==="awaiting_limit"?"等待选择处理数量":"正在处理"} · ${workflowStageLabel(workflowEffectiveStage(job,events))}`;
   const limitView=workflowLimitView(job);if(count)count.textContent=failed?`退出码 ${job.exit_code===null||job.exit_code===undefined?"—":job.exit_code}`:view.recommendationOnly?(completed?`${view.candidateCount||view.totalUniqueRecommendations||0} 个候选已核验${view.atlasGroupCount?` · ${view.atlasGroupCount} 组 Atlas`:""}`:"正在生成新候选"):limitView?`歌单已读取 ${limitView.maximum} 首`:completed?`${view.analysisTrackCompleted||view.analysisTrackTotal||0} 首已分析 · ${view.atlasGroupCount||3} 组 Atlas`:`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
-  if(analysisNote)analysisNote.textContent=view.recommendationOnly?"沿用当前音乐版图的已校验分析，本次不重新分析歌单。":"曲目事实、智能助手风格总结、音乐人关系和分析包校验均独立显示状态。";
-  if(recommendationNote)recommendationNote.textContent="第二步校验通过后，依次召回真实候选、智能助手编排、本地复核并生成三组 Atlas。";
-  const terminalError=flow.querySelector("[data-wf-terminal-error]");if(terminalError){terminalError.classList.toggle("on",failed);terminalError.textContent=failed?`失败原因：${workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。"}`:"";}
+  if(analysisNote){const scaleEvent=(Array.isArray(events)?events:[]).find(event=>event&&event.event==="started"&&event.stage==="analysis"&&typeof event.analysis_mode==="string");const scale=scaleEvent?scaleEvent.analysis_mode:"";analysisNote.textContent=view.recommendationOnly?"沿用已有分析，本次不重新分析。":scale==="taste_summary"?"品味摘要模式：跳过逐曲核验。":scale==="artist_summary"?"歌手摘要模式：按歌手分布整体分析。":"逐曲核验公开资料，归纳风格与兴趣岛。";}
+  if(recommendationNote)recommendationNote.textContent="寻找候选、复核后生成三组 Atlas。";
+  const terminalError=flow.querySelector("[data-wf-terminal-error]");
+  if(terminalError){
+   terminalError.classList.toggle("on",failed);
+   if(failed&&job.status==="failed"&&!active){
+    const detail=workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。";
+    terminalError.innerHTML=`失败原因：${esc(detail)}<button class="btn tiny" type="button" data-wf-resume="${esc(job.id)}">续跑（跳过已完成步骤）</button>`;
+   }else{
+    terminalError.textContent=failed?`失败原因：${workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。"}`:"";
+   }
+  }
   const logText=flow.querySelector("[data-wf-log-text]");if(logText)logText.textContent=workflowLogText(job);workflowUpdateClock(job);
  }
  async function responseJson(response, fallbackMessage){
   const contentType=String(response.headers.get("content-type")||"").toLowerCase();
   if(!contentType.includes("application/json")){
-   throw new Error(response.status===404?"新 Atlas 接口尚未加载，请刷新页面后重试":fallbackMessage);
+   throw new Error(response.status===404?"页面还没准备好，请刷新后重试":fallbackMessage);
   }
   try{return await response.json();}catch{throw new Error(fallbackMessage);}
  }
@@ -1000,13 +1188,24 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   try{const response=await fetch("/api/atlas",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){applyAtlasPayload(payload);render();}}catch{}
  }
  function setWorkflowButtonBusy(busy){const active=Boolean(busy),form=document.getElementById("workflow-form"),button=form&&form.querySelector('button[type="submit"]');if(button)button.disabled=active||!(WORKFLOW.analysis_executor_configured&&WORKFLOW.recommendation_executor_configured);document.querySelectorAll("[data-atlas-new]").forEach(atlasButton=>{atlasButton.disabled=active;});}
-/* ---------------- 分位选择（歌单已读取后选择） ---------------- */
+/* ---------------- 分析范围选择（歌单已读取后选择） ---------------- */
 const TRACK_PERCENTILE_OPTIONS=[0.25,0.5,1];
+function reuseAgeText(iso){
+ const at=Date.parse(iso||"");if(!Number.isFinite(at))return"刚刚";
+ const minutes=Math.max(0,Math.round((Date.now()-at)/60000));
+ if(minutes<60)return`${minutes} 分钟`;
+ const hours=Math.round(minutes/60);
+ return hours<24?`${hours} 小时`:`${Math.round(hours/24)} 天`;
+}
+function extractPlaylistUrl(text){
+ const matches=String(text||"").match(/https?:\/\/[^\s"'<>，。；、」』）】]+/g)||[];
+ const cleaned=matches.map(item=>item.replace(/[)\]）】}>,.;；，。」』]+$/g,""));
+ return cleaned.find(item=>/music\.apple\.com|music\.163\.com|163cn\.tv|y\.qq\.com|i\.y\.qq\.com/i.test(item))||"";
+}
 function workflowPercentileDefault(){const preferred=Number(USER_PREFERENCES&&USER_PREFERENCES.track_percentile_default);if(TRACK_PERCENTILE_OPTIONS.includes(preferred))return preferred;const value=Number(WORKFLOW&&WORKFLOW.track_percentile_default);return TRACK_PERCENTILE_OPTIONS.includes(value)?value:1;}
 function percentileTrackLimit(maximum,percentile){return Math.max(1,Math.ceil(maximum*percentile));}
 /* 只有歌单真实读完后工作流才会进入 awaiting_limit；上限来自该事件携带的曲目数。 */
-function workflowLimitView(job){
- if(!job||job.status!=="awaiting_limit")return null;
+function workflowLimitView(job){ if(!job||job.status!=="awaiting_limit")return null;
  const events=Array.isArray(job.events)?job.events:[];
  for(let index=events.length-1;index>=0;index--){
   const event=events[index];
@@ -1016,7 +1215,7 @@ function workflowLimitView(job){
  }
  return null;
 }
-/* 分位按歌单真实总数向上取整，只显示 25%、50% 与 100%。 */
+/* 分析范围按歌单真实总数向上取整，只显示 25%、50% 与 100%。 */
 function renderLimitChips(maximum){
  const chips=document.getElementById("wf-limit-chips");if(!chips)return;
  const percentileValues=TRACK_PERCENTILE_OPTIONS.map(percentile=>({percentile,limit:percentileTrackLimit(maximum,percentile)}));
@@ -1029,9 +1228,9 @@ function limitFieldError(message){
  const active=Boolean(message);field.classList.toggle("has-error",active);input.setAttribute("aria-invalid",active?"true":"false");error.textContent=message||"";
 }
 function currentLimitValue(){
- const input=document.getElementById("wf-limit");if(!input)return{ok:false,message:"请选择分析分位。"};
+ const input=document.getElementById("wf-limit");if(!input)return{ok:false,message:"请选择分析范围。"};
  const maximum=Number(input.dataset.maximum),percentile=Number(input.dataset.percentile);
- if(!Number.isInteger(maximum)||maximum<1||!TRACK_PERCENTILE_OPTIONS.includes(percentile))return{ok:false,message:"请选择 25%、50% 或 100% 分位。"};
+ if(!Number.isInteger(maximum)||maximum<1||!TRACK_PERCENTILE_OPTIONS.includes(percentile))return{ok:false,message:"请选择 25%、50% 或 100% 的分析范围。"};
  const value=percentileTrackLimit(maximum,percentile);
  return{ok:true,value,percentile};
 }
@@ -1050,7 +1249,7 @@ function syncLimitControls(job){
  panel.classList.remove("hidden");confirm.classList.remove("hidden");cancel.classList.remove("hidden");submit.classList.add("hidden");
  const maximumNode=document.getElementById("wf-limit-max"),note=document.getElementById("wf-limit-note");
  if(maximumNode)maximumNode.textContent=String(view.maximum);
- if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。请选择 25%（${percentileTrackLimit(view.maximum,0.25)} 首）、50%（${percentileTrackLimit(view.maximum,0.5)} 首）或 100%（全部）；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择分析分位。`;
+ if(note)note.textContent=view.timeout>0?`歌单已读取，共 ${view.maximum} 首。请选择 25%（${percentileTrackLimit(view.maximum,0.25)} 首）、50%（${percentileTrackLimit(view.maximum,0.5)} 首）或 100%（全部）；${Math.max(1,Math.round(view.timeout/60))} 分钟内未提交则本次任务失败。`:`歌单已读取，共 ${view.maximum} 首，请选择分析范围。`;
  renderLimitChips(view.maximum);
  if(input&&input.dataset.jobId!==job.id){
   const percentile=workflowPercentileDefault();input.dataset.jobId=job.id;input.dataset.maximum=String(view.maximum);input.value=String(percentileTrackLimit(view.maximum,percentile));input.dataset.percentile=String(percentile);limitFieldError("");
@@ -1063,7 +1262,7 @@ function syncLimitControls(job){
   if(workflowFinishedJobId===job.id)return;workflowFinishedJobId=job.id;
   const recommendationOnly=workflowProgressView(job).recommendationOnly;
   if(job.status==="completed"){await refreshAtlas();toast(recommendationOnly?"新 Atlas 已生成，网页数据已更新":"歌单分析与推荐已完成，网页数据已更新");}
-  else if(job.status==="failed"){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else{const detail=workflowFailureDetail(job),prefix=recommendationOnly?"新 Atlas 生成未完成":"歌单处理未完成";toast(detail?`${prefix}：${detail}`:`${prefix}，请检查本机运行日志。`);}}
+  else if(job.status==="failed"){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else{const detail=workflowFailureDetail(job),prefix=recommendationOnly?"新 Atlas 生成未完成":"歌单处理未完成";toast(detail?`${prefix}：${detail}`:`${prefix}，展开运行日志查看详情。`);}}
  }
  /* 失败原因优先取失败事件里的 error，其次取子进程 stderr 最后一行，避免只提示“看日志”。 */
  function workflowFailureDetail(job){
@@ -1097,18 +1296,28 @@ function syncLimitControls(job){
   const active=Boolean(message);field.classList.toggle("has-error",active);input.setAttribute("aria-invalid",active?"true":"false");error.textContent=message||"";
  }
  const PLAYLIST_HISTORY_KEY="music-atlas.playlists.v1";
+ const PLAYLIST_PLATFORM_LABELS={apple_music:"Apple Music",netease:"网易云音乐",netease_public:"网易云音乐",qq_music:"QQ 音乐",qq_public:"QQ 音乐"};
+ function playlistPlatformKey(row){
+  const key=String(row&&row.platform||"").trim();if(PLAYLIST_PLATFORM_LABELS[key])return key;
+  const url=String(row&&row.url||"");
+  if(/music\.apple\.com/i.test(url))return "apple_music";
+  if(/music\.163\.com|163cn\.tv/i.test(url))return "netease";
+  if(/y\.qq\.com/i.test(url))return "qq_music";
+  return "";
+ }
+ function playlistPlatformLabel(row){return PLAYLIST_PLATFORM_LABELS[playlistPlatformKey(row)]||"";}
  function playlistHistory(){try{const rows=JSON.parse(localStorage.getItem(PLAYLIST_HISTORY_KEY)||"[]");return Array.isArray(rows)?rows.filter(r=>r&&typeof r.url==="string"&&/^https:\/\//.test(r.url)).slice(0,20):[];}catch{return [];}}
- function rememberPlaylist(url,name=""){
+ function rememberPlaylist(url,name="",platform=""){
   if(!url||!/^https:\/\//.test(url))return;
   const rows=playlistHistory(),old=rows.find(r=>r.url===url);
-  const row={url,name:name||old?.name||"",usedAt:new Date().toISOString()};
+  const row={url,name:name||old?.name||"",platform:platform||playlistPlatformKey({url})||old?.platform||"",usedAt:new Date().toISOString()};
   try{localStorage.setItem(PLAYLIST_HISTORY_KEY,JSON.stringify([row,...rows.filter(r=>r.url!==url)].slice(0,20)));}catch{}
   if(CURRENT_USER){fetch("/api/me/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,name:row.name})}).then(r=>r.ok?r.json():null).then(payload=>{if(payload?.playlist){SAVED_PLAYLISTS=[payload.playlist,...SAVED_PLAYLISTS.filter(item=>item.source_url!==url)];renderPlaylistHistory();}}).catch(()=>{});}
   renderPlaylistHistory();
  }
- function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;const local=playlistHistory();const remote=SAVED_PLAYLISTS.map(item=>({url:item.source_url,name:item.name,usedAt:item.updated_at}));const rows=[...remote,...local].filter((row,index,all)=>row.url&&all.findIndex(item=>item.url===row.url)===index).slice(0,20);select.innerHTML='<option value="">选择最近使用的歌单</option>'+rows.map(r=>`<option value="${esc(r.url)}">${esc(r.name||r.url)}</option>`).join("");}
+ function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;const local=playlistHistory();const remote=SAVED_PLAYLISTS.map(item=>({url:item.source_url,name:item.name,platform:item.platform,usedAt:item.updated_at}));const rows=[...remote,...local].filter((row,index,all)=>row.url&&all.findIndex(item=>item.url===row.url)===index).slice(0,20);select.innerHTML='<option value="">选择最近使用的歌单</option>'+rows.map(r=>{const platform=playlistPlatformLabel(r);return `<option value="${esc(r.url)}">${esc(r.name||r.url)}${platform?` · ${esc(platform)}`:''}</option>`;}).join("");}
  const rememberedPlaylistJobs=new Set();
- function rememberJobPlaylist(job){if(!job||rememberedPlaylistJobs.has(job.id))return;for(const e of job?.events||[]){if(e.stage==="snapshot"&&e.event==="completed"&&e.source?.url){rememberPlaylist(e.source.url,e.playlist_name||"");rememberedPlaylistJobs.add(job.id);break;}}}
+ function rememberJobPlaylist(job){if(!job||rememberedPlaylistJobs.has(job.id))return;for(const e of job?.events||[]){if(e.stage==="snapshot"&&e.event==="completed"&&e.source?.url){rememberPlaylist(e.source.url,e.playlist_name||"",e.source.platform||"");rememberedPlaylistJobs.add(job.id);break;}}}
  function bindWorkflowControls(){
   const form=document.getElementById("workflow-form");if(!form)return;
   const input=document.getElementById("wf-source-url");
@@ -1119,9 +1328,12 @@ function syncLimitControls(job){
   form.addEventListener("submit",async event=>{
    event.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}
    if(AUTH_REQUIRED&&!CURRENT_USER){authModal("login","请先登录后再运行工作流",true);return;}
-   const sourceUrl=input?input.value.trim():"";
-   if(!sourceUrl){workflowFieldError("请粘贴歌单公开链接。");if(input)input.focus();return;}
-   if(input&&!input.validity.valid){workflowFieldError("链接格式不正确，请粘贴公开歌单链接。");input.focus();return;}
+   const rawSource=input?input.value.trim():"";
+   if(!rawSource){workflowFieldError("请粘贴歌单链接。");if(input)input.focus();return;}
+   // 也兼容整段分享文字：先提取其中的平台链接，再回填输入框并提交。
+   const sourceUrl=extractPlaylistUrl(rawSource)||rawSource;
+   if(!/^https:\/\//i.test(sourceUrl)){workflowFieldError("没有识别到歌单链接。");if(input)input.focus();return;}
+   if(input&&input.value.trim()!==sourceUrl)input.value=sourceUrl;
    workflowFieldError("");
    const body={source_url:sourceUrl};
    const button=form.querySelector("button[type=submit]");if(button)button.disabled=true;
@@ -1145,7 +1357,14 @@ function syncLimitControls(job){
     const response=await fetch(`/api/jobs/${encodeURIComponent(ACTIVE_JOB_ID)}/limit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({limit:state.value,percentile:state.percentile})});
     const payload=await response.json();
     if(!response.ok||!payload.ok)throw new Error(payload.error||"无法提交处理数量");
-    toast(`已提交分析范围：${Math.round(state.percentile*100)}%（${state.value} 首）`);pollWorkflowJob(ACTIVE_JOB_ID);
+    if(payload.reused_from){
+     // 同链接 + 同范围 + 24 小时内的已完成分析：不重复分析，直接进入推荐阶段。
+     ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;
+     syncLimitControls(payload.job);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);
+     toast(`已复用 ${reuseAgeText(payload.reused_at)} 前的同链接同范围分析：${Math.round(state.percentile*100)}%（${state.value} 首）`);
+    }else{
+     toast(`已提交分析范围：${Math.round(state.percentile*100)}%（${state.value} 首）`);pollWorkflowJob(ACTIVE_JOB_ID);
+    }
    }catch(error){limitFieldError(error.message||"无法提交处理数量");if(limitValueInput)limitValueInput.focus();}
    finally{limitConfirm.disabled=false;}
   });
@@ -1170,21 +1389,21 @@ function syncLimitControls(job){
   <section class="workflow-panel"><h3>生成新的推荐</h3><p class="hint">支持 Apple Music、网易云音乐和 QQ 音乐公开歌单。系统读取完整歌单后，可选择 25%、50% 或 100% 的曲目范围进入分析。</p>
    <form id="workflow-form" class="wf-form" novalidate>
     <div class="wf-field"><label for="wf-history">最近歌单（仅保存在当前浏览器）</label><select id="wf-history"><option value="">选择最近使用的歌单</option></select></div>
-    <div class="wf-field" id="wf-source-field"><label for="wf-source-url">歌单链接</label><input id="wf-source-url" type="url" placeholder="粘贴 Apple Music、网易云音乐或 QQ 音乐链接" autocomplete="off" required aria-describedby="wf-source-error" aria-invalid="false"><p class="wf-error" id="wf-source-error" role="alert" aria-live="polite"></p></div>
+    <div class="wf-field" id="wf-source-field"><label for="wf-source-url">歌单链接</label><input id="wf-source-url" type="text" inputmode="url" placeholder="粘贴 Apple Music、网易云音乐或 QQ 音乐链接" autocomplete="off" required aria-describedby="wf-source-error" aria-invalid="false"><p class="wf-error" id="wf-source-error" role="alert" aria-live="polite"></p></div>
     <div class="wf-field hidden" id="wf-limit-field">
      <label>分析范围（歌单共 <b id="wf-limit-max">—</b> 首）</label>
      <div class="wf-limit-row"><input id="wf-limit" type="hidden"><div class="wf-chips" id="wf-limit-chips"></div></div>
      <p class="wf-limit-note" id="wf-limit-note"></p>
      <p class="wf-error" id="wf-limit-error" role="alert" aria-live="polite"></p>
     </div>
-    <div class="wf-actions"><button class="btn primary" type="submit" id="wf-submit" ${configured?"":"disabled"}>生成推荐 ↗</button><button class="btn primary hidden" type="button" id="wf-limit-confirm">按所选分位继续 ↗</button><button class="btn hidden" type="button" id="wf-cancel">取消任务</button></div>
+    <div class="wf-actions"><button class="btn primary" type="submit" id="wf-submit" ${configured?"":"disabled"}>生成推荐 ↗</button><button class="btn primary hidden" type="button" id="wf-limit-confirm">按所选范围继续 ↗</button><button class="btn hidden" type="button" id="wf-cancel">取消任务</button></div>
    </form>
    ${configured?"":`<div class="wf-meta">当前暂不可运行。</div>`}
   </section>
   <div class="flow" id="flow"></div>
-  ${SOURCES.map(s=>`<div class="srccard"><div><h3>${esc(s.name)}</h3><div class="metatab" style="margin:0"><div><span>曲目数</span>${s.tracks}</div><div><span>覆盖率</span>${esc(statusText(s.coverage))}</div><div><span>更新时间</span>${esc(s.updated)}</div></div></div><div style="align-self:center"><span class="st ${s.status==="archived"?"archived":""}">${esc(statusText(s.status))}</span></div></div>`).join("")||`<div class="empty-state">当前运行没有来源状态。</div>`}
+  ${SOURCES.map(s=>`<div class="srccard"><div><h3>${esc(s.name)}</h3><div class="metatab" style="margin:0"><div><span>曲目数</span>${s.tracks}</div><div><span>覆盖率</span>${esc(statusText(s.coverage))}</div><div><span>更新时间</span>${esc(s.updated)}</div></div></div><div style="align-self:center">${statusText(s.status)?`<span class="st ${s.status==="archived"?"archived":""}">${esc(statusText(s.status))}</span>`:""}</div></div>`).join("")||`<div class="empty-state">还没有来源状态。</div>`}
   <div style="height:50px"></div></div>`;}
-function v404(msg){return`<div class="wrap" style="padding:100px 0"><div class="proto-note">404</div><h1 class="big-sec-title">${esc(msg||"此页不在 Atlas 内")}</h1><a class="btn primary" href="#/discover">回到发现 ↗</a></div>`;}
+function v404(msg){return`<div class="wrap v404" style="padding:100px 0"><div class="proto-note">404</div><h1 class="big-sec-title">${esc(msg||"此页不在 Atlas 内")}</h1><a class="btn primary" href="#/discover">回到发现 ↗</a></div>`;}
 
 /* ================= SETTINGS ================= */
 function settingsValue(value){return value===null||value===undefined?"":String(value);}
@@ -1201,11 +1420,11 @@ function settingsInt(form,name,optional=false,minimum=1){
 }
 function settingsNumber(form,name){
  const raw=String(form.elements[name]?.value||"").trim();const value=Number(raw);
- if(!raw||!Number.isFinite(value)||value<0||value>2)throw new Error("温度必须是 0 到 2 的数字");return value;
+ if(!raw||!Number.isFinite(value)||value<0||value>2)throw new Error("采样温度必须是 0 到 2 的数字");return value;
 }
 function settingsPayloadFromForm(form){
  const defaultPercentile=Number(form.elements.track_percentile_default.value);
- if(!TRACK_PERCENTILE_OPTIONS.includes(defaultPercentile))throw new Error("默认分析分位必须是 25%、50% 或 100%");
+ if(!TRACK_PERCENTILE_OPTIONS.includes(defaultPercentile))throw new Error("默认分析范围必须是 25%、50% 或 100%");
  return{settings:{
   runtime:{openai_compat:{base_url:form.elements.ai_base_url.value.trim(),model:form.elements.ai_model.value.trim(),timeout_seconds:settingsInt(form,"ai_timeout"),max_tokens:settingsInt(form,"ai_max_tokens"),temperature:settingsNumber(form,"ai_temperature"),disable_thinking:form.elements.ai_disable_thinking.checked}},
   crawler:{request_timeout_seconds:settingsInt(form,"crawler_timeout"),request_retries:settingsInt(form,"crawler_retries",false,0),user_agent:form.elements.crawler_user_agent.value.trim(),netease_detail_url:form.elements.netease_detail_url.value.trim(),netease_song_detail_url:form.elements.netease_song_detail_url.value.trim(),netease_referer:form.elements.netease_referer.value.trim(),netease_song_detail_batch_size:settingsInt(form,"netease_batch"),qq_page_size:settingsInt(form,"qq_page_size"),qq_max_pages:settingsInt(form,"qq_max_pages"),qq_musicu_url:form.elements.qq_musicu_url.value.trim(),qq_referer:form.elements.qq_referer.value.trim(),apple_export_timeout_seconds:settingsInt(form,"apple_timeout")},
@@ -1220,13 +1439,13 @@ function renderSettingsModal(message="",error=false){
  root.innerHTML=`<div class="settings-backdrop" data-settings-close><section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="settings-head"><div><h2 id="settings-title">设置</h2><p>保存后仅影响下一次任务；当前运行中的任务使用已锁定的配置快照。</p></div><button type="button" class="settings-close" data-settings-close aria-label="关闭设置">×</button></div><form id="settings-form" class="settings-form">
   <div class="settings-body">
   <section class="settings-section"><h3>AI 执行器</h3><div class="settings-grid">
-   <div class="settings-field wide"><label for="settings-ai-base-url">兼容接口地址</label><input id="settings-ai-base-url" name="ai_base_url" type="url" value="${esc(settingsValue(ai.base_url))}" placeholder="https://example.com/v1" required></div>
+   <div class="settings-field wide"><label for="settings-ai-base-url">接口地址（Base URL）</label><input id="settings-ai-base-url" name="ai_base_url" type="url" value="${esc(settingsValue(ai.base_url))}" placeholder="https://example.com/v1" required></div>
    <div class="settings-field"><label for="settings-ai-model">模型</label><input id="settings-ai-model" name="ai_model" value="${esc(settingsValue(ai.model))}" required></div>
    <div class="settings-field wide"><label for="settings-ai-key">API Key（加密保存到本机系统密钥库）</label><div class="settings-key-row"><input id="settings-ai-key" name="ai_api_key" type="password" autocomplete="new-password" placeholder="${SECRET_STATUS&&SECRET_STATUS.configured?"已配置，留空则不修改":"请输入 API Key"}"><button type="button" class="btn" data-settings-clear-key>清除</button></div><span class="settings-note" id="settings-ai-key-status">${settingsSecretNote()}</span></div>
    <div class="settings-field"><label for="settings-ai-timeout">请求超时（秒）</label><input id="settings-ai-timeout" name="ai_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(ai.timeout_seconds))}" required></div>
    <div class="settings-field"><label for="settings-ai-tokens">最大输出 Token</label><input id="settings-ai-tokens" name="ai_max_tokens" type="number" min="1" max="200000" value="${esc(settingsValue(ai.max_tokens))}" required></div>
-   <div class="settings-field"><label for="settings-ai-temperature">Temperature</label><input id="settings-ai-temperature" name="ai_temperature" type="number" min="0" max="2" step="0.1" value="${esc(settingsValue(ai.temperature))}" required></div>
-   <label class="settings-check"><input name="ai_disable_thinking" type="checkbox" ${ai.disable_thinking!==false?"checked":""}>关闭思维链（速度优先）</label>
+   <div class="settings-field"><label for="settings-ai-temperature">采样温度</label><input id="settings-ai-temperature" name="ai_temperature" type="number" min="0" max="2" step="0.1" value="${esc(settingsValue(ai.temperature))}" required></div>
+   <label class="settings-check"><input name="ai_disable_thinking" type="checkbox" ${ai.disable_thinking!==false?"checked":""}>关闭深度思考（生成更快）</label>
   </div>
   <div class="settings-inline-actions"><button type="button" class="btn" data-settings-test-ai>测试连接</button><span class="settings-note" id="settings-ai-test-result">用当前填写的接口、模型与密钥发送一个最小请求。</span></div></section>
   <section class="settings-section"><h3>歌单读取与爬虫</h3><p class="settings-note">这里只调整请求预算和分页，不保存 Cookie、登录态或 API Key。</p><div class="settings-grid">
@@ -1259,7 +1478,7 @@ function renderSettingsModal(message="",error=false){
    <div class="settings-field"><label for="settings-recommendation-parallel">推荐并行数</label><input id="settings-recommendation-parallel" name="recommendation_parallelism" type="number" min="1" max="8" value="${esc(settingsValue(workflow.recommendation_parallelism))}" required></div>
    <div class="settings-field"><label for="settings-analysis-timeout">分析阶段超时（秒）</label><input id="settings-analysis-timeout" name="analysis_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.analysis_timeout_seconds))}" required></div>
    <div class="settings-field"><label for="settings-recommendation-timeout">推荐阶段超时（秒）</label><input id="settings-recommendation-timeout" name="recommendation_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.recommendation_timeout_seconds))}" required></div>
-   <div class="settings-field"><label for="settings-track-percentile-default">默认分析分位</label><select id="settings-track-percentile-default" name="track_percentile_default"><option value="0.25" ${Number(workflow.track_percentile_default)===0.25?"selected":""}>25%</option><option value="0.5" ${Number(workflow.track_percentile_default)===0.5?"selected":""}>50%</option><option value="1" ${!TRACK_PERCENTILE_OPTIONS.includes(Number(workflow.track_percentile_default))||Number(workflow.track_percentile_default)===1?"selected":""}>100%（全部）</option></select></div>
+   <div class="settings-field"><label for="settings-track-percentile-default">默认分析范围</label><select id="settings-track-percentile-default" name="track_percentile_default"><option value="0.25" ${Number(workflow.track_percentile_default)===0.25?"selected":""}>25%</option><option value="0.5" ${Number(workflow.track_percentile_default)===0.5?"selected":""}>50%</option><option value="1" ${!TRACK_PERCENTILE_OPTIONS.includes(Number(workflow.track_percentile_default))||Number(workflow.track_percentile_default)===1?"selected":""}>100%（全部）</option></select></div>
    <div class="settings-field"><label for="settings-await-timeout">等待选择超时（秒）</label><input id="settings-await-timeout" name="await_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.await_limit_timeout_seconds))}" required></div>
    <div class="settings-field"><label for="settings-rounds">最大研究轮数</label><input id="settings-rounds" name="max_research_rounds" type="number" min="1" max="3" value="${esc(settingsValue(workflow.max_research_rounds))}" required></div>
    <div class="settings-field"><label for="settings-candidates">最大候选数</label><input id="settings-candidates" name="max_candidates" type="number" min="1" max="200" value="${esc(settingsValue(workflow.max_candidates))}" required></div>
@@ -1280,6 +1499,74 @@ async function openSettings(){
  try{const [response,secretResponse]=await Promise.all([fetch("/api/settings",{cache:"no-store"}),fetch("/api/secrets",{cache:"no-store"}).catch(()=>null)]);const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"无法读取设置");SETTINGS=payload.settings;if(secretResponse&&secretResponse.ok){const secretPayload=await secretResponse.json();if(secretPayload&&secretPayload.ok)SECRET_STATUS=secretPayload;}renderSettingsModal();}catch(error){root.innerHTML=`<div class="settings-backdrop" data-settings-close><section class="settings-dialog"><div class="settings-head"><div><h2>设置</h2><p class="settings-message error">${esc(error.message||"无法读取设置")}</p></div><button type="button" class="settings-close" data-settings-close>×</button></div></section></div>`;}
 }
 function closeSettings(){const root=document.getElementById("settings-root");if(root)root.innerHTML="";}
+/* ================= ACCOUNT CENTER ================= */
+const ACCOUNT_RUN_STATUS={running:"进行中",completed:"已完成",failed:"失败",cancelled:"已取消",queued:"排队中"};
+function accountDuration(ms){const value=Number(ms);if(!Number.isFinite(value)||value<0)return"—";return value<60000?Math.round(value/1000)+" 秒":Math.round(value/60000)+" 分钟";}
+function closeAccount(){const root=document.getElementById("account-root");if(root)root.innerHTML="";}
+function accountTabContent(name){
+ if(name==="history"){
+  return`<div class="account-section"><h3>运行历史</h3><p class="account-note" data-account-runs-note>正在读取运行记录…</p><div data-account-runs><div class="load-state" style="min-height:120px">加载中…</div></div></div>`;
+ }
+ if(name==="cache"){
+  const remembered=(()=>{try{return localStorage.getItem("atlas_remembered_username")||"";}catch{return "";}})();
+  return`<div class="account-section"><h3>推荐去重缓存</h3><p class="account-note">近 7 天的推荐去重记录；清除后相关曲目可能被再次推荐。</p><div data-account-history><div class="load-state" style="min-height:100px">加载中…</div></div></div>
+  <div class="account-section"><h3>浏览器数据</h3><p class="account-note">只保存在当前浏览器，清除后需要重新输入账号。</p><div class="account-meta"><div><span>记住的账号</span>${remembered?esc(remembered):"未设置"}</div></div><div class="settings-inline-actions" style="margin-top:14px"><button class="btn" type="button" data-account-clear-remembered>清除记住的账号</button></div></div>`;
+ }
+ return`<div class="account-section"><h3>账号资料</h3><p class="account-note">用户名区分显示大小写；登录时不区分大小写。</p><form data-account-profile><div class="settings-field wide" style="max-width:360px"><label for="account-username">用户名</label><input id="account-username" name="username" value="${esc(CURRENT_USER.username)}" minlength="3" maxlength="64" required></div><div class="message" data-account-profile-message></div><div class="settings-inline-actions"><button class="btn primary" type="submit">保存用户名</button></div></form></div>
+ <div class="account-section"><h3>修改密码</h3><p class="account-note">修改后其他设备的登录会失效，当前浏览器保持登录。</p><form data-account-password><div class="settings-grid"><div class="settings-field"><label for="account-current">当前密码</label><input id="account-current" name="current_password" type="password" autocomplete="current-password" required></div><div class="settings-field"><label for="account-new">新密码（至少 8 位）</label><input id="account-new" name="new_password" type="password" autocomplete="new-password" minlength="8" required></div><div class="settings-field"><label for="account-confirm">确认新密码</label><input id="account-confirm" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div></div><div class="message" data-account-password-message></div><div class="settings-inline-actions"><button class="btn primary" type="submit">修改密码</button></div></form></div>
+ <div class="account-section"><h3>账号信息</h3><div class="account-meta"><div><span>角色</span>${CURRENT_USER.role==="admin"?"管理员":"用户"}</div><div><span>注册时间</span>${esc((CURRENT_USER.created_at||"").replace("T"," ").slice(0,16))||"—"}</div><div><span>最近登录</span>${esc((CURRENT_USER.last_login_at||"").replace("T"," ").slice(0,16))||"—"}</div></div></div>`;
+}
+function openAccount(){
+ const root=document.getElementById("account-root");if(!root||!CURRENT_USER)return;
+ root.innerHTML=`<div class="settings-backdrop" data-account-close><section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title"><div class="settings-head"><div><h2 id="account-title">账号中心</h2><p>${esc(CURRENT_USER.username)} · ${CURRENT_USER.role==="admin"?"管理员":"用户"}</p></div><button type="button" class="settings-close" data-account-close aria-label="关闭">×</button></div><div class="account-tabs" role="tablist"><button type="button" role="tab" class="account-tab on" data-account-tab="profile">资料</button><button type="button" role="tab" class="account-tab" data-account-tab="history">运行历史</button><button type="button" role="tab" class="account-tab" data-account-tab="cache">缓存</button></div><div class="settings-body" data-account-body>${accountTabContent("profile")}</div></section></div>`;
+}
+async function loadAccountRuns(){
+ const box=document.querySelector("[data-account-runs]");if(!box)return;
+ try{
+  const response=await fetch("/api/me/runs?limit=20",{cache:"no-store"});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"读取失败");
+  const runs=payload.runs||[],stats=payload.stats||{},note=document.querySelector("[data-account-runs-note]");
+  if(note)note.textContent=`共 ${stats.total||0} 次运行 · 成功 ${stats.completed||0} · 失败 ${stats.failed||0}`;
+  if(!runs.length){box.innerHTML='<p class="account-note" style="margin:0">还没有运行记录。</p>';return;}
+  box.innerHTML=`<table class="account-table"><thead><tr><th>时间</th><th>歌单</th><th>状态</th><th>范围</th><th>耗时</th><th>推荐</th></tr></thead><tbody>${runs.map(run=>`<tr><td>${esc((run.started_at||"").replace("T"," ").slice(0,16))||"—"}</td><td>${esc(run.playlist_name||run.playlist_id||"—")}</td><td>${esc(ACCOUNT_RUN_STATUS[run.status]||run.status)}${run.status==="failed"&&run.error?`<br><span class="account-note">${esc(String(run.error).slice(0,60))}</span>`:""}</td><td>${run.analyzed_count??"—"}/${run.track_count??"—"}</td><td>${accountDuration(run.duration_ms)}</td><td>${run.recommendation_count??"—"}</td></tr>`).join("")}</tbody></table>`;
+ }catch(error){box.innerHTML=`<p class="message error">${esc(error.message)}</p>`;}
+}
+async function loadAccountHistory(){
+ const box=document.querySelector("[data-account-history]");if(!box)return;
+ try{
+  const response=await fetch("/api/me/recommendation-history",{cache:"no-store"});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"读取失败");
+  const items=payload.items||[];myHistoryItems=items;
+  if(!items.length){box.innerHTML='<p class="account-note" style="margin:0">还没有推荐去重缓存。</p>';return;}
+  box.innerHTML=items.map((item,index)=>{
+   const playlist=[item.playlist&&item.playlist.kind||"",item.playlist&&(item.playlist.name||item.playlist.playlist_id)||""].filter(Boolean).join(" · ")||item.file;
+   const entries=item.entries||[];
+   const detail=entries.length?`<details class="history-entries"><summary>${entries.length} 次推荐</summary>${entries.map(entry=>`<div class="history-entry"><span>${esc((entry.generated_at||"").replace("T"," ").slice(0,16))||"—"}</span><span>${entry.tracks||0} 首</span><button class="btn tiny danger" type="button" data-my-history-entry="${index}" data-my-history-stamp="${esc(entry.generated_at||"")}">清除</button></div>`).join("")}</details>`:"";
+   return `<div class="my-history-item"><div class="my-history-head"><div><div class="source-title">${esc(playlist)}</div><div class="account-note" style="margin:2px 0 0">有效 ${item.active_entries||0} / ${item.total_entries||0} 条 · 排除 ${item.excluded_tracks||0} 首 · 最近 ${esc((item.latest_at||"").replace("T"," ").slice(0,16))||"—"}</div></div><div class="user-actions"><button class="btn tiny" type="button" data-my-history-prune="${index}">清过期</button><button class="btn tiny danger" type="button" data-my-history-clear="${index}">清除全部</button></div></div>${detail}</div>`;
+  }).join("");
+ }catch(error){box.innerHTML=`<p class="message error">${esc(error.message)}</p>`;}
+}
+async function submitAccountProfile(form){
+ const note=form.querySelector("[data-account-profile-message]"),button=form.querySelector("button[type=submit]");
+ try{
+  button.disabled=true;
+  const response=await fetch("/api/me/profile",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:form.querySelector("#account-username").value.trim()})});
+  const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"保存失败");
+  CURRENT_USER=payload.user||CURRENT_USER;refreshAuthChrome();
+  const meta=document.querySelector("#account-title")?.parentElement?.querySelector("p");if(meta)meta.textContent=`${CURRENT_USER.username} · ${CURRENT_USER.role==="admin"?"管理员":"用户"}`;
+  note.textContent="用户名已更新。";note.className="message ok";
+ }catch(error){note.textContent=error.message;note.className="message error";}finally{button.disabled=false;}
+}
+async function submitAccountPassword(form){
+ const note=form.querySelector("[data-account-password-message]"),button=form.querySelector("button[type=submit]");
+ const next=form.querySelector("#account-new").value,confirm=form.querySelector("#account-confirm").value;
+ if(next!==confirm){note.textContent="两次输入的新密码不一致";note.className="message error";form.querySelector("#account-confirm").focus();return;}
+ try{
+  button.disabled=true;
+  const response=await fetch("/api/me/password",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({current_password:form.querySelector("#account-current").value,new_password:next})});
+  const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"修改失败");
+  note.textContent="密码已更新，其他设备需重新登录。";note.className="message ok";form.reset();
+ }catch(error){note.textContent=error.message;note.className="message error";}finally{button.disabled=false;}
+}
+document.addEventListener("click",event=>{const clearRemembered=event.target.closest("[data-account-clear-remembered]");if(clearRemembered){try{localStorage.removeItem("atlas_remembered_username");}catch{}const body=document.querySelector("[data-account-body]");if(body)body.innerHTML=accountTabContent("cache");toast("已清除记住的账号");}});
 function testResultNote(text,kind){const node=document.getElementById("settings-ai-test-result");if(!node)return;node.textContent=text;node.classList.toggle("ok",kind==="ok");node.classList.toggle("error",kind==="error");}
 async function saveAiKeyIfFilled(form){
  const keyInput=document.getElementById("settings-ai-key");const newKey=keyInput?keyInput.value.trim():"";
@@ -1321,19 +1608,38 @@ async function resetSettings(){
 }
 
 /* ================= ROUTER ================= */
-function render(){const guest=guestMode(),h=guest?"/discover":(location.hash.replace(/^#/,"")||"/discover");let html=header();
+function render(keepScroll=false){const scrollY=keepScroll?window.scrollY:0;const guest=guestMode(),h=guest?"/discover":(location.hash.replace(/^#/,"")||"/discover");let html=header();
  const m=h.split("/").filter(Boolean);
  const map={"/discover":vDiscover,"/atlas":()=>vAtlas(m[1]),"/taste":vTaste,"/sources":vSources,
   "/why":()=>vWhy(m[1]),"/track":()=>vTrack(m[1]),"/album":()=>vAlbum(m[1]),"/artist":()=>vArtist(m[1]),"/interest":()=>vInterest(m[1])};
- html+=(guest?vGuest():(map["/"+(m[0]||"discover")]||(()=>v404()))())+footer();
+ const view=guest?vGuest():(map["/"+(m[0]||"discover")]||(()=>v404()))();
+ html+=`<main class="page">${view}</main>`+footer();
  document.body.classList.remove("covers-ready");
- document.getElementById("app").innerHTML=html;window.scrollTo(0,0);
+ document.getElementById("app").innerHTML=html;window.scrollTo(0,scrollY);
   hydrate(document.getElementById("app"));
   bindWorkflowControls();}
 /* global click delegation */
 document.addEventListener("click",async e=>{
  const authOpen=e.target.closest("[data-auth-open]");
  if(authOpen){e.preventDefault();authModal(authOpen.dataset.authOpenMode||"login");return;}
+ const myPrune=event.target.closest("[data-my-history-prune]");
+ if(myPrune){const item=myHistoryItems[Number(myPrune.dataset.myHistoryPrune)];if(item){try{const response=await fetch(`/api/me/recommendation-history/${encodeURIComponent(item.file)}/prune`,{method:"POST"});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||"清理失败");toast(`已清理 ${result.removed} 条过期记录`);await loadAccountHistory();}catch(error){toast(error.message);}}return;}
+ const myClear=event.target.closest("[data-my-history-clear]");
+ if(myClear){const item=myHistoryItems[Number(myClear.dataset.myHistoryClear)];if(item){if(!window.confirm("确认清除该歌单的全部去重记录？相关曲目可能被再次推荐。"))return;try{const response=await fetch(`/api/me/recommendation-history/${encodeURIComponent(item.file)}`,{method:"DELETE"});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||"清除失败");toast("已清除");await loadAccountHistory();}catch(error){toast(error.message);}}return;}
+ const myEntry=event.target.closest("[data-my-history-entry]");
+ if(myEntry){const item=myHistoryItems[Number(myEntry.dataset.myHistoryEntry)];const stamp=myEntry.dataset.myHistoryStamp;if(item&&stamp){if(!window.confirm("确认放回该次推荐产生的去重条目？"))return;try{const response=await fetch(`/api/me/recommendation-history/${encodeURIComponent(item.file)}/entries/${encodeURIComponent(stamp)}`,{method:"DELETE"});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||"清除失败");toast("已清除该次记录");await loadAccountHistory();}catch(error){toast(error.message);}}return;}
+ const accountOpen=e.target.closest("[data-account-open]");
+ if(accountOpen){e.preventDefault();openAccount();return;}
+ const tagsToggle=e.target.closest("[data-source-tags-toggle]");
+ if(tagsToggle){const wrap=tagsToggle.closest(".source-tags");if(wrap){const hidden=wrap.querySelectorAll(".source-tag.rest");const expanded=tagsToggle.dataset.expanded==="1";hidden.forEach(node=>{node.hidden=expanded;});tagsToggle.dataset.expanded=expanded?"0":"1";tagsToggle.textContent=expanded?"+"+hidden.length:"收起";}return;}
+ const sourceSize=e.target.closest("[data-source-size]");
+ if(sourceSize){const details=sourceSize.closest("details[data-source-island]");const item=details&&intBy(details.dataset.sourceIsland);if(item){SOURCE_PAGE_SIZE=Number(sourceSize.dataset.sourceSize)===5?5:10;SOURCE_PAGE_INDEX=1;details.innerHTML=islandSourcesInner(item);}return;}
+ const sourcePage=e.target.closest("[data-source-page]");
+ if(sourcePage){const details=sourcePage.closest("details[data-source-island]");const item=details&&intBy(details.dataset.sourceIsland);if(item){SOURCE_PAGE_INDEX=Number(sourcePage.dataset.sourcePage)||1;details.innerHTML=islandSourcesInner(item);}return;}
+ const accountTab=e.target.closest("[data-account-tab]");
+ if(accountTab){e.preventDefault();const name=accountTab.dataset.accountTab;document.querySelectorAll("[data-account-tab]").forEach(node=>node.classList.toggle("on",node===accountTab));const body=document.querySelector("[data-account-body]");if(body)body.innerHTML=accountTabContent(name);if(name==="history")loadAccountRuns();if(name==="cache")loadAccountHistory();return;}
+ const accountClose=e.target.closest("[data-account-close]");
+ if(accountClose&&(accountClose===e.target||accountClose.classList.contains("settings-close"))){e.preventDefault();closeAccount();return;}
  const authClose=e.target.closest("[data-auth-close]");
  if(authClose&&(authClose===e.target||authClose.classList.contains("auth-close"))){e.preventDefault();closeAuth();return;}
  const authMode=e.target.closest("[data-auth-mode]");
@@ -1352,6 +1658,17 @@ document.addEventListener("click",async e=>{
  if(testAi){e.preventDefault();testAiConnection();return;}
  const stageSummary=e.target.closest("[data-wf-stage-panel] > summary");
  if(stageSummary){const panel=stageSummary.parentElement;if(panel)panel.dataset.userToggled="1";return;}
+ const resumeJob=e.target.closest("[data-wf-resume]");
+ if(resumeJob){e.preventDefault();const id=resumeJob.dataset.wfResume;if(!id)return;resumeJob.disabled=true;
+  try{
+   const response=await fetch(`/api/jobs/${encodeURIComponent(id)}/retry`,{method:"POST"});
+   const payload=await response.json();
+   if(!response.ok||!payload.ok)throw new Error(payload.error||"无法续跑任务");
+   ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;
+   renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);
+   toast("已续跑：跳过已完成的步骤");
+  }catch(error){resumeJob.disabled=false;toast(error.message||"无法续跑任务");}
+  return;}
  const logToggle=e.target.closest("[data-wf-log-toggle]");
  if(logToggle){e.preventDefault();const flow=logToggle.closest("#flow"),panel=flow&&flow.querySelector("[data-wf-log-panel]");if(panel){const open=panel.classList.toggle("hidden")===false;logToggle.setAttribute("aria-expanded",open?"true":"false");logToggle.textContent=open?"收起运行日志":"查看运行日志";}return;}
  const logCopy=e.target.closest("[data-wf-log-copy]");
@@ -1362,16 +1679,16 @@ document.addEventListener("click",async e=>{
   else if(sl.classList.contains("nodata")){e.preventDefault();toast("未能解析到具体歌曲，请到平台内搜索："+sl.textContent.replace(" ↗",""));}
   return;}
  const prev=e.target.closest("[data-atlas-prev]");
- if(prev){e.preventDefault();const groups=atlasGroups();if(ATLAS_GROUP_INDEX>0){applyAtlasGroup(ATLAS_GROUP_INDEX-1);render();toast(`已返回第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 Atlas`);}return;}
+ if(prev){e.preventDefault();const groups=atlasGroups();if(ATLAS_GROUP_INDEX>0){applyAtlasGroup(ATLAS_GROUP_INDEX-1);render(true);toast(`已返回第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 Atlas`);}return;}
  const swap=e.target.closest("[data-atlas-swap]");
- if(swap){e.preventDefault();const groups=atlasGroups();if(ATLAS_GROUP_INDEX<groups.length-1){applyAtlasGroup(ATLAS_GROUP_INDEX+1);render();toast(`已换到第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 Atlas`);}return;}
+ if(swap){e.preventDefault();const groups=atlasGroups();if(ATLAS_GROUP_INDEX<groups.length-1){applyAtlasGroup(ATLAS_GROUP_INDEX+1);render(true);toast(`已换到第 ${ATLAS_GROUP_INDEX+1}/${groups.length} 组 Atlas`);}return;}
  const newAtlas=e.target.closest("[data-atlas-new]");
- if(newAtlas){e.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}newAtlas.disabled=true;try{const response=await fetch("/api/atlas/new",{method:"POST",headers:{"Content-Type":"application/json"}});const payload=await responseJson(response,"无法生成新 Atlas");if(!response.ok||!payload.ok)throw new Error(payload.error||"无法生成新 Atlas");ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);toast("已启动新 Atlas：复用当前分析重新生成推荐");}catch(error){newAtlas.disabled=false;toast(error.message||"无法生成新 Atlas");}return;}
+ if(newAtlas){e.preventDefault();if(ACTIVE_JOB_ID){toast("已有工作流正在运行");return;}newAtlas.disabled=true;try{const response=await fetch("/api/atlas/new",{method:"POST",headers:{"Content-Type":"application/json"}});const payload=await responseJson(response,"无法生成新 Atlas");if(!response.ok||!payload.ok)throw new Error(payload.error||"无法生成新 Atlas");ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);toast("已启动新 Atlas：沿用已有分析重新生成推荐");}catch(error){newAtlas.disabled=false;toast(error.message||"无法生成新 Atlas");}return;}
  const tab=e.target.closest("[data-tab]");
  if(tab){const f=tab.getAttribute("data-tab");location.hash="#/atlas/"+(f==="all"?"":f);if(f==="all"){render();}return;}
  const go=e.target.closest("[data-go]");
  if(go){if(!e.target.closest("[data-open]")){location.hash=go.getAttribute("data-go");}return;}});
-document.addEventListener("submit",event=>{const form=event.target.closest("[data-auth-form]");if(form){event.preventDefault();submitAuth(form);}});
+document.addEventListener("submit",event=>{const form=event.target.closest("[data-auth-form]");if(form){event.preventDefault();submitAuth(form);return;}const profileForm=event.target.closest("[data-account-profile]");if(profileForm){event.preventDefault();submitAccountProfile(profileForm);return;}const passwordForm=event.target.closest("[data-account-password]");if(passwordForm){event.preventDefault();submitAccountPassword(passwordForm);}});
 window.addEventListener("hashchange",()=>{render();});
 document.addEventListener("keydown",event=>{if(event.key==="Escape"&&document.getElementById("settings-root")?.firstElementChild)closeSettings();});
 bootAtlas();

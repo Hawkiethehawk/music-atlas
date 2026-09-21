@@ -103,6 +103,74 @@ const DEFAULT_EDITORIAL_SETTINGS = {
   title: "",
   lede: "",
 };
+const SETTINGS_SCHEMA = [
+  {
+    group: "ai", title: "AI 执行器",
+    note: "接口、模型与思考强度；API Key 在下方单独保存，不会写进设置 JSON。",
+    fields: [
+      { path: "runtime.openai_compat.base_url", label: "接口地址（Base URL）", type: "text", placeholder: "https://api.example.com/v1" },
+      { path: "runtime.openai_compat.model", label: "模型", type: "text", placeholder: "deepseek-v4.1-flash" },
+      { path: "thinking", label: "思考强度", type: "select", options: [["off", "关闭（最快）"], ["low", "低"], ["medium", "中"], ["high", "高"], ["max", "最大（max）"]], help: "关闭时不生成思维链；低/中/高/最大同时写入 Codex 执行器的推理级别。" },
+      { path: "runtime.openai_compat.timeout_seconds", label: "请求超时（秒）", type: "number", min: 1, max: 86400 },
+      { path: "runtime.openai_compat.max_tokens", label: "最大输出 Token", type: "number", min: 1, max: 200000 },
+      { path: "runtime.openai_compat.temperature", label: "采样温度", type: "number", min: 0, max: 2, step: 0.1 },
+    ],
+  },
+  {
+    group: "crawler", title: "歌单读取与爬虫",
+    note: "只调整请求预算与分页，不保存 Cookie、登录态或 API Key。",
+    fields: [
+      { path: "crawler.request_timeout_seconds", label: "接口请求超时（秒）", type: "number", min: 1, max: 86400 },
+      { path: "crawler.request_retries", label: "失败重试次数", type: "number", min: 0, max: 3 },
+      { path: "crawler.user_agent", label: "请求 User-Agent", type: "text" },
+      { path: "crawler.netease_song_detail_batch_size", label: "网易云歌曲详情批量数", type: "number", min: 1, max: 1000 },
+      { path: "crawler.qq_page_size", label: "QQ 音乐分页大小", type: "number", min: 1, max: 1000 },
+      { path: "crawler.qq_max_pages", label: "QQ 音乐最大页数", type: "number", min: 1, max: 500 },
+      { path: "crawler.apple_export_timeout_seconds", label: "歌单读取超时（秒）", type: "number", min: 1, max: 3600 },
+      { path: "crawler.netease_detail_url", label: "网易云歌单接口地址（仅 music.163.com）", type: "text" },
+      { path: "crawler.netease_song_detail_url", label: "网易云歌曲详情接口地址（仅 music.163.com）", type: "text" },
+      { path: "crawler.netease_referer", label: "网易云 Referer（仅 music.163.com）", type: "text" },
+      { path: "crawler.qq_musicu_url", label: "QQ 音乐接口地址（仅 u.y.qq.com）", type: "text" },
+      { path: "crawler.qq_referer", label: "QQ 音乐 Referer（仅 y.qq.com）", type: "text" },
+    ],
+  },
+  {
+    group: "policy", title: "推荐策略",
+    note: "安全边界覆盖；排序公式、证据门禁与最终顺序仍由程序确定。",
+    fields: [
+      { path: "recommendation_policy.max_per_artist", label: "同一艺人最多推荐数", type: "number", min: 1, max: 10 },
+      { path: "recommendation_policy.max_per_project", label: "同一项目最多推荐数", type: "number", min: 1, max: 20 },
+      { path: "recommendation_policy.min_projects", label: "最少项目数", type: "number", min: 1, max: 50 },
+      { path: "recommendation_policy.candidate_pool_min", label: "候选池最低数量", type: "number", min: 1, max: 200 },
+    ],
+  },
+  {
+    group: "workflow", title: "工作流与预算",
+    note: "并行数与超时按秒计；分位是歌单读取后的默认处理比例。",
+    fields: [
+      { path: "workflow.track_percentile_default", label: "默认分析分位", type: "select", options: [["0.25", "25%"], ["0.5", "50%"], ["1", "100%（全部）"]] },
+      { path: "workflow.analysis_parallelism", label: "分析并行数", type: "number", min: 1, max: 16 },
+      { path: "workflow.recommendation_parallelism", label: "推荐并行数", type: "number", min: 1, max: 8 },
+      { path: "workflow.analysis_timeout_seconds", label: "分析阶段超时（秒）", type: "number", min: 1, max: 86400 },
+      { path: "workflow.recommendation_timeout_seconds", label: "推荐阶段超时（秒）", type: "number", min: 1, max: 86400 },
+      { path: "workflow.await_limit_timeout_seconds", label: "等待选择超时（秒）", type: "number", min: 1, max: 86400 },
+      { path: "workflow.max_research_rounds", label: "最大研究轮数", type: "number", min: 1, max: 3 },
+      { path: "workflow.max_candidates", label: "最大候选数", type: "number", min: 1, max: 200 },
+      { path: "workflow.candidate_target", label: "候选目标（留空自动）", type: "number", min: 1, max: 200, optional: true },
+      { path: "workflow.analysis_batch_size", label: "分析批大小", type: "number", min: 1, max: 50 },
+      { path: "workflow.analysis_context_budget", label: "分析上下文预算（留空默认）", type: "number", min: 1000, max: 1000000, optional: true },
+      { path: "workflow.context_budget", label: "推荐上下文预算（留空默认）", type: "number", min: 1000, max: 1000000, optional: true },
+    ],
+  },
+  {
+    group: "editorial", title: "页面展示",
+    note: "标题与导语会写入下一次任务生成的 Atlas；不改变推荐事实与证据。",
+    fields: [
+      { path: "editorial.title", label: "页面标题", type: "text", maxlength: 120 },
+      { path: "editorial.lede", label: "页面导语", type: "textarea", maxlength: 2000 },
+    ],
+  },
+];
 
 function isObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -223,12 +291,18 @@ function validateSettingsPatch(value) {
     for (const key of Object.keys(output.crawler)) if (output.crawler[key] === undefined) delete output.crawler[key];
   }
   if (value.runtime !== undefined) {
-    if (!isObject(value.runtime) || !isObject(value.runtime.openai_compat)) throw new Error("runtime.openai_compat 必须是对象");
-    if (Object.keys(value.runtime).some((key) => key !== "openai_compat")) throw new Error("runtime 只允许修改 openai_compat");
-    const settings = value.runtime.openai_compat;
+    if (!isObject(value.runtime)) throw new Error("runtime 必须是对象");
+    if (Object.keys(value.runtime).some((key) => key !== "openai_compat" && key !== "codex_reasoning_effort")) throw new Error("runtime 只允许修改 openai_compat 与 codex_reasoning_effort");
+    output.runtime = {};
+    if (value.runtime.codex_reasoning_effort !== undefined) {
+      const effort = String(value.runtime.codex_reasoning_effort || "").trim().toLowerCase();
+      if (!["", "low", "medium", "high", "max"].includes(effort)) throw new Error("runtime.codex_reasoning_effort 只支持 low / medium / high / max");
+      output.runtime.codex_reasoning_effort = effort;
+    }
+    const settings = isObject(value.runtime.openai_compat) ? value.runtime.openai_compat : {};
     const allowed = new Set(Object.keys(DEFAULT_OPENAI_SETTINGS));
     for (const key of Object.keys(settings)) if (!allowed.has(key)) throw new Error(`runtime.openai_compat 不允许字段：${key}`);
-    output.runtime = { openai_compat: {} };
+    output.runtime.openai_compat = {};
     if (settings.base_url !== undefined) {
       if (typeof settings.base_url !== "string" || !/^https?:\/\//i.test(settings.base_url.trim())) throw new Error("runtime.openai_compat.base_url 必须是 HTTP(S) 地址");
       output.runtime.openai_compat.base_url = settings.base_url.trim().replace(/\/$/, "");
@@ -306,7 +380,7 @@ function editableSettings(config) {
   const workflow = isObject(config.workflow) ? config.workflow : {};
   return {
     crawler: { ...DEFAULT_CRAWLER_SETTINGS, ...(isObject(config.crawler) ? config.crawler : {}) },
-    runtime: { openai_compat: { ...DEFAULT_OPENAI_SETTINGS, ...openai } },
+    runtime: { openai_compat: { ...DEFAULT_OPENAI_SETTINGS, ...openai }, codex_reasoning_effort: String(runtime.codex_reasoning_effort || "").trim().toLowerCase() },
     workflow: { ...DEFAULT_WORKFLOW_SETTINGS, ...workflow },
     recommendation_policy: { ...DEFAULT_POLICY_SETTINGS, ...(isObject(config.recommendation_policy) ? config.recommendation_policy : {}) },
     editorial: { ...DEFAULT_EDITORIAL_SETTINGS, ...(isObject(config.editorial) ? config.editorial : {}) },
@@ -427,6 +501,7 @@ const PORT = Number(process.env.ATLAS_WEB_PORT) || Number(SERVER_CONFIG.port) ||
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("server.port 必须是 1 到 65535 的整数");
 const DATA_PATH = resolveProjectPath(PATH_CONFIG.published || "runtime/web/current.json", "paths.published");
 const JOB_ROOT = resolveProjectPath(PATH_CONFIG.jobs || "runtime/web-jobs", "paths.jobs");
+const HISTORY_ROOT = resolveProjectPath(PATH_CONFIG.recommendation_history || "runtime/recommendation-history", "paths.recommendation_history");
 const INPUT_ROOT = resolveProjectPath(PATH_CONFIG.input || "input", "paths.input");
 const INITIAL_RUNTIME = runtimeConfigSnapshot();
 const PYTHON = INITIAL_RUNTIME.python;
@@ -450,6 +525,9 @@ const MIME = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
   ".md": "text/markdown; charset=utf-8",
 };
 
@@ -719,6 +797,47 @@ function publicJob(job) {
   };
 }
 
+function syncRunFromEvent(job, event) {
+  try {
+    if (!authStore.getRun(job.id)) {
+      authStore.createRun({
+        jobId: job.id, userId: job.user_id || null,
+        kind: job.workflow_mode === "recommendation_only" ? "recommendation_only" : "full",
+        runtimeDir: job.runtime_dir || "",
+      });
+    }
+    const patch = {};
+    if (Number.isFinite(Number(event.track_count)) && (event.stage === "snapshot" || event.task_kind === "track_limit")) patch.trackCount = Number(event.track_count);
+    if (Number.isFinite(Number(event.source_track_count)) && event.event === "completed" && event.stage === "analysis") patch.analyzedCount = Number(event.source_track_count);
+    if (Number.isFinite(Number(event.recommendation_count)) && event.event === "completed") patch.recommendationCount = Number(event.recommendation_count);
+    if (event.status === "completed" || event.event === "failed") {
+      patch.status = event.status === "completed" ? "completed" : "failed";
+      if (event.event === "failed") patch.error = String(event.error || event.message || "").slice(0, 500);
+    }
+    if (Object.keys(patch).length) authStore.updateRun(job.id, patch);
+  } catch (error) {
+    console.error(`运行记录同步失败 ${job.id}：${error.message}`);
+  }
+}
+
+function summarizeRunFromJob(job) {
+  const events = Array.isArray(job.events) ? job.events : [];
+  let trackCount = null; let analyzedCount = null; let recommendationCount = null; let error = "";
+  let platform = ""; let playlistId = ""; let playlistName = "";
+  for (const event of events) {
+    if (Number.isFinite(Number(event.track_count))) trackCount = Number(event.track_count);
+    if (Number.isFinite(Number(event.source_track_count)) && event.stage === "analysis") analyzedCount = Number(event.source_track_count);
+    if (Number.isFinite(Number(event.recommendation_count))) recommendationCount = Number(event.recommendation_count);
+    if (event.event === "failed") error = String(event.error || event.message || "").slice(0, 500);
+    if (event.stage === "snapshot" && event.event === "completed") {
+      if (event.playlist_name) playlistName = String(event.playlist_name);
+      if (event.snapshot_id) playlistId = playlistId || String(event.snapshot_id);
+      if (event.source && typeof event.source === "object" && event.source.kind) platform = String(event.source.kind);
+    }
+  }
+  return { trackCount, analyzedCount, recommendationCount, error, platform, playlistId, playlistName };
+}
+
 function persistJobState(job) {
   try {
     fs.mkdirSync(job.runtime_dir, { recursive: true });
@@ -754,6 +873,95 @@ function restoredLegacyJob(id, runtimeDir) {
   }
 }
 
+function readRecommendationHistoryFiles() {
+  if (!fs.existsSync(HISTORY_ROOT)) return [];
+  const items = [];
+  for (const entry of fs.readdirSync(HISTORY_ROOT, { withFileTypes: true })) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== ".json") continue;
+    const filePath = path.join(HISTORY_ROOT, entry.name);
+    try {
+      const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      const entries = Array.isArray(payload.entries) ? payload.entries : [];
+      const retentionDays = Number(payload.retention_days) || 7;
+      const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+      const active = entries.filter((item) => {
+        const stamp = Date.parse(item && item.generated_at ? item.generated_at : "");
+        return Number.isFinite(stamp) && stamp >= cutoff;
+      });
+      const ids = new Set();
+      const keys = new Set();
+      for (const item of active) {
+        for (const value of item.canonical_track_ids || []) ids.add(String(value));
+        for (const value of item.track_keys || []) keys.add(String(value));
+      }
+      const stamps = entries.map((item) => String((item && item.generated_at) || "")).filter(Boolean).sort();
+      items.push({
+        file: entry.name,
+        user_id: String(payload.user_id || ""),
+        playlist: payload.playlist && typeof payload.playlist === "object" ? payload.playlist : {},
+        retention_days: retentionDays,
+        total_entries: entries.length,
+        active_entries: active.length,
+        excluded_tracks: ids.size || keys.size,
+        latest_at: stamps.length ? stamps[stamps.length - 1] : "",
+        entries: entries.map((item) => ({
+          generated_at: String((item && item.generated_at) || ""),
+          tracks: Math.max(((item && item.canonical_track_ids) || []).length, ((item && item.track_keys) || []).length),
+        })),
+      });
+    } catch (error) {
+      items.push({ file: entry.name, broken: true, error: error.message });
+    }
+  }
+  items.sort((left, right) => String(right.latest_at || "").localeCompare(String(left.latest_at || "")));
+  return items;
+}
+
+function resolveHistoryFile(rawName) {
+  const name = path.basename(decodeURIComponent(String(rawName || "")));
+  if (path.extname(name).toLowerCase() !== ".json") return null;
+  const target = path.join(HISTORY_ROOT, name);
+  if (!target.startsWith(HISTORY_ROOT + path.sep)) return null;
+  return { name, target };
+}
+
+function pruneHistoryEntries(payload) {
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  const retentionDays = Number(payload.retention_days) || 7;
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const kept = entries.filter((item) => {
+    const stamp = Date.parse(item && item.generated_at ? item.generated_at : "");
+    return Number.isFinite(stamp) && stamp >= cutoff;
+  });
+  return { payload: { ...payload, entries: kept }, removed: entries.length - kept.length, kept: kept.length };
+}
+
+function listUserRuns(userId, limit = 50) {
+  if (!fs.existsSync(JOB_ROOT)) return [];
+  const runs = [];
+  for (const entry of fs.readdirSync(JOB_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const statePath = path.join(JOB_ROOT, entry.name, JOB_STATE_FILENAME);
+    try {
+      if (!fs.existsSync(statePath)) continue;
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      if (!state || Number(state.user_id) !== Number(userId)) continue;
+      runs.push({
+        id: state.id || entry.name,
+        status: state.status || "unknown",
+        stage: state.stage || "",
+        created_at: state.created_at || "",
+        updated_at: state.updated_at || "",
+        exit_code: state.exit_code === undefined ? null : state.exit_code,
+        workflow_mode: state.workflow_mode || "full",
+        event_count: Array.isArray(state.events) ? state.events.length : 0,
+      });
+    } catch {}
+  }
+  runs.sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""));
+  return runs.slice(0, Math.min(Math.max(Number(limit) || 50, 1), 200));
+}
+
 function restoreRecentJobs() {
   if (!fs.existsSync(JOB_ROOT)) return;
   const restored = [];
@@ -765,8 +973,23 @@ function restoreRecentJobs() {
     try {
       if (fs.existsSync(statePath)) {
         const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-        if (state && state.id === entry.name && ["completed", "failed"].includes(state.status) && Array.isArray(state.events)) {
-          job = { ...state, runtime_dir: runtimeDir, user_id: state.user_id || null, event_seq: Math.max(0, ...state.events.map((event) => Number(event.seq) || 0)) };
+        if (state && state.id === entry.name && Array.isArray(state.events)) {
+          const terminal = ["completed", "failed"].includes(state.status);
+          const events = [...state.events];
+          let status = state.status;
+          let updatedAt = state.updated_at;
+          if (!terminal) {
+            // 服务重启会结束子进程：把未完成任务标成失败并写明原因，
+            // 前端才能给出明确提示，而不是轮询到“找不到网页工作流任务”。
+            const at = new Date().toISOString();
+            events.push({ event: "failed", status: "failed", stage: state.stage || "workflow",
+              error: "服务重启，任务已中断；请重新运行", at,
+              seq: Math.max(0, ...events.map((item) => Number(item.seq) || 0)) + 1 });
+            status = "failed";
+            updatedAt = at;
+          }
+          job = { ...state, status, updated_at: updatedAt, events, runtime_dir: runtimeDir, user_id: state.user_id || null,
+                  event_seq: Math.max(0, ...events.map((event) => Number(event.seq) || 0)) };
         }
       }
     } catch {}
@@ -776,6 +999,30 @@ function restoreRecentJobs() {
   restored.sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""));
   for (const job of restored.slice(0, 20)) jobs.set(job.id, job);
   if (restored.length) latestJobId = restored[0].id;
+  // 回填运行历史（幂等）：把磁盘上的历史任务补进 runs 表，供账号中心与后台查询。
+  for (const job of restored.slice(0, 500)) {
+    try {
+      const summary = summarizeRunFromJob(job);
+      authStore.backfillRun({
+        jobId: job.id,
+        userId: job.user_id || null,
+        kind: job.workflow_mode === "recommendation_only" ? "recommendation_only" : "full",
+        platform: summary.platform,
+        playlistId: summary.playlistId,
+        playlistName: summary.playlistName,
+        trackCount: summary.trackCount,
+        analyzedCount: summary.analyzedCount,
+        recommendationCount: summary.recommendationCount,
+        startedAt: job.created_at,
+        finishedAt: job.updated_at,
+        status: job.status === "failed" ? "failed" : "completed",
+        runtimeDir: job.runtime_dir || "",
+        error: summary.error,
+      });
+    } catch (error) {
+      console.error(`运行历史回填失败 ${job.id}：${error.message}`);
+    }
+  }
 }
 
 function recordJobEvent(job, event) {
@@ -791,6 +1038,7 @@ function recordJobEvent(job, event) {
   job.updated_at = safeEvent.at;
   latestJobId = job.id;
   persistJobState(job);
+  syncRunFromEvent(job, safeEvent);
   const subscribers = jobSubscribers.get(job.id) || new Set();
   for (const res of subscribers) {
     try {
@@ -805,13 +1053,55 @@ function latestCompletedJob(userId = null) {
     .sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""))[0] || null;
 }
 
+// 分析结果只在 24 小时内可直接复用；超期必须重新分析。
+const ANALYSIS_REUSE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function analysisAgeMs(job) {
+  const finishedAt = Date.parse(job && job.updated_at || "");
+  return Number.isFinite(finishedAt) ? Date.now() - finishedAt : Number.POSITIVE_INFINITY;
+}
+
+// 只有带完整分析产物的任务可以作为复用源；复用任务自身借用 source_runtime，不能再次被复用。
+function analysisSourceJobs(userId) {
+  return Array.from(jobs.values())
+    .filter((job) => job && job.status === "completed"
+      && (userId == null ? !AUTH_REQUIRED : Number(job.user_id) === Number(userId))
+      && job.workflow_mode !== "recommendation_only"
+      && analysisAgeMs(job) <= ANALYSIS_REUSE_MAX_AGE_MS)
+    .sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""));
+}
+
+// 复用需要同链接与同范围双匹配：平台 + 歌单 id 相同，分位与实际处理数量相同。
+function reusableAnalysisJob(userId, { platform, playlistId, percentile, limit, trackTotal }) {
+  return analysisSourceJobs(userId).find((job) => {
+    if (String(job.platform || "") !== String(platform || "")) return false;
+    if (String(job.playlist_id || "") !== String(playlistId || "")) return false;
+    if (Number(job.track_percentile) !== Number(percentile)) return false;
+    if (Number(job.analyzed_limit) !== Number(limit)) return false;
+    if (trackTotal !== null && trackTotal !== undefined && Number(job.track_total) !== Number(trackTotal)) return false;
+    return true;
+  }) || null;
+}
+
+function latestAnalysisJob(userId = null) {
+  return analysisSourceJobs(userId)[0] || null;
+}
+
+// 直接粘贴 App 分享文字时（如「分享歌单: xxx https://163cn.tv/xxx (@网易云音乐)」），
+// 只取其中的公开链接，去掉尾巴上的括号与标点。
+function extractSourceCandidates(value) {
+  const text = String(value || "").trim();
+  const matches = text.match(/https?:\/\/[^\s"'<>，。；、」』）】]+/g) || [];
+  return matches
+    .map((item) => item.replace(/[)\]）】}>,.;；，。」』]+$/g, ""))
+    .filter(Boolean);
+}
+
 function allowedSource(body) {
-  const sourceUrl = String(body.source_url || body.url || "").trim();
-  if (!sourceUrl) throw new Error("请提交歌单公开链接");
-  let parsed;
-  try { parsed = new URL(sourceUrl); } catch { throw new Error("歌单链接必须是 HTTPS 公开链接"); }
-  if (parsed.protocol !== "https:") throw new Error("歌单链接必须是 HTTPS 公开链接");
-  const hostname = (parsed.hostname || "").toLowerCase().replace(/\.$/, "");
+  const raw = String(body.source_url || body.url || "").trim();
+  if (!raw) throw new Error("请提交歌单公开链接");
+  const candidates = extractSourceCandidates(raw);
+  const attempts = candidates.length ? candidates : [raw];
   const sourceByHost = {
     "music.apple.com": { kind: "apple_music", platform: "apple_music" },
     "music.163.com": { kind: "netease_public", platform: "netease" },
@@ -820,24 +1110,34 @@ function allowedSource(body) {
     "y.qq.com": { kind: "qq_public", platform: "qq_music" },
     "i.y.qq.com": { kind: "qq_public", platform: "qq_music" },
   };
-  const source = sourceByHost[hostname];
-  if (!source) throw new Error("只支持 Apple Music、网易云音乐或 QQ 音乐公开歌单链接");
-  return {
-    ...source,
-    source_url: sourceUrl,
-    playlist_id: "",
-    playlist_name: "",
-    expected_count: null,
-  };
+  for (const candidate of attempts) {
+    const normalized = candidate.replace(/^http:\/\//i, "https://");
+    let parsed;
+    try { parsed = new URL(normalized); } catch { continue; }
+    if (parsed.protocol !== "https:") continue;
+    const hostname = (parsed.hostname || "").toLowerCase().replace(/\.$/, "");
+    const source = sourceByHost[hostname];
+    if (!source) continue;
+    return {
+      ...source,
+      source_url: normalized,
+      playlist_id: "",
+      playlist_name: "",
+      expected_count: null,
+    };
+  }
+  throw new Error("只支持 Apple Music、网易云音乐或 QQ 音乐公开歌单链接");
 }
 
 async function startWorkflowJob(config, options = {}) {
   if (activeJobId) throw new Error("已有网页工作流正在运行，请等待其完成");
   const runtime = runtimeConfigSnapshot();
   await fs.promises.mkdir(JOB_ROOT, { recursive: true });
-  const id = `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${crypto.randomBytes(4).toString("hex")}`;
-  const runtimeDir = path.join(JOB_ROOT, id);
-  await fs.promises.mkdir(runtimeDir);
+  const id = options.jobId
+    || `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${crypto.randomBytes(4).toString("hex")}`;
+  // 断点续跑：重试时沿用同一运行目录，Python 侧会复用已完成的阶段产物。
+  const runtimeDir = options.reuseRuntimeDir ? path.resolve(options.reuseRuntimeDir) : path.join(JOB_ROOT, id);
+  if (!options.reuseRuntimeDir) await fs.promises.mkdir(runtimeDir);
   // 每次任务锁定完整有效配置；任务运行期间修改网页设置不会影响当前子进程。
   // 配置快照放在任务目录旁边；web_workflow 要求 runtime_dir 启动时为空。
   const configSnapshotPath = path.join(JOB_ROOT, `${id}.web_config.snapshot.json`);
@@ -864,10 +1164,27 @@ async function startWorkflowJob(config, options = {}) {
     stderr_tail: "",
     event_seq: 0,
     workflow_mode: options.recommendationOnly ? "recommendation_only" : "full",
+    source_url: String(config.source_url || ""),
+    platform: String(config.platform || ""),
+    playlist_id: String(config.playlist_id || ""),
+    source_runtime_dir: options.sourceRuntimeDir ? String(options.sourceRuntimeDir) : "",
   };
   jobs.set(id, job);
   activeJobId = id;
   latestJobId = id;
+  try {
+    authStore.createRun({
+      jobId: id,
+      userId: job.user_id,
+      kind: job.workflow_mode === "recommendation_only" ? "recommendation_only" : "full",
+      platform: String(config.platform || ""),
+      playlistId: String(config.playlist_id || ""),
+      playlistName: String(config.playlist_name || ""),
+      runtimeDir,
+    });
+  } catch (error) {
+    console.error(`无法创建运行记录 ${id}：${error.message}`);
+  }
   recordJobEvent(job, { event: "queued", status: "queued", stage: "queued", workflow_mode: job.workflow_mode });
 
   const args = [
@@ -1166,6 +1483,110 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (urlPath === "/api/me/profile" && req.method === "PATCH") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    try {
+      const body = await readJsonBody(req);
+      const updated = authStore.updateUser(user.id, { username: body.username });
+      authStore.writeAudit(user.id, "user.profile.update");
+      sendJson(res, 200, { ok: true, user: updated });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "资料更新失败" }); }
+    return;
+  }
+
+  if (urlPath === "/api/me/password" && req.method === "PUT") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    try {
+      const body = await readJsonBody(req);
+      if (!authStore.verifyUserPassword(user.id, body.current_password)) throw new Error("当前密码不正确");
+      const updated = authStore.updateUser(user.id, { password: body.new_password });
+      // 改密后全部会话已失效；为当前浏览器重建会话，避免修改密码后被登出。
+      const session = authStore.createSession(user.id, "user");
+      setSessionCookie(res, req, USER_SESSION_COOKIE, session.token, 30 * 24 * 60 * 60);
+      authStore.writeAudit(user.id, "user.password.update");
+      sendJson(res, 200, { ok: true, user: updated });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "密码修改失败" }); }
+    return;
+  }
+
+  if (urlPath === "/api/me/runs" && req.method === "GET") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    const result = authStore.listRuns({ userId: user.id, status: query.get("status") || null, limit: query.get("limit") || 20, offset: query.get("offset") || 0 });
+    sendJson(res, 200, { ok: true, ...result, stats: authStore.runStats(user.id) });
+    return;
+  }
+
+  if (urlPath === "/api/me/recommendation-history" && req.method === "GET") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    const items = readRecommendationHistoryFiles().filter((item) => String(item.user_id || "") === String(user.id));
+    sendJson(res, 200, { ok: true, items });
+    return;
+  }
+
+  const myHistoryMatch = urlPath.match(/^\/api\/me\/recommendation-history\/([^/]+)$/);
+  if (myHistoryMatch && req.method === "DELETE") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    const resolved = resolveHistoryFile(myHistoryMatch[1]);
+    if (!resolved || !fs.existsSync(resolved.target)) { sendJson(res, 404, { ok: false, error: "历史文件不存在" }); return; }
+    try {
+      const payload = JSON.parse(fs.readFileSync(resolved.target, "utf8"));
+      if (String(payload.user_id || "") !== String(user.id)) { sendJson(res, 403, { ok: false, error: "只能管理自己的缓存" }); return; }
+      fs.rmSync(resolved.target, { force: true });
+      authStore.writeAudit(user.id, "user.recommendation_history.clear", { file: resolved.name });
+      sendJson(res, 200, { ok: true });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "清除失败" }); }
+    return;
+  }
+
+  const myHistoryPruneMatch = urlPath.match(/^\/api\/me\/recommendation-history\/([^/]+)\/prune$/);
+  if (myHistoryPruneMatch && req.method === "POST") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    const resolved = resolveHistoryFile(myHistoryPruneMatch[1]);
+    if (!resolved || !fs.existsSync(resolved.target)) { sendJson(res, 404, { ok: false, error: "历史文件不存在" }); return; }
+    try {
+      const payload = JSON.parse(fs.readFileSync(resolved.target, "utf8"));
+      if (String(payload.user_id || "") !== String(user.id)) { sendJson(res, 403, { ok: false, error: "只能管理自己的缓存" }); return; }
+      const pruned = pruneHistoryEntries(payload);
+      fs.writeFileSync(resolved.target, JSON.stringify(pruned.payload, null, 2) + "\n", "utf8");
+      authStore.writeAudit(user.id, "user.recommendation_history.prune", { file: resolved.name, removed: pruned.removed });
+      sendJson(res, 200, { ok: true, removed: pruned.removed, kept: pruned.kept });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "清理失败" }); }
+    return;
+  }
+
+  const myHistoryEntryMatch = urlPath.match(/^\/api\/me\/recommendation-history\/([^/]+)\/entries\/([^/]+)$/);
+  if (myHistoryEntryMatch && req.method === "DELETE") {
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
+    const resolved = resolveHistoryFile(myHistoryEntryMatch[1]);
+    const stamp = decodeURIComponent(myHistoryEntryMatch[2]);
+    if (!resolved || !fs.existsSync(resolved.target)) { sendJson(res, 404, { ok: false, error: "历史文件不存在" }); return; }
+    try {
+      const payload = JSON.parse(fs.readFileSync(resolved.target, "utf8"));
+      if (String(payload.user_id || "") !== String(user.id)) { sendJson(res, 403, { ok: false, error: "只能管理自己的缓存" }); return; }
+      const entries = Array.isArray(payload.entries) ? payload.entries : [];
+      const kept = entries.filter((item) => String((item && item.generated_at) || "") !== stamp);
+      if (kept.length === entries.length) { sendJson(res, 404, { ok: false, error: "该次记录不存在" }); return; }
+      fs.writeFileSync(resolved.target, JSON.stringify({ ...payload, entries: kept }, null, 2) + "\n", "utf8");
+      authStore.writeAudit(user.id, "user.recommendation_history.remove_entry", { file: resolved.name, generated_at: stamp });
+      sendJson(res, 200, { ok: true, removed: entries.length - kept.length });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "删除失败" }); }
+    return;
+  }
+
   if (urlPath === "/api/me/playlists" && req.method === "GET") {
     const user = requireUser(req, res);
     if (!user && AUTH_REQUIRED) return;
@@ -1215,7 +1636,20 @@ const server = http.createServer(async (req, res) => {
 
   if (urlPath === "/api/admin/users" && req.method === "GET") {
     const admin = requireAdmin(req, res); if (!admin) return;
-    sendJson(res, 200, { ok: true, users: authStore.listUsers() });
+    const users = authStore.listUsers().map((user) => ({ ...user, run_stats: authStore.runStats(user.id) }));
+    sendJson(res, 200, { ok: true, users });
+    return;
+  }
+
+  if (urlPath === "/api/admin/users" && req.method === "POST") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const body = await readJsonBody(req);
+      const role = body.role === "admin" ? "admin" : "user";
+      const created = authStore.createUser(body.username, body.password, role);
+      authStore.writeAudit(admin.id, "admin.user.create", { target_user_id: created.id, username: created.username, role });
+      sendJson(res, 201, { ok: true, user: created });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "创建用户失败" }); }
     return;
   }
 
@@ -1225,13 +1659,110 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const targetId = Number(adminUserMatch[1]);
-      if (targetId === Number(admin.id) && (body.status === "disabled" || body.role === "user")) {
-        throw new Error("不能停用或撤销当前管理员账号");
+      const target = authStore.listUsers().find((user) => user.id === targetId);
+      if (!target) throw new Error("用户不存在");
+      const self = targetId === Number(admin.id);
+      if (self && (body.status === "disabled" || body.role === "user")) throw new Error("不能停用或降级当前登录账号");
+      const demoting = target.role === "admin" && (body.role === "user" || body.status === "disabled");
+      if (demoting) {
+        const activeAdmins = authStore.listUsers().filter((user) => user.role === "admin" && user.status === "enabled").length;
+        if (activeAdmins <= 1) throw new Error("至少保留一名启用状态的管理员");
       }
       const updated = authStore.updateUser(targetId, body);
       authStore.writeAudit(admin.id, "admin.user.update", { target_user_id: targetId, fields: Object.keys(body) });
       sendJson(res, 200, { ok: true, user: updated });
     } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "用户更新失败" }); }
+    return;
+  }
+
+  if (adminUserMatch && req.method === "DELETE") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const targetId = Number(adminUserMatch[1]);
+      if (targetId === Number(admin.id)) throw new Error("不能删除当前登录账号");
+      const users = authStore.listUsers();
+      const target = users.find((user) => user.id === targetId);
+      if (!target) throw new Error("用户不存在");
+      if (target.role === "admin" && users.filter((user) => user.role === "admin").length <= 1) throw new Error("至少保留一名管理员");
+      const removed = authStore.deleteUser(targetId);
+      authStore.writeAudit(admin.id, "admin.user.delete", { target_user_id: targetId, username: removed.username });
+      sendJson(res, 200, { ok: true, user: removed });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "删除用户失败" }); }
+    return;
+  }
+
+  const adminUserRunsMatch = urlPath.match(/^\/api\/admin\/users\/(\d+)\/runs$/);
+  if (adminUserRunsMatch && req.method === "GET") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const result = authStore.listRuns({ userId: Number(adminUserRunsMatch[1]), status: query.get("status") || null, limit: query.get("limit") || 20, offset: query.get("offset") || 0 });
+    sendJson(res, 200, { ok: true, ...result, stats: authStore.runStats(Number(adminUserRunsMatch[1])) });
+    return;
+  }
+
+  if (urlPath === "/api/admin/runs" && req.method === "GET") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const rawUserId = query.get("user_id");
+    const userId = rawUserId ? Number(rawUserId) : null;
+    const result = authStore.listRuns({ userId, status: query.get("status") || null, limit: query.get("limit") || 20, offset: query.get("offset") || 0 });
+    sendJson(res, 200, { ok: true, ...result, stats: userId ? authStore.runStats(userId) : authStore.runStats() });
+    return;
+  }
+
+  if (urlPath === "/api/admin/recommendation-history" && req.method === "GET") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const usernames = new Map(authStore.listUsers().map((user) => [String(user.id), user.username]));
+    const items = readRecommendationHistoryFiles().map((item) => ({ ...item, username: item.user_id ? (usernames.get(item.user_id) || "") : "" }));
+    sendJson(res, 200, { ok: true, items });
+    return;
+  }
+
+  const adminHistoryFileMatch = urlPath.match(/^\/api\/admin\/recommendation-history\/([^/]+)$/);
+  if (adminHistoryFileMatch && req.method === "DELETE") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const resolved = resolveHistoryFile(adminHistoryFileMatch[1]);
+    if (!resolved || !fs.existsSync(resolved.target)) { sendJson(res, 404, { ok: false, error: "历史文件不存在" }); return; }
+    fs.rmSync(resolved.target, { force: true });
+    authStore.writeAudit(admin.id, "admin.recommendation_history.clear", { file: resolved.name });
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  const adminHistoryPruneMatch = urlPath.match(/^\/api\/admin\/recommendation-history\/([^/]+)\/prune$/);
+  if (adminHistoryPruneMatch && req.method === "POST") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const resolved = resolveHistoryFile(adminHistoryPruneMatch[1]);
+    if (!resolved || !fs.existsSync(resolved.target)) { sendJson(res, 404, { ok: false, error: "历史文件不存在" }); return; }
+    try {
+      const payload = JSON.parse(fs.readFileSync(resolved.target, "utf8"));
+      const pruned = pruneHistoryEntries(payload);
+      fs.writeFileSync(resolved.target, JSON.stringify(pruned.payload, null, 2) + "\n", "utf8");
+      authStore.writeAudit(admin.id, "admin.recommendation_history.prune", { file: resolved.name, removed: pruned.removed });
+      sendJson(res, 200, { ok: true, removed: pruned.removed, kept: pruned.kept });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "清理失败" }); }
+    return;
+  }
+
+  const adminHistoryEntryMatch = urlPath.match(/^\/api\/admin\/recommendation-history\/([^/]+)\/entries\/([^/]+)$/);
+  if (adminHistoryEntryMatch && req.method === "DELETE") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const resolved = resolveHistoryFile(adminHistoryEntryMatch[1]);
+    const stamp = decodeURIComponent(adminHistoryEntryMatch[2]);
+    if (!resolved || !fs.existsSync(resolved.target)) { sendJson(res, 404, { ok: false, error: "历史文件不存在" }); return; }
+    try {
+      const payload = JSON.parse(fs.readFileSync(resolved.target, "utf8"));
+      const entries = Array.isArray(payload.entries) ? payload.entries : [];
+      const kept = entries.filter((item) => String((item && item.generated_at) || "") !== stamp);
+      if (kept.length === entries.length) { sendJson(res, 404, { ok: false, error: "该次记录不存在" }); return; }
+      fs.writeFileSync(resolved.target, JSON.stringify({ ...payload, entries: kept }, null, 2) + "\n", "utf8");
+      authStore.writeAudit(admin.id, "admin.recommendation_history.remove_entry", { file: resolved.name, generated_at: stamp });
+      sendJson(res, 200, { ok: true, removed: entries.length - kept.length });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "删除失败" }); }
+    return;
+  }
+
+  if (urlPath === "/api/admin/settings/schema" && req.method === "GET") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    sendJson(res, 200, { ok: true, schema: SETTINGS_SCHEMA });
     return;
   }
 
@@ -1417,8 +1948,8 @@ const server = http.createServer(async (req, res) => {
       const user = requireUser(req, res);
       if (!user && AUTH_REQUIRED) return;
       if (activeJobId) throw new Error("已有网页工作流正在运行，请等待其完成");
-      const baseJob = latestCompletedJob(user && user.id);
-      if (!baseJob) throw new Error("当前没有可复用的已完成 Step 2 分析");
+      const baseJob = latestAnalysisJob(user && user.id);
+      if (!baseJob) throw new Error("没有 24 小时内可复用的分析结果，请回到推荐源重新运行");
       const runtime = runtimeConfigSnapshot();
       if (!runtime.analysisExecutor.command || !runtime.recommendationExecutor.command) {
         sendJson(res, 503, { ok: false, error: "当前暂不可生成推荐" });
@@ -1489,6 +2020,30 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: `所选歌单分位对应数量应为 ${Math.max(1, Math.ceil(maximum * percentile))} 首` });
         return;
       }
+      job.track_percentile = percentile;
+      job.analyzed_limit = limit;
+      job.track_total = maximum !== null ? maximum : null;
+      // 同链接（平台 + 歌单 id）与同范围（分位 + 实际数量）双匹配，且分析在
+      // 24 小时内完成时，才复用已有分析直接生成推荐；否则按所选范围重新分析。
+      const reusable = reusableAnalysisJob(user && user.id, {
+        platform: job.platform, playlistId: job.playlist_id,
+        percentile, limit, trackTotal: maximum,
+      });
+      if (reusable && job.child) {
+        job.child.kill();
+        recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: "已改用同链接、同范围的已有分析" });
+        activeJobId = null;
+        const reused = await startWorkflowJob(
+          { kind: "local_json", source_url: job.source_url || "", input: "", playlist_id: job.playlist_id || "",
+            playlist_name: "", platform: job.platform || "", expected_count: null },
+          { recommendationOnly: true, sourceRuntimeDir: reusable.runtime_dir, user });
+        reused.track_percentile = percentile;
+        reused.analyzed_limit = limit;
+        reused.track_total = maximum !== null ? maximum : null;
+        sendJson(res, 202, { ok: true, job: publicJob(reused), reused_from: reusable.id,
+                             reused_at: reusable.updated_at, limit, percentile });
+        return;
+      }
       const requestPath = path.join(job.runtime_dir, LIMIT_REQUEST_FILENAME);
       const temporary = `${requestPath}.${process.pid}.tmp`;
       await fs.promises.writeFile(temporary, JSON.stringify({ limit, percentile }), "utf8");
@@ -1496,6 +2051,27 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 202, { ok: true, job: publicJob(job), limit, percentile });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error && error.message ? error.message : "无法提交处理数量" });
+    }
+    return;
+  }
+
+  // 断点续跑：同一任务失败后重新启动，沿用原运行目录与已完成的阶段产物。
+  const retryMatch = urlPath.match(/^\/api\/jobs\/([^/]+)\/retry$/);
+  if (retryMatch && req.method === "POST") {
+    const job = jobs.get(decodeURIComponent(retryMatch[1]));
+    if (!job) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
+    const user = requireUser(req, res);
+    if (!canAccessJob(job, user)) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
+    if (job.status !== "failed") { sendJson(res, 409, { ok: false, error: "只有失败的任务可以续跑" }); return; }
+    try {
+      const config = { kind: "local_json", source_url: job.source_url || "", input: "",
+                       playlist_id: job.playlist_id || "", playlist_name: "",
+                       platform: job.platform || "", expected_count: null };
+      const retried = await startWorkflowJob(config, { user, jobId: job.id, reuseRuntimeDir: job.runtime_dir });
+      sendJson(res, 202, { ok: true, job: publicJob(retried), resumed: true });
+    } catch (error) {
+      const message = error && error.message ? error.message : "无法续跑任务";
+      sendJson(res, message.includes("已有网页工作流") ? 409 : 400, { ok: false, error: message });
     }
     return;
   }

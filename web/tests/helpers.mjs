@@ -55,6 +55,7 @@ export async function createIsolatedServer({ label, executors = true, settings =
       published: projectRelative(path.join(runtimeDir, "current.json")),
       jobs: projectRelative(path.join(runtimeDir, "jobs")),
       input: "input",
+      recommendation_history: projectRelative(path.join(runtimeDir, "recommendation-history")),
     },
     runtime: { python: PYTHON },
     workflow: {

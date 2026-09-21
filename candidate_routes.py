@@ -11,6 +11,12 @@ from preference_model import interest_profiles
 def resolve_candidate_route(candidate: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
     artist = normalized_name(candidate.get("artist"))
     counts = {item["entity_ref"]: int(item["count"]) for item in packet.get("primary_distribution", [])}
+    # 歌手被 credited 但未进 primary 的情况同样属于当前歌单：
+    # 否则平台召回（按当前艺人搜到的曲目）会被误判为 style_neighbor。
+    for item in packet.get("credited_distribution", []):
+        ref = item.get("entity_ref")
+        if ref:
+            counts[ref] = max(counts.get(ref, 0), int(item.get("count") or 0))
     preferred = {item["entity_ref"] for item in packet.get("preferred_artists", [])}
     peak = max(counts.values(), default=1) or 1
     matches = []

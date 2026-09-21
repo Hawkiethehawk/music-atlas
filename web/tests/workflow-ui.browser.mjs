@@ -337,7 +337,7 @@ test("正常序列：四阶段推进、Step 2/3 真实环节与事件上限", as
     assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 1, "导出在推荐完成后等待执行");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.waiting').count(), 0);
     assert.equal(await page.locator('[data-wf-stat="recommendation"]').textContent(), "等待 · 3/4");
-    assert.match(await page.locator('[data-wf-note="recommendation"]').textContent(), /第二步校验通过后/);
+    assert.match(await page.locator('[data-wf-note="recommendation"]').textContent(), /分析通过校验后/);
 
     await page.click("[data-wf-log-toggle]");
     assert.match(await page.locator("[data-wf-log-text]").textContent(), /曲目事实来源已写入审计包/);
@@ -696,8 +696,8 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     assert.equal(await flow.locator(".wf-stage.reused").count(), 2, "整理与分析阶段应明确标记为已复用");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row').count(), 4, "复用流程保留四个 Step 2 环节并标记已复用");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.reused').count(), 4);
-    assert.match(await flow.locator('[data-wf-stat="analysis"]').textContent(), /分析包已复用/);
-    assert.match(await flow.locator('[data-wf-note="analysis"]').textContent(), /本次不重新分析歌单/);
+    assert.match(await flow.locator('[data-wf-stat="analysis"]').textContent(), /分析结果已复用/);
+    assert.match(await flow.locator('[data-wf-note="analysis"]').textContent(), /本次不重新分析/);
     assert.equal(await flow.locator('[data-wf-count]').textContent(), "正在生成新候选");
     assert.doesNotMatch(await flow.textContent(), /0\/0 批|0\/0 首|并行槽位空闲/);
 
@@ -706,7 +706,7 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 4);
     assert.equal(await flow.locator('[data-wf-stat="recommendation"]').textContent(), "进行中 · 0/4");
     await page.click("[data-wf-log-toggle]");
-    assert.match(await flow.locator("[data-wf-log-text]").textContent(), /复用当前分析，开始生成新 Atlas/);
+    assert.match(await flow.locator("[data-wf-log-text]").textContent(), /沿用已有分析，生成新 Atlas/);
 
     addRecommendationOnlyStage(job, { complete: true, includeStart: false });
     await pushJob(page, job);
@@ -800,7 +800,7 @@ test("新 Atlas 接口返回 HTML 时显示可理解提示，不暴露 JSON 解�
     await page.click("[data-atlas-swap]");
     await page.click("[data-atlas-swap]");
     await page.click("[data-atlas-new]");
-    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("接口尚未加载"));
+    await page.waitForFunction(() => document.getElementById("toast").textContent.includes("页面还没准备好"));
     const toastText = await page.locator("#toast").textContent();
     assert.doesNotMatch(toastText, /Unexpected token|valid JSON|doctype/i);
     assert.equal(await page.locator("[data-atlas-new]").isDisabled(), false, "失败后按钮应恢复可用");

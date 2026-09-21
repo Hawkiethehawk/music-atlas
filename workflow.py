@@ -15,7 +15,7 @@ from proc_util import hidden_window_kwargs
 from agent_prompt import prepare_agent_context, prompt_slot_manifest, prompt_size_telemetry
 from agent_runner import run_agent
 from analysis_agent import execute_analysis_research, prepare_analysis_research
-from taste_summary import TASTE_BATCH_SIZE, resolve_analysis_mode, run_taste_analysis, summarize_review
+from taste_summary import summarize_review
 from reports import render_report
 from benchmark import compare_listening_benchmark, prepare_listening_benchmark
 from contracts import (
@@ -138,37 +138,20 @@ def _analysis_research_input(args: argparse.Namespace, snapshot_path: Path, outp
     directory = _path(args.analysis_research_dir, output_path.parent / "analysis_research")
     if any(path.resolve().is_relative_to(directory.resolve()) for path in (*inputs, *outputs)):
         raise ContractError("分析研究目录不能包含分析输入或输出文件")
-    # 规模分档：31+ 首的 Skill 分析改用品味/歌手摘要单任务，不再准备逐曲批次。
-    analysis_scale_mode = resolve_analysis_mode(read_json(snapshot_path)["track_count"])
     if args.import_analysis_results:
-        if analysis_scale_mode != "track_research":
-            raise ContractError("歌单超过 30 首，应使用品味摘要模式（--analysis-command），不支持分批结果导入")
         result = execute_analysis_research(snapshot_path, taxonomy_path, directory, command=args.analysis_command,
                                            batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget,
                                            timeout=args.analysis_timeout,
                                            parallelism=args.analysis_parallelism)
         return result, None, None
-    if analysis_scale_mode != "track_research":
-        if args.analysis_command is None:
-            return None, {
-                "status": "taste_analysis_required", "analysis_mode": analysis_scale_mode,
-                "source_track_count": read_json(snapshot_path)["track_count"],
-                "analysis_written": False, "recommendation_count": 0, "send_performed": False,
-                "next_action": "歌单超过 30 首：提供 --analysis-command 以运行品味摘要分析（单任务）。",
-            }, None
-        packet, _bundle_path = run_taste_analysis(
-            snapshot_path, taxonomy_path, directory, command=args.analysis_command,
-            timeout=args.analysis_timeout, policy_path=_path(args.policy_file, None))
-        return None, {"status": "taste_analysis_written"}, packet
     if args.analysis_command:
         result = execute_analysis_research(snapshot_path, taxonomy_path, directory, command=args.analysis_command,
-                                           batch_size=args.analysis_batch_size or TASTE_BATCH_SIZE,
-                                           context_budget=args.analysis_context_budget,
+                                           batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget,
                                            timeout=args.analysis_timeout,
                                            parallelism=args.analysis_parallelism)
         return result, None, None
     manifest = prepare_analysis_research(snapshot_path, taxonomy_path, directory,
-                                         batch_size=args.analysis_batch_size or TASTE_BATCH_SIZE, context_budget=args.analysis_context_budget)
+                                         batch_size=args.analysis_batch_size, context_budget=args.analysis_context_budget)
     return None, {
         "status": "analysis_agent_required", "analysis_mode": args.analysis_mode, "skill_name": "music-atlas-analysis",
         "executor_kind": "generic_external_executor", "source_snapshot_id": manifest["source_snapshot_id"],

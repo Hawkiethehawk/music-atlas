@@ -210,8 +210,8 @@ def _member_sort_key(item: dict) -> tuple:
             normalized_name(item.get("name")))
 
 
-def select_island_seeds(packet: dict, limit: int = 3) -> list[str]:
-    """Choose one distinct representative artist per Agent island."""
+def select_island_seeds(packet: dict, limit: int = 9, per_island: int = 2) -> list[str]:
+    """Choose representative artists per Agent island (distinct, at most per_island each)."""
 
     tracks = packet.get("favorite_tracks", [])
     rank = {normalized_name(row.get("artist")): index
@@ -230,10 +230,17 @@ def select_island_seeds(packet: dict, limit: int = 3) -> list[str]:
                 counts[marker] += 1
                 display.setdefault(marker, artist)
         ordered = sorted(counts, key=lambda marker: (-counts[marker], rank.get(marker, 10**6), marker))
-        marker = next((item for item in ordered if item not in used), None)
-        if marker:
+        picked = 0
+        for marker in ordered:
+            if marker in used:
+                continue
             used.add(marker)
             seeds.append(display[marker])
+            picked += 1
+            if picked >= per_island or len(seeds) >= limit:
+                break
+        if len(seeds) >= limit:
+            break
     for row in packet.get("primary_distribution", []):
         artist = str(row.get("artist") or "").strip()
         marker = normalized_name(artist)

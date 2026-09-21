@@ -65,7 +65,8 @@ class RelationshipSourceTests(unittest.TestCase):
                 {"record_ids": [0, 1, 2]}, {"record_ids": [2, 3, 4]}, {"record_ids": [4, 5]},
             ],
         }
-        self.assertEqual(select_island_seeds(packet), ["A", "B", "C"])
+        self.assertEqual(select_island_seeds(packet), ["A", "B", "C", "D"], "每岛最多 2 位代表艺人")
+        self.assertEqual(select_island_seeds(packet, limit=3, per_island=1), ["A", "B", "C"], "旧语义：每岛 1 位")
 
     def test_collects_members_and_cross_checked_shared_projects(self):
         client = FakeRelationshipClient()

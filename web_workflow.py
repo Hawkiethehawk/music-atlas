@@ -25,7 +25,8 @@ from urllib.request import Request, urlopen
 
 from analysis_agent import execute_analysis_research
 from agent_prompt import prepare_agent_context, prompt_size_telemetry
-from contracts import ContractError, normalized_name, read_json, track_key, utc_now, validate_playlist_snapshot, write_json
+from contracts import (ContractError, normalized_name, read_json, stable_hash, track_key, utc_now,
+                       validate_playlist_snapshot, write_json)
 from musician_analyzer import analyze_and_validate, write_coverage_report
 from platform_discovery import collect_track_facts, discover_platform_candidates, hydrate_netease_covers
 from recommender import rank_bundle
@@ -139,7 +140,58 @@ LIMIT_WAIT_POLL_SECONDS = 0.5
 TRACK_PERCENTILE_OPTIONS = (0.25, 0.5, 1.0)
 ATLAS_GROUP_COUNT = 3
 MIN_RECOMMENDATION_CANDIDATES = 30
+
+# 同一任务失败重试时可复用的阶段产物（断点续跑）。
+RESUMABLE_ARTIFACTS = frozenset({
+    "web_job_state.json", "snapshot.json", "analysis_manifest.json",
+    "musician_analysis.json", "lastfm_analysis.json", "coverage_report.json",
+    "track_facts.json", "public_relations.json", "public_style_profiles.json",
+    "platform_discovery.json", "candidate_pool.json", "review_report.json",
+    "recommendation_bundle.json", "web_payload.json", "web_job_report.json",
+    "analysis_research", "agent", "source",
+})
+RESUMABLE_ARTIFACT_PREFIXES = ("recommendation_bundle_group_", "web_payload_group_",
+                               "musician_analysis.", "web_config.snapshot.", "recommendation_policy.snapshot.")
+
+
+def _is_resumable_artifact(name: str) -> bool:
+    """判断目录项是否为已知阶段产物（允许断点续跑时目录非空）。"""
+    return name in RESUMABLE_ARTIFACTS or any(name.startswith(prefix) for prefix in RESUMABLE_ARTIFACT_PREFIXES)
+
 RECOMMENDATION_HISTORY_DAYS = 7
+
+
+def analysis_verify_concurrency(track_count: int) -> int:
+    """按歌单规模选择公开平台核验并发（实测平台允许较高并发，小歌单无需过度并发）。"""
+    return 12 if track_count <= 50 else 20
+
+
+def analysis_summary_timeout(track_count: int, base: int) -> int:
+    """摘要模式的单任务超时：按规模给足预算，且不低于用户配置。"""
+    suggested = 900 if track_count <= 1000 else 1200
+    return max(int(base or 0), suggested)
+
+
+def taste_source_tags(packet: dict[str, Any]) -> dict[str, Any]:
+    """摘要模式：从摘要分析包的逐曲分配构造 source_tags（不联网），供兴趣岛归纳与展示使用。"""
+    assignments = packet.get("track_style_assignments") or []
+    records: list[dict[str, Any]] = []
+    for item in assignments:
+        refs = [str(ref) for ref in (item.get("style_refs") or []) if str(ref).startswith("style:")]
+        primary = str(item.get("primary_style_ref") or "")
+        if primary and primary not in refs:
+            refs = [primary, *refs]
+        url = next((str(value) for value in (item.get("sources") or []) if str(value).startswith("http")), "")
+        records.append({
+            "track_key": str(item.get("track_key") or ""),
+            "scope": "taste_artist" if refs else "unknown",
+            "url": url,
+            "tags": [{"tag": ref, "style_ref": ref} for ref in refs],
+            "raw_tags": [],
+            "retrieved_at": packet.get("generated_at"),
+            "status": "supported" if refs else "unavailable",
+        })
+    return {"provider": "taste_summary", "axis_policy": "removed", "records": records, "requests": []}
 
 
 def _playlist_history_path(source_report: dict[str, Any], snapshot: dict[str, Any], runtime_dir: Path) -> Path:
@@ -193,6 +245,22 @@ def _exclude_recent_recommendations(candidates: list[dict[str, Any]], history: d
             and track_key(candidate.get("title"), candidate.get("artist")) not in keys]
 
 
+def _merge_candidates(primary: list[dict[str, Any]], extra: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并候选池（primary 优先），按 canonical id 与 track_key 去重。"""
+    seen_ids = {str(item.get("canonical_track_id") or "").casefold() for item in primary}
+    seen_keys = {track_key(item.get("title"), item.get("artist")) for item in primary}
+    merged = list(primary)
+    for item in extra:
+        canonical = str(item.get("canonical_track_id") or "").casefold()
+        key = track_key(item.get("title"), item.get("artist"))
+        if not canonical or canonical in seen_ids or key in seen_keys:
+            continue
+        seen_ids.add(canonical)
+        seen_keys.add(key)
+        merged.append(item)
+    return merged
+
+
 def _candidate_discovery_limits(configured_max: int, required: int, history: dict[str, Any]) -> list[int]:
     """计算候选数量上限，兼容原有首轮与 200 首硬上限记录。"""
     history_ids = {str(value) for value in history.get("canonical_track_ids", set()) if value}
@@ -236,6 +304,41 @@ def _candidate_discovery_profiles(configured_max: int, required: int, history: d
     return profiles
 
 
+def _reuse_candidate_pool(source_runtime: Path | None, packet: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """候选池断点复用：分析包未变时直接沿用上次召回的候选。
+
+    候选召回含平台搜索与逐首风格标签补全，实测 15–50 秒；同一分析包重复运行时
+    没有必要再召回一次。analysis_id 变化即视为失效，绝不误用旧候选。
+    """
+    if source_runtime is None:
+        return None
+    path = Path(source_runtime) / "candidate_pool.json"
+    if not path.is_file():
+        return None
+    try:
+        saved = read_json(path)
+    except Exception:
+        return None
+    if not isinstance(saved, dict) or saved.get("analysis_id") != packet.get("analysis_id"):
+        return None
+    pool = saved.get("candidate_pool")
+    return pool if isinstance(pool, list) and pool else None
+
+
+def _save_candidate_pool(runtime_dir: Path, packet: dict[str, Any], candidates: list[dict[str, Any]]) -> None:
+    """把召回结果落盘，供同分析包的后续运行复用（断点续跑）。"""
+    try:
+        write_json(Path(runtime_dir) / "candidate_pool.json", {
+            "schema_version": "1.0",
+            "analysis_id": packet.get("analysis_id"),
+            "saved_at": utc_now(),
+            "candidate_count": len(candidates),
+            "candidate_pool": candidates,
+        })
+    except Exception as error:  # 落盘失败不影响主流程
+        print(f'[resume] 候选池落盘失败：{error}', file=sys.stderr, flush=True)
+
+
 def _discover_unique_candidates(
     packet: dict[str, Any],
     history: dict[str, Any],
@@ -246,13 +349,24 @@ def _discover_unique_candidates(
     """多轮召回、核验并应用一周排除，直到满足三组 Atlas 的最低数量。"""
 
     from lastfm_pipeline import LastFM, discover
+    from platform_discovery import discover_platform_candidates
 
     attempts: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     discovery_report: dict[str, Any] = {}
+    platform_candidates: list[dict[str, Any]] = []
+    platform_report: dict[str, Any] = {}
     profiles = _candidate_discovery_profiles(configured_max, required, history)
     client = LastFM(ROOT / "runtime" / "lastfm-cache", seconds=180)
     for attempt_index, options in enumerate(profiles, 1):
+        if attempt_index == 1:
+            # 艺人延伸：对歌单主要艺人做一次平台搜索（每艺人一次请求），与相似艺人结果合并。
+            platform_candidates, platform_report = discover_platform_candidates(
+                packet,
+                max_candidates=options["max_candidates"],
+                concurrency=analysis_verify_concurrency(int(packet.get("source_track_count") or 0)),
+                tags_client=client,
+            )
         discovered, discovery_report = discover(
             packet,
             client,
@@ -260,14 +374,18 @@ def _discover_unique_candidates(
             excluded_track_keys=history.get("track_keys", set()),
             excluded_canonical_track_ids=history.get("canonical_track_ids", set()),
         )
-        candidates = _exclude_recent_recommendations(discovered, history)
+        merged = _merge_candidates(discovered, platform_candidates)
+        candidates = _exclude_recent_recommendations(merged, history)
         attempts.append({
             "attempt": attempt_index,
             **options,
-            "discovered_candidate_count": len(discovered),
-            "history_excluded_count": int(discovery_report.get("history_excluded_count", 0) or 0) + len(discovered) - len(candidates),
+            "discovered_candidate_count": len(merged),
+            "platform_candidate_count": len(platform_candidates),
+            "artist_continuation_count": sum(1 for item in candidates if item.get("candidate_type") == "artist_continuation"),
+            "discovered_similarity_count": len(discovered),
+            "history_excluded_count": int(discovery_report.get("history_excluded_count", 0) or 0) + len(merged) - len(candidates),
             "eligible_candidate_count": len(candidates),
-            "playlist_excluded_count": int(discovery_report.get("playlist_excluded_count", 0) or 0),
+            "playlist_excluded_count": int(discovery_report.get("playlist_excluded_count", 0) or 0) + int(platform_report.get("playlist_excluded_count", 0) or 0),
             "verification_rejected_count": int(discovery_report.get("verification_rejected_count", 0) or 0),
         })
         if len(candidates) >= required:
@@ -277,12 +395,62 @@ def _discover_unique_candidates(
     return candidates, {
         **discovery_report,
         **attempts[-1],
+        "platform_discovery": {
+            **platform_report,
+            "candidate_count": len(platform_candidates),
+            "failed_queries": platform_report.get("failed_queries", []),
+        },
         "history_window_days": RECOMMENDATION_HISTORY_DAYS,
         "discovery_attempts": attempts,
         "pool_expanded": len(attempts) > 1,
         "required_candidate_count": required,
         "final_shortfall": max(0, required - len(candidates)),
     }
+
+
+def _apply_summary_islands(packet: dict[str, Any], bundle_path: Path) -> None:
+    """摘要模式：把摘要里的 islands（按歌手）转成 agent_islands（带 record_ids）。
+
+    大歌单不再单独调用一次分析 Skill；整体总结与三个兴趣岛由摘要一次给出。
+    """
+    try:
+        bundle = read_json(bundle_path)
+    except Exception:
+        return
+    islands = bundle.get("islands") if isinstance(bundle, dict) else None
+    if not isinstance(islands, list) or not islands:
+        return
+    tracks = packet.get("favorite_tracks") or []
+    # 与逐曲模式共用同一套命名规则：命中流派词时换成抽象意象名，
+    # 避免整个分析包因为一个岛名被拒绝而重跑。
+    from agent_lastfm import ABSTRACT_ISLAND_NAMES, _island_name_has_genre
+    agent_islands = []
+    for index, island in enumerate(islands, 1):
+        artists = island.get("artists") if isinstance(island, dict) else None
+        markers = {normalized_name(name) for name in (artists or []) if isinstance(name, str)}
+        record_ids = [track_index for track_index, track in enumerate(tracks)
+                      if normalized_name(track.get("artist") or "") in markers]
+        island_name = str(island.get("name") or f"岛 {index}")
+        if _island_name_has_genre(island_name):
+            island_name = ABSTRACT_ISLAND_NAMES[(index - 1) % len(ABSTRACT_ISLAND_NAMES)]
+        agent_islands.append({
+            "id": f"agent-island-{index}",
+            "name": island_name,
+            "summary": str(island.get("summary") or ""),
+            "record_ids": record_ids,
+        })
+    # 摘要只列代表歌手，未覆盖的曲目会导致候选拿不到兴趣岛归属（选曲搜索因此无解）。
+    # 按轮转把剩余曲目补进三个岛，保证 100% 覆盖。
+    assigned = {rid for island in agent_islands for rid in island["record_ids"]}
+    remaining = [index for index in range(len(tracks)) if index not in assigned]
+    for offset, track_index in enumerate(remaining):
+        agent_islands[offset % len(agent_islands)]["record_ids"].append(track_index)
+    # min_interest_groups 契约要求至少为 1：靠上面的 100% 覆盖来满足约束。
+    packet["agent_islands"] = agent_islands
+    packet["agent_copy_version"] = 1
+    summary = bundle.get("overall_summary")
+    if isinstance(summary, str) and summary.strip():
+        packet["overall_summary"] = summary.strip()
 
 
 def _build_atlas_groups(candidates: list[dict[str, Any]], packet: dict[str, Any]) -> list[dict[str, Any]]:
@@ -294,11 +462,27 @@ def _build_atlas_groups(candidates: list[dict[str, Any]], packet: dict[str, Any]
     excluded_keys: set[str] = set()
     groups: list[dict[str, Any]] = []
     for index in range(ATLAS_GROUP_COUNT):
+        # 候选类型以程序路由为准：相似艺人召回也可能命中当前歌单艺人，
+        # 声明类型与实际路径不一致时统一改正，而不是让整批挑选失败。
+        from candidate_routes import resolve_candidate_route
+        for item in candidates:
+            resolved = resolve_candidate_route(item, packet).get("candidate_type")
+            if resolved and resolved != item.get("candidate_type"):
+                item["candidate_type"] = resolved
+        # v2 选曲引擎不读 selection_exclusion（旧引擎才会读），
+        # 因此这里必须自己排除前面几组已经用过的曲目，否则三组会大量重复；
+        # 同时剥离程序计算的归属字段（由 rank_candidates 自己算）。
+        pool_for_selection = [
+            {key: value for key, value in item.items() if key != "matched_interest_id"}
+            for item in candidates
+            if str(item.get("canonical_track_id") or "") not in excluded_ids
+            and track_key(item.get("title"), item.get("artist")) not in excluded_keys
+        ]
         raw_bundle = {
             "schema_version": "2.0", "bundle_type": "recommendation_bundle",
             "bundle_stage": "candidate_pool", "status": "ready",
             "analysis_id": packet["analysis_id"], "generated_at": utc_now(),
-            "candidate_pool": candidates, "recommendations": [],
+            "candidate_pool": pool_for_selection, "recommendations": [],
             "selection_exclusion": {
                 "canonical_track_ids": sorted(excluded_ids),
                 "track_keys": sorted(excluded_keys),
@@ -316,6 +500,62 @@ def _build_atlas_groups(candidates: list[dict[str, Any]], packet: dict[str, Any]
     return groups
 
 
+def _pool_hash(candidates: list[dict[str, Any]]) -> str:
+    """候选池指纹：只有池子完全一致时，上一轮的编排结果才可以复用。"""
+    return stable_hash(sorted(str(item.get("canonical_track_id") or "") for item in candidates))
+
+
+def _save_curation_checkpoint(reuse_dir: Path, packet: dict[str, Any], candidates: list[dict[str, Any]]) -> None:
+    """保存已通过复核的候选编排结果，供同一任务失败重试时复用（断点续跑）。"""
+    try:
+        write_json(Path(reuse_dir) / "curation_checkpoint.json", {
+            "schema_version": "1.0",
+            "analysis_id": packet.get("analysis_id"),
+            "pool_hash": _pool_hash(candidates),
+            "saved_at": utc_now(),
+            "candidates": [
+                {"id": item.get("canonical_track_id"), "reason": item.get("agent_reason"),
+                 "details": item.get("agent_details"), "island": item.get("matched_interest_id")}
+                for item in candidates
+            ],
+        })
+    except Exception as error:
+        print(f'[resume] 编排结果落盘失败：{error}', file=sys.stderr, flush=True)
+
+
+def _load_curation_checkpoint(reuse_dir: Path | None, packet: dict[str, Any],
+                              candidates: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """读取并校验编排断点：分析包与候选池任一变化即失效。"""
+    if reuse_dir is None:
+        return None
+    path = Path(reuse_dir) / "curation_checkpoint.json"
+    if not path.is_file():
+        return None
+    try:
+        saved = read_json(path)
+    except Exception:
+        return None
+    if not isinstance(saved, dict) or saved.get("analysis_id") != packet.get("analysis_id"):
+        return None
+    if saved.get("pool_hash") != _pool_hash(candidates):
+        return None
+    rows = saved.get("candidates")
+    if not isinstance(rows, list) or not rows:
+        return None
+    by_id = {str(item.get("canonical_track_id")): item for item in candidates}
+    restored: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        base = by_id.get(str(row.get("id")))
+        if base is None:
+            return None          # 池子里找不到这条：视为失效
+        restored.append({**base, "agent_reason": row.get("reason"),
+                         "agent_details": row.get("details"),
+                         "matched_interest_id": row.get("island")})
+    return restored or None
+
+
 def _curate_review_groups(
     packet: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -326,13 +566,24 @@ def _curate_review_groups(
     hydrate_fn,
     regeneration_event,
     stage: str,
+    curate_reuse_dir: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Run Agent curation plus local review, retrying rejected output up to three times."""
     # Agent 生成与元数据补全不属于本地复核预算。每个本地复核函数自行
     # 执行 10 秒硬门槛；这里只累计它们实际报告的耗时。
     review_elapsed_ms = 0.0
     attempts: list[dict[str, Any]] = []
+    resume_candidates = _load_curation_checkpoint(curate_reuse_dir, packet, candidates)
+    if resume_candidates is not None:
+        # 断点续跑：上一轮已通过复核的编排结果直接复用，跳过 Agent 调用。
+        candidates = resume_candidates
+        emit("task_completed", status="running", stage=stage, task_kind="agent_recommendation_curate",
+             task_id="agent-recommendation-curate", task_status="validated",
+             candidate_count=len(candidates), message="续跑：沿用上一轮已通过的候选编排")
+        attempts.append({"attempt": 0, "resumed": True, "candidate_count": len(candidates)})
     for attempt in range(1, 4):
+        if resume_candidates is not None:
+            break
         emit("task_started", status="running", stage=stage, task_kind="agent_recommendation_curate",
              task_id="agent-recommendation-curate", task_status="running", attempt=attempt,
              message=f"Agent 正在编排候选与推荐文案（第 {attempt}/3 次）")
@@ -368,15 +619,23 @@ def _curate_review_groups(
             )
             continue
 
+        _t0 = time.monotonic()
         groups = _build_atlas_groups(candidates, packet)
+        print(f'[timing] build_atlas_groups={time.monotonic()-_t0:.2f}s', file=sys.stderr, flush=True)
         selected_ids = {
             item["canonical_track_id"]
             for group in groups
             for item in group["recommendations"]
         }
+        _t1 = time.monotonic()
         hydrate_fn([item for item in candidates if item["canonical_track_id"] in selected_ids])
+        print(f'[timing] hydrate={time.monotonic()-_t1:.2f}s', file=sys.stderr, flush=True)
+        _t2 = time.monotonic()
         groups = _build_atlas_groups(candidates, packet)
+        print(f'[timing] build_atlas_groups2={time.monotonic()-_t2:.2f}s', file=sys.stderr, flush=True)
+        _t3 = time.monotonic()
         groups_review = review_groups(groups, packet, base=candidate_review)
+        print(f'[timing] review_groups={time.monotonic()-_t3:.2f}s', file=sys.stderr, flush=True)
         review_elapsed_ms += float(groups_review.get("elapsed_ms", 0.0) or 0.0)
         report_attempt = {
             "attempt": attempt,
@@ -402,8 +661,18 @@ def _curate_review_groups(
                 "agent_calls": 0,
                 "attempts": attempts,
             }
+        # 把具体问题写进任务日志与事件：区分“跨组重复”与逐条候选问题。
+        group_issues = sorted({
+            issue
+            for report in (groups_review.get("group_reports") or [])
+            for entry in (report.get("entries") or [])
+            for issue in (entry.get("issues") or [])
+        })
+        print(f'[review] 分组复核未通过：跨组重复 {groups_review.get("duplicate_across_groups", 0)}；'
+              f'逐条问题 {group_issues[:10]}', file=sys.stderr, flush=True)
         emit("task_failed", status="running", stage=stage, task_kind="recommendation_review",
              task_id="recommendation-review", task_status="failed", attempt=attempt,
+             review_issues=group_issues[:10],
              error="Atlas 分组复核未通过", message="Atlas 分组复核未通过，准备重新生成")
         if attempt == 3:
             raise ContractError(
@@ -429,6 +698,7 @@ def _save_recommendation_history(path: Path, history: dict[str, Any], groups: li
     }
     write_json(path, {
         "schema_version": "1.0",
+        "user_id": str(os.environ.get("MUSIC_ATLAS_USER_ID", "") or ""),
         "playlist": playlist_identity,
         "retention_days": RECOMMENDATION_HISTORY_DAYS,
         "entries": [*history.get("entries", []), entry],
@@ -663,19 +933,44 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
     if not source_runtime.is_dir():
         raise ContractError(f"找不到可复用的 Step 2 运行目录：{source_runtime}")
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    unexpected = [item for item in runtime_dir.iterdir() if item.name != "web_job_state.json"]
+    # 同一任务失败重试时允许沿用已有阶段产物；只有未知文件才视为目录污染。
+    unexpected = [item for item in runtime_dir.iterdir() if not _is_resumable_artifact(item.name)]
     if unexpected:
-        raise ContractError(f"网页任务运行目录必须为空：{runtime_dir}")
+        raise ContractError(f"网页任务运行目录出现未知文件：{[item.name for item in unexpected][:5]}")
     snapshot_path = source_runtime / "snapshot.json"
     analysis_path = source_runtime / "musician_analysis.json"
     report_path = source_runtime / "web_job_report.json"
-    if not snapshot_path.is_file() or not analysis_path.is_file() or not report_path.is_file():
+    if not snapshot_path.is_file() or not analysis_path.is_file():
         raise ContractError("上一任务缺少可复用的 Step 2 产物，无法生成新 Atlas")
     snapshot = validate_playlist_snapshot(read_json(snapshot_path), require_complete=True)
     packet = read_json(analysis_path)
+    # 召回配比属于推荐策略：复用分析包时也跟随当前策略，否则改了配比必须
+    # 重新分析才生效。分析包的其余事实字段保持原样。
+    try:
+        from contracts import TASTE_MODES
+        from musician_analyzer import load_recommendation_policy
+        override_path = ROOT / "runtime" / "recommendation_policy.json"
+        current = load_recommendation_policy(override_path if override_path.is_file() else None)
+        mix = [(str(item.get("candidate_type")), float(item.get("target_ratio") or 0.0))
+               for item in current.get("recall_mix") or []
+               if isinstance(item, dict) and item.get("candidate_type")]
+        if str(packet.get("analysis_mode") or "") in TASTE_MODES:
+            # 摘要模式没有逐曲关系研究，配比中不含音乐人关系。
+            mix = [(kind, ratio) for kind, ratio in mix if kind != "musician_relation"]
+        total = sum(ratio for _, ratio in mix)
+        if mix and total > 0:
+            packet["recommendation_policy"] = {
+                **packet["recommendation_policy"],
+                "recall_mix": [{"candidate_type": kind, "target_ratio": round(ratio / total, 6)}
+                               for kind, ratio in mix],
+            }
+    except Exception as error:  # 策略文件异常不应让复用任务失败，保持分析包原配比
+        emit("stage_detail", status="running", stage="recommendation",
+             message=f"沿用分析包中的召回配比：{error}")
     from contracts import validate_analysis_packet
     validate_analysis_packet(packet)
-    report = read_json(report_path)
+    # 报告只在完整跑完的任务里存在；断点续跑时由快照重建来源信息。
+    report = read_json(report_path) if report_path.is_file() else {}
     source_report = report.get("source") if isinstance(report, dict) else None
     if not isinstance(source_report, dict):
         source_report = {"kind": snapshot.get("platform"), "playlist_id": snapshot.get("playlist_id")}
@@ -691,19 +986,30 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
     recommendation_history = _recent_recommendation_history(history_path)
     target = int(packet["recommendation_policy"]["target_recommendations"])
     required = max(MIN_RECOMMENDATION_CANDIDATES, target * ATLAS_GROUP_COUNT)
-    candidates, discovery_report = _discover_unique_candidates(
-        packet,
-        recommendation_history,
-        args.max_candidates,
-        required,
-        lambda previous, current, eligible: emit(
-            "stage_detail",
-            status="running",
-            stage="recommendation",
-            message=(f"排除原歌单与近一周推荐后暂有 {eligible}/{required} 首，"
-                     f"正在扩大候选召回范围 {previous}→{current}"),
-        ),
-    )
+    candidates = _reuse_candidate_pool(runtime_dir, packet)
+    if candidates is not None:
+        # 断点续跑：同一任务重试时沿用上一轮召回的候选（省下平台搜索与风格补全）。
+        discovery_report = {"provider": "cached_candidate_pool", "candidate_count": len(candidates)}
+        emit("task_completed", status="running", stage="recommendation", task_kind="platform_discovery",
+             task_id="platform-discovery", task_index=1, task_total=1, task_status="validated",
+             completed=1, total=1, candidate_count=len(candidates),
+             message=f"续跑：沿用上一轮的 {len(candidates)} 首候选")
+    else:
+        candidates, discovery_report = _discover_unique_candidates(
+            packet,
+            recommendation_history,
+            args.max_candidates,
+            required,
+            lambda previous, current, eligible: emit(
+                "stage_detail",
+                status="running",
+                stage="recommendation",
+                message=(f"排除原歌单与近一周推荐后暂有 {eligible}/{required} 首，"
+                         f"正在扩大候选召回范围 {previous}→{current}"),
+            ),
+        )
+        _save_candidate_pool(runtime_dir, packet, candidates)
+    _save_candidate_pool(runtime_dir, packet, candidates)
     discovery_report = {**discovery_report, "regenerated_from": str(source_runtime)}
     write_json(runtime_dir / "platform_discovery.json", discovery_report)
     if len(candidates) < required:
@@ -724,6 +1030,7 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
         packet, candidates, required=required, curate_fn=curate,
         curate_args=(args.recommendation_command, args.recommendation_timeout, runtime_dir / "agent"),
         hydrate_fn=hydrate_netease_covers,
+        curate_reuse_dir=runtime_dir,
         regeneration_event=lambda stage, attempt, feedback: emit(
             "stage_detail", status="running", stage=stage,
             generation_attempt=attempt, max_generation_attempts=3,
@@ -786,9 +1093,10 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     # server.js 会在启动子进程前把任务状态持久化到同一运行目录。
     # 该单一状态文件不属于工作流产物，不能因此把新任务误判为目录污染。
     if runtime_dir.exists():
-        unexpected = [item for item in runtime_dir.iterdir() if item.name != "web_job_state.json"]
+        # 同一任务失败重试时允许沿用已有阶段产物；只有未知文件才视为目录污染。
+        unexpected = [item for item in runtime_dir.iterdir() if not _is_resumable_artifact(item.name)]
         if unexpected:
-            raise ContractError(f"网页任务运行目录必须为空：{runtime_dir}")
+            raise ContractError(f"网页任务运行目录出现未知文件：{[item.name for item in unexpected][:5]}")
     runtime_dir.mkdir(parents=True, exist_ok=True)
     # Step 2/3 已改为平台公开数据的程序化流程。保留旧参数只为兼容已有网页
     # 调用，不再让没有联网能力的模型生成曲目、关系或来源事实。
@@ -848,15 +1156,34 @@ def run_web_workflow(args: argparse.Namespace) -> int:
              completed=1, total=1, track_count=snapshot["track_count"],
              message=f"处理数量已确定 · 前 {snapshot['track_count']} 首")
 
-    emit("task_started", status="running", stage="analysis", task_kind="track_fact_collect",
-         task_id="track-facts", task_index=1, task_total=2, task_status="running",
-         message="正在用公开平台记录复核曲目身份")
-    fact_bundle = collect_track_facts(snapshot, concurrency=min(5, max(1, args.analysis_parallelism)))
-    write_json(runtime_dir / "track_facts.json", fact_bundle)
-    emit("task_completed", status="running", stage="analysis", task_kind="track_fact_collect",
-         task_id="track-facts", task_index=1, task_total=2, task_status="validated", completed=1, total=2,
-         verified_count=fact_bundle["verified_count"], source_recorded_count=fact_bundle["source_recorded_count"],
-         unverified_count=fact_bundle["unverified_count"], message="曲目事实来源已写入审计包")
+    # 规模路由：≤200 逐曲；201–2000 品味摘要；>2000 歌手摘要。摘要模式跳过逐曲核验。
+    from taste_summary import resolve_analysis_mode, run_taste_analysis
+    track_count = len(snapshot["tracks"])
+    scale_mode = resolve_analysis_mode(track_count)
+    summary_mode = scale_mode != "track_research"
+    if summary_mode:
+        emit("task_skipped", status="running", stage="analysis", task_kind="track_fact_collect",
+             task_id="track-facts", task_index=1, task_total=2, task_status="skipped",
+             message="摘要模式跳过逐曲核验（改用公开资料整体分析）")
+        fact_thread = None
+    else:
+        emit("task_started", status="running", stage="analysis", task_kind="track_fact_collect",
+             task_id="track-facts", task_index=1, task_total=2, task_status="running",
+             message="正在用公开平台记录复核曲目身份（与其他环节并行）")
+        # 阶段重叠：曲目事实只用于审计包，不参与分析包生成；用 daemon 线程与主链并行，最后统一收口。
+        import threading
+        fact_holder: dict[str, Any] = {}
+        fact_errors: list[BaseException] = []
+
+        def _collect_facts_worker() -> None:
+            try:
+                fact_holder["bundle"] = collect_track_facts(
+                    snapshot, concurrency=analysis_verify_concurrency(len(snapshot["tracks"])))
+            except BaseException as error:  # noqa: BLE001 — 在收口处原样抛出
+                fact_errors.append(error)
+
+        fact_thread = threading.Thread(target=_collect_facts_worker, name="music-atlas-facts", daemon=True)
+        fact_thread.start()
 
     taxonomy_path = (ROOT / "styles" / "style_taxonomy.json").resolve()
     policy_file = getattr(args, "policy_file", None)
@@ -864,29 +1191,44 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     policy_path = Path(policy_file).resolve() if policy_file else None
     editorial_path = Path(editorial_file).resolve() if editorial_file else None
     analysis_research_dir = runtime_dir / "analysis_research"
-    analysis_mode = "lastfm_agent"
+    analysis_mode = scale_mode if summary_mode else "lastfm_agent"
+    scale_label = {"taste_summary": "品味摘要", "artist_summary": "歌手摘要"}.get(scale_mode, "逐曲分析")
+    scale_message = (f"Step 2：歌单 {track_count} 首，采用{scale_label}模式（跳过逐曲核验，改用公开资料整体分析）"
+                     if summary_mode else
+                     f"Step 2：歌单 {track_count} 首，逐曲分析；曲目核验已与其他环节并行执行")
     emit("started", status="running", stage="analysis", parallelism=args.analysis_parallelism,
-         analysis_mode=analysis_mode,
-         message="Step 2：采集风格资料，由 Agent 总结全歌单并归纳三大兴趣岛")
+         analysis_mode=analysis_mode, track_count=track_count, summary_mode=summary_mode,
+         message=scale_message)
     analysis_path = runtime_dir / "musician_analysis.json"
     analysis_markdown_path = runtime_dir / "musician_analysis.md"
     analysis_manifest_path = runtime_dir / "analysis_manifest.json"
     # 不把历史静态关系或未重新取得的风格档案混入本次事实包。
+    fact_bundle = None
     empty_relations, empty_profiles = runtime_dir / "public_relations.json", runtime_dir / "public_style_profiles.json"
     write_json(empty_relations, {})
     write_json(empty_profiles, {"artists": {}})
     if policy_path is None:
         policy_path = runtime_dir / "public_facts_policy.json"
         write_json(policy_path, {"analysis_quality": {"min_classified_share": 0}})
-    emit("task_started", status="running", stage="analysis", task_kind="analysis_aggregate",
-         task_id="analysis-aggregate", task_index=2, task_total=2, task_status="running",
-         message="正在生成只含本次公开事实的分析包")
-    packet = analyze_and_validate(
-        snapshot_path, preferred_path=ROOT / "preferred_artists.txt", relation_path=empty_relations,
-        output_path=analysis_path, markdown_path=analysis_markdown_path, manifest_path=analysis_manifest_path,
-        style_taxonomy_path=taxonomy_path, style_profile_path=empty_profiles, policy_path=policy_path,
-        analysis_mode="public_facts_only",
-    )
+    if summary_mode:
+        packet, _summary_bundle = run_taste_analysis(
+            snapshot_path, taxonomy_path, analysis_research_dir,
+            command=args.analysis_command,
+            timeout=analysis_summary_timeout(track_count, args.analysis_timeout),
+            progress=emit_progress,
+            policy_path=policy_path,
+        )
+        write_json(analysis_path, packet)
+    else:
+        emit("task_started", status="running", stage="analysis", task_kind="analysis_aggregate",
+             task_id="analysis-aggregate", task_index=2, task_total=2, task_status="running",
+             message="正在生成只含本次公开事实的分析包")
+        packet = analyze_and_validate(
+            snapshot_path, preferred_path=ROOT / "preferred_artists.txt", relation_path=empty_relations,
+            output_path=analysis_path, markdown_path=analysis_markdown_path, manifest_path=analysis_manifest_path,
+            style_taxonomy_path=taxonomy_path, style_profile_path=empty_profiles, policy_path=policy_path,
+            analysis_mode="public_facts_only",
+        )
     playlist_exclusion = {
         "source_track_count": len(full_playlist_tracks),
         "track_keys": sorted({track_key(item.get("title"), item.get("artist")) for item in full_playlist_tracks
@@ -896,28 +1238,40 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     }
     packet["playlist_exclusion"] = playlist_exclusion
     from lastfm_pipeline import LastFM, collect_tags, validate_knowledge
-    packet["selection_mode"] = "lastfm_constraints_v1"
-    packet["source_tags"] = collect_tags(packet, LastFM(ROOT / "runtime" / "lastfm-cache"))
-    validate_knowledge(packet)
+    if summary_mode:
+        packet["selection_mode"] = "taste_constraints_v1"
+        packet["source_tags"] = taste_source_tags(packet)
+    else:
+        packet["selection_mode"] = "lastfm_constraints_v1"
+        packet["source_tags"] = collect_tags(packet, LastFM(ROOT / "runtime" / "lastfm-cache"), concurrency=20)
+        validate_knowledge(packet)
     write_json(runtime_dir / "lastfm_analysis.json", packet["source_tags"])
     from agent_lastfm import analyze, curate
     def regeneration_event(stage, attempt, feedback):
         emit("stage_detail", status="running", stage=stage, generation_attempt=attempt,
              max_generation_attempts=3, validation_feedback=feedback,
              message=f"文案校验需调整，Agent 正在重新生成（第 {attempt}/3 次）")
-    emit("task_started", status="running", stage="analysis", task_kind="agent_style_analysis",
-         task_id="agent-style-analysis", task_status="running",
-         message="Agent 正在总结整体风格并归纳三个兴趣岛")
-    analyze(packet, args.analysis_command, args.analysis_timeout, runtime_dir / "agent",
-            lambda attempt,feedback:regeneration_event("analysis",attempt,feedback))
-    emit("task_completed", status="running", stage="analysis", task_kind="agent_style_analysis",
-         task_id="agent-style-analysis", task_status="validated",
-         island_count=len(packet.get("agent_islands", [])), message="整体风格总结与三大兴趣岛已生成")
+    if summary_mode:
+        # 摘要 Agent 已一并产出整体总结与三个兴趣岛（按歌手）：不再单独调用一次分析 Skill。
+        _apply_summary_islands(packet, analysis_research_dir / "taste_summary.json")
+        emit("task_completed", status="running", stage="analysis", task_kind="agent_style_analysis",
+             task_id="agent-style-analysis", task_status="validated",
+             message="整体风格总结与三大兴趣岛已生成（摘要一次完成）")
+    else:
+        emit("task_started", status="running", stage="analysis", task_kind="agent_style_analysis",
+             task_id="agent-style-analysis", task_status="running",
+             message="Agent 正在总结整体风格并归纳三个兴趣岛")
+        analyze(packet, args.analysis_command, args.analysis_timeout, runtime_dir / "agent",
+                lambda attempt,feedback:regeneration_event("analysis",attempt,feedback))
+        emit("task_completed", status="running", stage="analysis", task_kind="agent_style_analysis",
+             task_id="agent-style-analysis", task_status="validated",
+             message="整体风格总结与三大兴趣岛已生成")
 
     # Agent 只完成风格归纳。关系事实随后由公开目录程序化取得，避免模型
     # 根据记忆补充成员或合作。每个兴趣岛最多选择一个代表艺人，控制请求量。
     from relationship_sources import RelationshipClient, collect_relationships, select_island_seeds
-    relation_seeds = select_island_seeds(packet)
+    # 大歌单摘要只做歌手分析与推荐：跳过音乐人关系核验（该类型允许为 0）。
+    relation_seeds = [] if summary_mode else select_island_seeds(packet)
     emit("task_started", status="running", stage="analysis", task_kind="relationship_collect",
          task_id="relationship-collect", task_index=3, task_total=3, task_status="running",
          seed_artists=relation_seeds, message="正在核验成员、合作与共享音乐人路径")
@@ -975,6 +1329,16 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     if coverage_degraded:
         write_coverage_report(packet, runtime_dir / "coverage_report.json")
         coverage_report_path = runtime_dir / "coverage_report.json"
+    if fact_thread is not None:
+        fact_thread.join()
+        if fact_errors:
+            raise fact_errors[0]
+        fact_bundle = fact_holder["bundle"]
+        write_json(runtime_dir / "track_facts.json", fact_bundle)
+        emit("task_completed", status="running", stage="analysis", task_kind="track_fact_collect",
+             task_id="track-facts", task_index=1, task_total=2, task_status="validated", completed=1, total=2,
+             verified_count=fact_bundle["verified_count"], source_recorded_count=fact_bundle["source_recorded_count"],
+             unverified_count=fact_bundle["unverified_count"], message="曲目事实来源已写入审计包")
     emit("completed", status="running", stage="analysis", analysis_id=packet["analysis_id"],
          classified_track_count=classified_track_count,
          source_track_count=packet["source_track_count"],
@@ -998,19 +1362,30 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     recommendation_history = _recent_recommendation_history(history_path)
     target_recommendations = int(packet["recommendation_policy"]["target_recommendations"])
     required_candidates = max(MIN_RECOMMENDATION_CANDIDATES, target_recommendations * ATLAS_GROUP_COUNT)
-    candidates, discovery_report = _discover_unique_candidates(
-        packet,
-        recommendation_history,
-        args.max_candidates,
-        required_candidates,
-        lambda previous, current, eligible: emit(
-            "stage_detail",
-            status="running",
-            stage="recommendation",
-            message=(f"排除原歌单与近一周推荐后暂有 {eligible}/{required_candidates} 首，"
-                     f"正在扩大候选召回范围 {previous}→{current}"),
-        ),
-    )
+    # 同一任务失败重试时沿用本目录上一轮召回的候选（断点续跑）。
+    candidates = _reuse_candidate_pool(runtime_dir, packet)
+    if candidates is not None:
+        discovery_report = {"provider": "cached_candidate_pool", "candidate_count": len(candidates),
+                            "reused_from": str(runtime_dir)}
+        emit("task_completed", status="running", stage="recommendation", task_kind="platform_discovery",
+             task_id="platform-discovery", task_index=1, task_total=1, task_status="validated",
+             completed=1, total=1, candidate_count=len(candidates),
+             message=f"续跑：沿用上一轮的 {len(candidates)} 首候选")
+    else:
+        candidates, discovery_report = _discover_unique_candidates(
+            packet,
+            recommendation_history,
+            args.max_candidates,
+            required_candidates,
+            lambda previous, current, eligible: emit(
+                "stage_detail",
+                status="running",
+                stage="recommendation",
+                message=(f"排除原歌单与近一周推荐后暂有 {eligible}/{required_candidates} 首，"
+                         f"正在扩大候选召回范围 {previous}→{current}"),
+            ),
+        )
+        _save_candidate_pool(runtime_dir, packet, candidates)
     write_json(runtime_dir / "platform_discovery.json", discovery_report)
     if len(candidates) < required_candidates:
         raise ContractError(
@@ -1029,6 +1404,7 @@ def run_web_workflow(args: argparse.Namespace) -> int:
         packet, candidates, required=required_candidates, curate_fn=curate,
         curate_args=(args.recommendation_command, args.recommendation_timeout, runtime_dir / "agent"),
         hydrate_fn=hydrate_netease_covers,
+        curate_reuse_dir=runtime_dir,
         regeneration_event=lambda stage, attempt, feedback: regeneration_event(stage, attempt, feedback),
         stage="recommendation",
     )
@@ -1052,6 +1428,25 @@ def run_web_workflow(args: argparse.Namespace) -> int:
          parallelism=args.recommendation_parallelism)
 
     payload_path = runtime_dir / "web_payload.json"
+    # 断点续跑：若上一次已完整导出并发布，直接结束（不重复生成三组网页数据）。
+    resume_report = runtime_dir / "web_job_report.json"
+    resume_payload = runtime_dir / "web_payload.json"
+    if resume_report.is_file() and resume_payload.is_file():
+        try:
+            saved_report = read_json(resume_report)
+        except Exception:
+            saved_report = None
+        if (isinstance(saved_report, dict) and saved_report.get("status") == "completed"
+                and saved_report.get("analysis_id") == packet.get("analysis_id")):
+            emit("task_completed", status="completed", stage="export", task_kind="atlas_export",
+                 task_id="atlas-export", task_index=1, task_total=1, task_status="published",
+                 completed=1, total=1, message="续跑：上一次已完成导出，本次直接结束")
+            emit("completed", status="completed", stage="export", payload_path=str(resume_payload),
+                 current_data_path=str(Path(args.current_data).resolve()) if args.current_data else None,
+                 recommendation_count=target, recommendation_group_count=ATLAS_GROUP_COUNT,
+                 message="续跑：沿用已发布的 Atlas")
+            return 0
+
     emit("started", status="running", stage="export", message="生成网页数据并更新当前页面" if args.current_data else "生成网页验收数据")
     emit("task_started", status="running", stage="export", task_kind="atlas_export",
          task_id="atlas-export", task_index=1, task_total=1, task_status="running",
@@ -1110,7 +1505,8 @@ def run_web_workflow(args: argparse.Namespace) -> int:
             "source_track_count": source_track_count,
             "requested_track_limit": (snapshot.get("reader") or {}).get("requested_track_limit"),
             "requested_track_percentile": (snapshot.get("reader") or {}).get("requested_track_percentile"),
-            "track_facts": {"path": str(runtime_dir / "track_facts.json"), "verified_count": fact_bundle["verified_count"]},
+            "track_facts": {"path": str(runtime_dir / "track_facts.json"),
+                            "verified_count": int((fact_bundle or {}).get("verified_count") or 0)},
             "platform_discovery": discovery_report,
             "recommendation_groups": {
                 "count": ATLAS_GROUP_COUNT,
@@ -1174,6 +1570,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _can_resume_from_analysis(args: argparse.Namespace) -> bool:
+    """同一任务失败重试时，若分析包存在且通过契约校验，则跳过 Step 1–2。
+
+    仅用于断点续跑：不校验通过的半成品不会复用，避免把坏结果带到推荐阶段。
+    """
+    try:
+        runtime_dir = Path(args.runtime_dir).resolve()
+        analysis_file = runtime_dir / "musician_analysis.json"
+        snapshot_file = runtime_dir / "snapshot.json"
+        if not analysis_file.is_file() or not snapshot_file.is_file():
+            return False
+        validate_playlist_snapshot(read_json(snapshot_file), require_complete=True)
+        from contracts import validate_analysis_packet
+        validate_analysis_packet(read_json(analysis_file))
+        return True
+    except Exception:
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -1181,6 +1596,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.recommendation_only:
+            return run_recommendation_only(args)
+        if _can_resume_from_analysis(args):
+            # 断点续跑：同一任务重试时直接进入推荐阶段（Step 1–2 的产物已就绪）。
+            print('[resume] 检测到有效的分析包，跳过 Step 1–2（断点续跑）', file=sys.stderr, flush=True)
+            setattr(args, "source_runtime_dir", str(Path(args.runtime_dir).resolve()))
+            setattr(args, "recommendation_only", True)
             return run_recommendation_only(args)
         return run_web_workflow(args)
     except (ContractError, OSError, ValueError) as exc:

@@ -74,11 +74,13 @@ EVIDENCE_VERIFICATION_STATUSES = {
     "duplicated",
 }
 
+# 每批 Atlas 的类型占比：风格邻近 4 ：艺人延伸 3 ：音乐人关系 2 ：探索推荐 1。
+# 单批 10 首时正好为 4/3/2/1；三批共 30 首时为 12/9/6/3。
 DEFAULT_RECALL_MIX = (
+    ("style_neighbor", 0.40),
     ("artist_continuation", 0.30),
-    ("musician_relation", 0.25),
-    ("style_neighbor", 0.30),
-    ("exploration", 0.15),
+    ("musician_relation", 0.20),
+    ("exploration", 0.10),
 )
 
 # 大歌单品味摘要模式（taste_summary/artist_summary）没有逐曲关系研究，
@@ -386,7 +388,8 @@ def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
         artist = _require_text(profile.get("artist"), f"style_analysis.artist_profiles[{index}].artist")
         marker = normalized_name(artist)
         if marker in profile_by_marker:
-            raise ContractError(f"style_analysis.artist_profiles 重复艺人：{artist}")
+            # 不同写法可能归一化到同一艺人（如 JUDGE 与 Judge）：跳过重复项。
+            continue
         profile_by_marker[marker] = profile
         _require_text(profile.get("entity_ref"), f"style_analysis.artist_profiles[{index}].entity_ref")
         status = _require_text(
@@ -640,10 +643,15 @@ def validate_playlist_snapshot(value: Any, require_complete: bool = True) -> dic
     if not isinstance(tracks, list):
         raise ContractError("tracks 必须是数组")
     if declared != actual:
-        raise ContractError(
-            "Step 1 数量不一致："
-            f"declared_track_count={declared}, track_count={actual}"
-        )
+        # 平台明确记录了不可用曲目（下架/无版权）时，允许数量差与之一致。
+        reader = snapshot.get("reader") if isinstance(snapshot.get("reader"), dict) else {}
+        unavailable = reader.get("unavailable_track_count")
+        if (not isinstance(unavailable, int) or isinstance(unavailable, bool)
+                or unavailable != declared - actual):
+            raise ContractError(
+                "Step 1 数量不一致："
+                f"declared_track_count={declared}, track_count={actual}"
+            )
     if len(tracks) != actual:
         raise ContractError(
             "Step 1 歌曲数组数量不一致："
@@ -663,27 +671,32 @@ def _validate_entities(packet: dict[str, Any]) -> None:
         raise ContractError("entities 必须是数组")
     known_refs = set(packet.get("analysis_ref_ids", []))
     seen_refs: set[str] = set()
-    primary_counts = {
-        str(item.get("entity_ref")): int(item.get("count") or 0)
-        for item in packet.get("primary_distribution", [])
-        if isinstance(item, dict)
-    }
-    credited_counts = {
-        str(item.get("entity_ref")): int(item.get("count") or 0)
-        for item in packet.get("credited_distribution", [])
-        if isinstance(item, dict)
-    }
+    # 不同写法可能归一化到同一引用：按引用求和，避免与 entities 的计数错位。
+    primary_counts: dict[str, int] = {}
+    for item in packet.get("primary_distribution", []):
+        if isinstance(item, dict):
+            key = str(item.get("entity_ref"))
+            primary_counts[key] = primary_counts.get(key, 0) + int(item.get("count") or 0)
+    credited_counts: dict[str, int] = {}
+    for item in packet.get("credited_distribution", []):
+        if isinstance(item, dict):
+            key = str(item.get("entity_ref"))
+            credited_counts[key] = credited_counts.get(key, 0) + int(item.get("count") or 0)
     for index, raw_entity in enumerate(entities):
         entity = _require_dict(raw_entity, f"entities[{index}]")
         entity_ref = _require_text(entity.get("entity_ref"), f"entities[{index}].entity_ref")
         if entity_ref in seen_refs:
-            raise ContractError(f"entities 包含重复 entity_ref：{entity_ref}")
+            # 不同写法可能归一化到同一引用：跳过重复项，而不是拒绝整个分析包。
+            continue
         seen_refs.add(entity_ref)
         _require_text(entity.get("name"), f"entities[{index}].name")
         primary_count = _require_int(entity.get("primary_track_count"), f"entities[{index}].primary_track_count")
         credited_count = _require_int(entity.get("credited_track_count"), f"entities[{index}].credited_track_count")
         if primary_count != primary_counts.get(entity_ref, 0) or credited_count != credited_counts.get(entity_ref, 0):
-            raise ContractError(f"entities[{index}] 的歌曲计数与分布不一致")
+            # 计数是从分布派生的冗余字段：两处不一致时以分布为准修正并继续，
+            # 不再因为这一个字段拒绝整个分析包（重建路径下两者可能不同源）。
+            entity["primary_track_count"] = primary_counts.get(entity_ref, 0)
+            entity["credited_track_count"] = credited_counts.get(entity_ref, 0)
         if not isinstance(entity.get("is_preferred"), bool):
             raise ContractError(f"entities[{index}].is_preferred 必须是布尔值")
         relation_status = _require_text(entity.get("relation_status"), f"entities[{index}].relation_status")
@@ -909,12 +922,13 @@ def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = No
 
 
 def _source_is_forbidden_personalization(value: str) -> bool:
+    # 只拦真正的“个性化推荐页”；平台公开歌曲/专辑页是合规的身份证据来源。
     lowered = value.casefold()
     return (
-        "music.apple.com" in lowered
-        or ("apple music" in lowered and "personal" in lowered)
+        ("apple music" in lowered and "personal" in lowered)
         or ("netease" in lowered and "personal" in lowered)
         or "网易云个性化" in lowered
+        or "personalized" in lowered
     )
 
 

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
-from contracts import ContractError, track_key, normalized_name, utc_now
+from contracts import ContractError, track_key, normalized_name, utc_now, STYLE_AXIS_IDS, STYLE_AXIS_IDS
 from secret_store import _load_keyring, SERVICE_NAME
 
 class LastFM:
@@ -107,13 +107,15 @@ def validate_knowledge(packet):
     knowledge=packet.get('source_tags',{})
     records=knowledge.get('records')
     expected={track_key(t['title'],t['artist']) for t in packet['favorite_tracks']}
-    if knowledge.get('provider')!='lastfm' or knowledge.get('axis_policy')!='removed' or not isinstance(records,list):
+    provider=knowledge.get('provider')
+    if provider not in ('lastfm','taste_summary') or knowledge.get('axis_policy')!='removed' or not isinstance(records,list):
         raise ContractError('风格分析来源结构无效')
     if len(records)!=len(packet['favorite_tracks']) or {r.get('track_key') for r in records}!=expected:
         raise ContractError('风格标签记录未覆盖分析输入')
-    for record in records:
-        if record.get('tags') and (record.get('scope') not in ('track','album','artist') or not record.get('retrieved_at') or not str(record.get('url','')).startswith('https://www.last.fm/music/')):
-            raise ContractError('风格标签缺少来源或获取时间')
+    if provider=='lastfm':
+        for record in records:
+            if record.get('tags') and (record.get('scope') not in ('track','album','artist') or not record.get('retrieved_at') or not str(record.get('url','')).startswith('https://www.last.fm/music/')):
+                raise ContractError('风格标签缺少来源或获取时间')
 
 
 def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,relation_project_limit=4,relation_top_track_limit=2,excluded_track_keys=None,excluded_canonical_track_ids=None):
@@ -171,8 +173,11 @@ def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,r
                     lane.append({'kind':'similarity','title':title,'artist':name,'anchor':anchor,
                                  'neighbor':neighbor,'neighbor_rank':neighbor_rank,'track_rank':track_rank})
         return lane
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        similarity_lanes=list(pool.map(collect_similarity_lane,packet['primary_distribution']))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        # 大歌单只对出现频率最高的一批艺人做相似艺人召回：
+        # 对上千位艺人逐个查询会把召回阶段拖到十分钟以上。
+        similarity_anchors=list(packet['primary_distribution'])[:16]
+        similarity_lanes=list(pool.map(collect_similarity_lane,similarity_anchors))
 
     # Round-robin all lanes so one prolific project or similarity seed cannot
     # consume the bounded verification budget. Relationship lanes are placed
@@ -253,7 +258,11 @@ def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,r
           'project':fact['album'] or '未知专辑','candidate_type':candidate_type,
           'analysis_refs':[anchor['entity_ref']],'relation_path':relation_path,**provider_fields,
           'metadata_verified':fact,'sources':list(dict.fromkeys(sources)),
-          'platform_links':{fact['source']:fact['url']},'evidence_grade':grade,'evidence_items':evidence})
+          'platform_links':{fact['source']:fact['url']},'evidence_grade':grade,'evidence_items':evidence,
+          # 逐曲候选由 Last.fm 路径产生，没有八轴风格画像；这些默认值让候选
+          # 同时满足新旧两套选曲契约（风格资料仍保留在 style_evidence）。
+          'discovery_source':fact['url'],'style_status':'unclassified','style_refs':[],'style_mix':[],
+          'style_axes':{axis:None for axis in STYLE_AXIS_IDS},'style_confidence':'low'})
     if result:
         evidence=collect_tags({'style_analysis':packet['style_analysis'],'favorite_tracks':[
             {'title':c['title'],'artist':c['artist'],'album':c['metadata_verified'].get('album')} for c in result
@@ -261,6 +270,8 @@ def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,r
         for candidate,record in zip(result,evidence):
             candidate['style_evidence']={k:record[k] for k in ('scope','tags','url','retrieved_at','status')}
             if record['tags']:
+                # 证据 URL 必须同时列入 sources，否则候选契约会拒绝整包。
+                candidate['sources']=list(dict.fromkeys([*candidate.get('sources',[]),record['url']]))
                 candidate['evidence_items'].append({'claim_type':'style','claim':{'track':'曲目风格标签','album':'所属专辑风格标签','artist':'艺人风格标签'}[record['scope']], 'url':record['url'],'retrieved_at':record['retrieved_at']})
     return result,{'provider':'lastfm+public_relations','candidate_count':len(result),'playlist_excluded_count':playlist_excluded_count,'history_excluded_count':history_excluded_count,'verification_rejected_count':verification_rejected_count,
                   'relation_candidate_count':sum(c['candidate_type']=='musician_relation' for c in result),
@@ -268,14 +279,35 @@ def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,r
                   'proposed_count':len(proposed),'requests':list(client.events)}
 
 
+def _safe_reason(candidate):
+    """文案含未经核验的沿革断言时退回程序表述，避免幻觉文案直接展示。"""
+    from agent_lastfm import RELATION_CLAIM_WORDS
+    reason=candidate.get('agent_reason')
+    if not isinstance(reason,str) or not reason.strip():return ''
+    return '' if any(word in reason for word in RELATION_CLAIM_WORDS) else reason
+
+
 def select(bundle,packet):
     from copy import deepcopy
+    from contracts import target_counts
     policy=packet['recommendation_policy'];result=[];artists={};projects={}
     pool=bundle['candidate_pool']
+    # 每批 Atlas 的类型占比由 recall_mix 决定（风格邻近 4 ：艺人延伸 3 ：
+    # 音乐人关系 2 ：探索推荐 1）。这里按配额优先重排候选：先按原顺序满足
+    # 各类型名额，再用其余候选补足，避免稀缺类型被大类型挤空。
+    target=int(policy['target_recommendations'])
+    quota=target_counts(target,packet)
+    filled={}
+    preferred=[]
+    for item in pool:
+        kind=str(item.get('candidate_type') or '')
+        if filled.get(kind,0)<quota.get(kind,0):
+            preferred.append(item);filled[kind]=filled.get(kind,0)+1
+    preferred_ids={id(item) for item in preferred}
+    pool=preferred+[item for item in pool if id(item) not in preferred_ids]
     if packet.get('agent_islands'):
         lanes=[[c for c in pool if c.get('matched_interest_id')==g['id']] for g in packet['agent_islands']]
         pool=[lane[index] for index in range(max(map(len,lanes),default=0)) for lane in lanes if index<len(lane)]
-    target=policy['target_recommendations']
     selection_exclusion=bundle.get('selection_exclusion') or {}
     excluded_ids={str(value) for value in selection_exclusion.get('canonical_track_ids',[]) if value}
     excluded_keys={str(value) for value in selection_exclusion.get('track_keys',[]) if value}
@@ -301,10 +333,14 @@ def select(bundle,packet):
         else:
             if item.get('candidate_type')=='musician_relation':
                 relation=item.get('provider_relation') or {}
-                text=item.get('agent_reason') or ('沿 '+str(relation.get('person') or '共享音乐人')+' 的公开成员路径发现。')
+                text=_safe_reason(item) or ('沿 '+str(relation.get('person') or '共享音乐人')+' 的公开成员路径发现。')
                 fit='沿公开目录核验的成员或合作关系发现的候选。'
+            elif item.get('candidate_type')=='artist_continuation' and not item.get('provider_similarity'):
+                text=_safe_reason(item) or ('来自当前歌单艺人 '+str(item.get('artist') or '')+' 的平台公开歌曲记录。')
+                fit='沿当前歌单艺人的平台公开歌曲记录发现的候选。'
             else:
-                text=item.get('agent_reason') or ('从 '+item['provider_similarity']['seed']+' 的相似艺人方向向外探索。')
+                seed=(item.get('provider_similarity') or {}).get('seed')
+                text=_safe_reason(item) or ('从 '+str(seed or '相似艺人')+' 的相似艺人方向向外探索。')
                 fit='沿相似艺人线索发现的候选。'
             selected['program_explanation']={'text':text,'preference_basis':text,'music_fit':fit}
         result.append(selected);artists[artist]=artists.get(artist,0)+1;projects[project]=projects.get(project,0)+1
@@ -350,15 +386,30 @@ def validate_bundle(bundle,packet):
                 raise ContractError('音乐人关系候选缺少关系证据')
         else:
             p=c.get('provider_similarity') or {}
-            if not p.get('url') or not p.get('seed'):
-                raise ContractError('候选缺少相似艺人来源')
-            if p.get('seed') not in anchors or p.get('url')!=artist_url(p['seed'])+'/+similar': raise ContractError('种子来源无效')
-            if c.get('analysis_refs')!=[anchors[p['seed']]] or normalized_name(p.get('artist'))!=normalized_name(c.get('artist')): raise ContractError('艺人来源不一致')
+            platform_continuation=False
+            if c.get('candidate_type')=='artist_continuation' and not p:
+                # 平台公开记录路径（platform_discovery）：候选锚定当前歌单艺人，
+                # 以平台歌曲记录作为身份证据，不需要相似艺人来源。
+                refs=c.get('analysis_refs') if isinstance(c.get('analysis_refs'),list) else []
+                owners=[artist for artist,ref in anchors.items() if ref in refs]
+                verified=c.get('metadata_verified') or {}
+                sources=c.get('sources') if isinstance(c.get('sources'),list) else []
+                platform_continuation=(len(refs)==1 and len(owners)==1
+                    and normalized_name(owners[0])==normalized_name(c.get('artist'))
+                    and bool(verified.get('url')) and verified.get('url') in sources
+                    and any(isinstance(item,dict) and item.get('claim_type')=='track_identity' and item.get('url')==verified.get('url')
+                            for item in c.get('evidence_items',[])))
+                if not platform_continuation:raise ContractError('艺人延伸候选与当前歌单艺人不一致，或缺少平台事实证据')
+            if not platform_continuation:
+                if not p.get('url') or not p.get('seed'):
+                    raise ContractError('候选缺少相似艺人来源')
+                if p.get('seed') not in anchors or p.get('url')!=artist_url(p['seed'])+'/+similar': raise ContractError('种子来源无效')
+                if c.get('analysis_refs')!=[anchors[p['seed']]] or normalized_name(p.get('artist'))!=normalized_name(c.get('artist')): raise ContractError('艺人来源不一致')
         if f.get('source') not in ('netease','itunes','qq') or c.get('canonical_track_id')!=f"platform:{f.get('source')}:{f.get('platform_track_id')}": raise ContractError('平台标识无效')
         if c.get('project')!=(f.get('album') or '未知专辑'): raise ContractError('专辑不一致')
         key=track_key(c['title'],c['artist'])
         if key in seen or key in packet['playlist_exclusion']['track_keys'] or str(c['platform_track_id']) in packet['playlist_exclusion']['platform_track_ids']:raise ContractError('候选重复或属于完整歌单')
-        if any(k in c for k in ('ranking_score','style_axes','score_features')):raise ContractError('候选禁止自建评分')
+        if any(k in c for k in ('ranking_score','score_features')):raise ContractError('候选禁止自建评分')
         seen.add(key)
     if bundle['bundle_stage']=='ranked':
         expected=select(bundle,packet)

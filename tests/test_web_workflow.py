@@ -159,6 +159,27 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
         self.assertEqual(history["canonical_track_ids"], {"recent-id"})
         self.assertEqual(history["track_keys"], {track_key("Recent", "Artist")})
 
+    def test_merges_platform_artist_continuation_candidates(self) -> None:
+        history = {"entries": [], "canonical_track_ids": set(), "track_keys": set()}
+        platform_rows = [
+            {"canonical_track_id": f"platform:netease:{index}", "title": f"Continuation {index}",
+             "artist": f"Anchor {index}", "candidate_type": "artist_continuation"}
+            for index in range(3)
+        ]
+        similar_rows = [
+            {"canonical_track_id": "platform:itunes:1", "title": "Similar One", "artist": "Other", "candidate_type": "style_neighbor"},
+            {"canonical_track_id": "platform:netease:0", "title": "Continuation 0", "artist": "Anchor 0", "candidate_type": "artist_continuation"},
+        ]
+        with mock.patch("lastfm_pipeline.LastFM"), \
+             mock.patch("platform_discovery.discover_platform_candidates", return_value=(platform_rows, {})), \
+             mock.patch("lastfm_pipeline.discover", return_value=(similar_rows, {"provider": "fixture"})):
+            candidates, report = _discover_unique_candidates({}, history, 6, 4, None)
+
+        self.assertEqual(len(candidates), 4, "平台候选应与相似艺人候选合并去重")
+        self.assertEqual(report["platform_candidate_count"], 3)
+        self.assertEqual(report["artist_continuation_count"], 3, "艺人延伸候选应计入报告")
+        self.assertTrue(any(item.get("candidate_type") == "artist_continuation" for item in candidates))
+
     def test_candidate_discovery_limits_include_verification_headroom(self) -> None:
         empty = {"canonical_track_ids": set(), "track_keys": set()}
         crowded = {"canonical_track_ids": {f"id-{i}" for i in range(120)}, "track_keys": set()}
@@ -179,6 +200,8 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
         ]
         expanded = []
         with mock.patch("lastfm_pipeline.LastFM"), mock.patch(
+            "platform_discovery.discover_platform_candidates", return_value=([], {}),
+        ), mock.patch(
             "lastfm_pipeline.discover",
             side_effect=[(make_candidates(7), {"provider": "fixture"}),
                          (make_candidates(9), {"provider": "fixture"})],
@@ -358,7 +381,7 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
                 empty_relations = {"schema_version":"2.0","catalog_type":"live_public_relations",
                                    "generated_at":"2026-09-17T00:00:00Z","seed_artists":[],
                                    "artists":{},"unresolved_artists":[],"requests":[]}
-                with mock.patch("web_workflow.emit"), mock.patch("agent_lastfm.analyze"), mock.patch("agent_lastfm.curate", side_effect=lambda packet, candidates, *args: candidates), mock.patch("lastfm_pipeline.LastFM"), mock.patch("lastfm_pipeline.validate_knowledge"), mock.patch("lastfm_pipeline.collect_tags",return_value={'records':[]}), mock.patch("lastfm_pipeline.discover",side_effect=candidates), mock.patch("relationship_sources.collect_relationships", return_value=empty_relations):
+                with mock.patch("web_workflow.emit"), mock.patch("agent_lastfm.analyze"), mock.patch("agent_lastfm.curate", side_effect=lambda packet, candidates, *args: candidates), mock.patch("lastfm_pipeline.LastFM"), mock.patch("lastfm_pipeline.validate_knowledge"), mock.patch("lastfm_pipeline.collect_tags",return_value={'records':[]}), mock.patch("lastfm_pipeline.discover",side_effect=candidates), mock.patch("relationship_sources.collect_relationships", return_value=empty_relations), mock.patch("platform_discovery.discover_platform_candidates", return_value=([], {})):
                     exit_code = run_web_workflow(args)
             finally:
                 writer.join()

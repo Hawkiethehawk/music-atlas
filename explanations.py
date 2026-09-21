@@ -21,13 +21,14 @@ def explain_selected(candidate: dict[str, Any], packet: dict[str, Any]) -> dict[
         [axis for axis in axes if axes[axis] is not None and candidate_axes.get(axis) is not None],
         key=lambda axis: (abs(axes[axis] - candidate_axes[axis]), axis),
     )[:3]
-    fit = "；".join(f"{STYLE_AXIS_LABELS[axis]}：候选 {candidate['style_axes'][axis]:.0f} / 兴趣组 {axes[axis]:.0f}" for axis in closest)
+    fit = "；".join(f"{STYLE_AXIS_LABELS[axis]}：候选 {(candidate.get('style_axes') or {}).get(axis, 0):.0f} / 兴趣组 {axes[axis]:.0f}" for axis in closest)
     fit = "描述性画像估计，非音频实测：" + (fit or "听感依据不足")
     labels = {item["style_ref"]: item["label"] for item in packet["style_analysis"]["style_definitions"]}
-    styles = "、".join(labels.get(ref, ref) for ref in candidate["style_refs"]) or "风格资料不足"
+    styles = "、".join(labels.get(ref, ref) for ref in candidate.get("style_refs") or []) or "风格资料不足"
+    scores = candidate.get("score_features") or {}
     style_fit = (f"{styles}；风格与八轴资料不足，已从本首评分中排除"
-                 if candidate.get("style_status") == "unclassified"
-                 else f"{styles}；风格匹配 {candidate['score_features']['style_fit']:.1f}，听感匹配 {candidate['score_features']['axis_fit']:.1f}（均非喜欢概率）")
+                 if candidate.get("style_status") == "unclassified" or "style_fit" not in scores
+                 else f"{styles}；风格匹配 {scores['style_fit']:.1f}，听感匹配 {scores.get('axis_fit', 0.0):.1f}（均非喜欢概率）")
     novelty = f"未命中本次收藏；程序判定为 {route['candidate_type']}，新鲜度仅相对本次输入"
     return {"preference_basis": basis, "artist_relation": relation, "music_fit": fit, "style_fit": style_fit,
             "novelty": novelty, "text": f"承接{basis}。{relation}。{fit}。{style_fit}。{novelty}。曲目身份来自本次公开平台记录。"}

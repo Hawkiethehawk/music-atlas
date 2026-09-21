@@ -82,10 +82,10 @@ DEFAULT_POLICY: dict[str, Any] = {
         "styles": 5,
     },
     "recall_mix": [
+        {"candidate_type": "style_neighbor", "target_ratio": 0.40},
         {"candidate_type": "artist_continuation", "target_ratio": 0.30},
-        {"candidate_type": "musician_relation", "target_ratio": 0.25},
-        {"candidate_type": "style_neighbor", "target_ratio": 0.30},
-        {"candidate_type": "exploration", "target_ratio": 0.15},
+        {"candidate_type": "musician_relation", "target_ratio": 0.20},
+        {"candidate_type": "exploration", "target_ratio": 0.10},
     ],
     "ranking_weights": {
         "style_fit": 0.30,

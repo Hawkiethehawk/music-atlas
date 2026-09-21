@@ -690,7 +690,7 @@ def build_web_payload(
         interests=[]
         for index, group in enumerate(analysis["agent_islands"]):
             members=[tracks[rid] for rid in group["record_ids"]]
-            interests.append({"id":group["id"],"code":str(index+1).zfill(2),"name":group["name"],"summary":group["summary"],"hue":25+index*90,"axes":None,"genres":[],"artists":list(dict.fromkeys(t["artist"] for t in members)),"repTracks":[t["artist"]+" — "+t["title"] for t in members],"sourceRecords":[records[rid] for rid in group["record_ids"]]})
+            interests.append({"id":group["id"],"code":str(index+1).zfill(2),"name":group["name"],"summary":group["summary"],"hue":25+index*90,"axes":None,"genres":[],"artists":list(dict.fromkeys(t["artist"] for t in members)),"repTracks":[t["artist"]+" — "+t["title"] for t in members],"sourceRecords":[{**records[rid],"title":tracks[rid].get("title",""),"artist":tracks[rid].get("artist","")} for rid in group["record_ids"]]})
     recommendations = _recommendation_entries(ranked_bundle, interests, evidence_audit)
     style_analysis = analysis.get("style_analysis", {})
     audit_status = _text((evidence_audit or {}).get("status"), "not_available")

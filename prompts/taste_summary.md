@@ -20,7 +20,7 @@ b) 歌名语义聚类：从歌名集合提取反复出现的语义主题（如�
 第三层 · 审美综合：基于前两层给出品味画像与锐评。锐评要求专业、深刻且幽默
 风趣；内心世界解析要有文学性，但必须区分两类判断：
 - 有依据的审美判断（可指向具体艺人/曲目/统计事实）；
-- 幽默化推演（夸张修辞、心理投射玩笑）——只能放在 humor_notes 并标注
+- 简短幽默推演（夸张修辞、心理投射玩笑）——只能放在 humor_notes 并标注
   speculation: true，不得混入画像字段。
 
 【STYLE REFS（style_tags.tag、artist_clusters.style_refs、taste_profile 的风格
@@ -43,10 +43,13 @@ b) 歌名语义聚类：从歌名集合提取反复出现的语义主题（如�
    （基于歌名的推演）。未联网核验的场景归属不得标 confidence: "high"。
 5. 不得输出推荐歌曲、候选、评分排序或任何策略建议——发现与选曲由程序与
    推荐 Skill 负责，你只描述"这份歌单是谁"。
-6. 锐评与解析合计不超过 1200 字；风格标签 5-12 个；语义主题 2-6 个；
-   艺人聚类必须覆盖清单中出现次数不少于 2 的全部艺人，仅出现 1 次的艺人
-   可不单独建簇；为你确信场景归属的艺人附上 reference_url（该场景的百科、
+6. 锐评与解析合计不超过 400 字；风格标签 5-8 个；语义主题 2-6 个；
+   艺人聚类总数控制在 12–15 位以内：优先覆盖出现次数最多与最能代表整体品味的艺人，
+   不必列出清单里每一位艺人；为你确信场景归属的艺人附上 reference_url（该场景的百科、
    Discogs 或官方页面），不确信则留空字符串并把 confidence 设为 "low"。
+
+（歌手清单中的“仅合作”表示该歌手只在合作曲里出现，不代表你的偏好；主艺人数量才是署名曲目数。）
+7. overall_summary 与 islands 必须一并给出：恰好 3 个兴趣岛，每岛用 artists 列出代表歌手（逐字来自清单）；岛屿名称必须是抽象风格意象。
 
 【输出 JSON 结构（字段名与层级必须完全一致）】
 {
@@ -57,6 +60,10 @@ b) 歌名语义聚类：从歌名集合提取反复出现的语义主题（如�
   "generated_at": "<UTC 时间>",
   "analysis_mode": "taste_summary",
   "knowledge_basis": {"model_internal": "...", "web_verified": "...", "inference": "..."},
+  "overall_summary": "<80–300 字、一个自然段：分析全歌单的风格底色、融合元素和整体审美>",
+  "islands": [
+    {"name": "<抽象风格意象名，2–8 字，以“岛”结尾，不含任何流派名词>", "summary": "<该类风格归纳>", "artists": ["<清单原名>"]}
+  ],
   "artist_clusters": [
     {"artist": "<清单原名>", "scene": "<场景描述>", "confidence": "high|medium|low",
      "style_refs": ["style:..."], "reference_url": "https://... 或 \"\""}
@@ -77,7 +84,7 @@ b) 歌名语义聚类：从歌名集合提取反复出现的语义主题（如�
     "headline": "<一句话锐评>",
     "review": "<长文锐评>",
     "inner_world": "<内心世界解析>",
-    "humor_notes": [{"note": "<幽默化推演>", "speculation": true}]
+    "humor_notes": [{"note": "<简短幽默推演>", "speculation": true}]
   },
   "limitations": ["..."],
   "uncertainties": ["..."]

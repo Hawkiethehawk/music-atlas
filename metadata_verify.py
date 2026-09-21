@@ -244,6 +244,33 @@ def netease_song_cover(platform_track_id: str) -> str | None:
         return str(cover).strip() if cover else None
     except Exception:  # noqa: BLE001 — 封面失败不能改变已核验的曲目身份
         return None
+def netease_song_covers(platform_track_ids: list[str]) -> dict[str, str]:
+    """批量读取网易云专辑图：该接口一次可带多首，避免逐首往返（逐首约需 1–3 秒/首）。"""
+
+    ids = [str(item).strip() for item in (platform_track_ids or []) if str(item).strip().isdigit()]
+    if not ids:
+        return {}
+    covers: dict[str, str] = {}
+    for start in range(0, len(ids), 50):
+        batch = ids[start:start + 50]
+        try:
+            payload = _get_json(
+                "https://music.163.com/api/song/detail/?ids=%5B" + ",".join(batch) + "%5D",
+                headers={"Referer": "https://music.163.com/", "User-Agent": "MusicAtlas/1.0 (+local)"},
+            )
+        except Exception:  # noqa: BLE001 — 封面失败不能改变已核验的曲目身份
+            continue
+        for song in payload.get("songs") or []:
+            if not isinstance(song, dict):
+                continue
+            track_id = str(song.get("id") or "").strip()
+            album = song.get("album") if isinstance(song.get("album"), dict) else song.get("al")
+            cover = album.get("picUrl") if isinstance(album, dict) else None
+            if track_id and cover:
+                covers[track_id] = str(cover).strip()
+    return covers
+
+
 # 采用优先级：平台名称以第一个命中的来源为准（同源平台优先）。
 SOURCE_PRIORITY = ("netease", "qq", "itunes")
 

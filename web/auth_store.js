@@ -119,6 +119,25 @@ function createAuthStore(dbPath) {
       detail_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS runs (
+      job_id TEXT PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL DEFAULT 'full',
+      platform TEXT NOT NULL DEFAULT '',
+      playlist_id TEXT NOT NULL DEFAULT '',
+      playlist_name TEXT NOT NULL DEFAULT '',
+      track_count INTEGER,
+      analyzed_count INTEGER,
+      status TEXT NOT NULL DEFAULT 'running',
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      duration_ms INTEGER,
+      recommendation_count INTEGER,
+      runtime_dir TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
   `);
 
   function getUserById(id) {
@@ -161,6 +180,12 @@ function createAuthStore(dbPath) {
     return publicUser({ ...row, last_login_at: now });
   }
 
+  function verifyUserPassword(id, passwordValue) {
+    const user = getUserById(id);
+    if (!user) return false;
+    return verifyPassword(String(passwordValue || ""), user.password_hash);
+  }
+
   function createSession(userId, kind = "user") {
     if (!["user", "admin"].includes(kind)) throw new Error("会话类型无效");
     const user = getUserById(userId);
@@ -200,6 +225,12 @@ function createAuthStore(dbPath) {
     if (!user) throw new Error("用户不存在");
     const fields = [];
     const values = [];
+    if (patch.username !== undefined) {
+      const username = normalizeUsername(patch.username);
+      const taken = db.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?").get(username, Number(id));
+      if (taken) throw new Error("用户名已被占用");
+      fields.push("username = ?"); values.push(username);
+    }
     if (patch.status !== undefined) {
       if (!["enabled", "disabled"].includes(patch.status)) throw new Error("用户状态无效");
       fields.push("status = ?"); values.push(patch.status);
@@ -214,10 +245,125 @@ function createAuthStore(dbPath) {
     if (!fields.length) return publicUser(user);
     fields.push("updated_at = ?"); values.push(isoNow(), Number(id));
     db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
-    if (patch.status === "disabled" || patch.role === "user") {
-      db.prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND kind = 'admin' AND revoked_at IS NULL").run(isoNow(), Number(id));
+    // 停用、降级或改密后，该账号的所有会话立即失效。
+    if (patch.status === "disabled" || patch.role === "user" || patch.password !== undefined) {
+      db.prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(isoNow(), Number(id));
     }
     return publicUser(getUserById(id));
+  }
+
+  function deleteUser(id) {
+    const user = getUserById(id);
+    if (!user) throw new Error("用户不存在");
+    // 外键级联：sessions / preferences / playlists 同步删除；audit_log 与 runs 保留且置空 user_id。
+    db.prepare("DELETE FROM users WHERE id = ?").run(Number(id));
+    return publicUser(user);
+  }
+
+  function publicRun(row) {
+    return {
+      job_id: row.job_id, user_id: row.user_id, kind: row.kind,
+      platform: row.platform, playlist_id: row.playlist_id, playlist_name: row.playlist_name,
+      track_count: row.track_count, analyzed_count: row.analyzed_count,
+      status: row.status, started_at: row.started_at, finished_at: row.finished_at,
+      duration_ms: row.duration_ms, recommendation_count: row.recommendation_count,
+      runtime_dir: row.runtime_dir, error: row.error,
+    };
+  }
+
+  function getRun(jobId) {
+    const row = db.prepare("SELECT * FROM runs WHERE job_id = ?").get(String(jobId));
+    return row ? publicRun(row) : null;
+  }
+
+  function createRun(payload = {}) {
+    const jobId = String(payload.jobId || "").trim();
+    if (!jobId) throw new Error("运行记录缺少 jobId");
+    db.prepare(`INSERT OR REPLACE INTO runs
+      (job_id, user_id, kind, platform, playlist_id, playlist_name, track_count, status, started_at, runtime_dir)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)`).run(
+      jobId,
+      payload.userId == null ? null : Number(payload.userId),
+      payload.kind === "recommendation_only" ? "recommendation_only" : "full",
+      String(payload.platform || ""),
+      String(payload.playlistId || ""),
+      String(payload.playlistName || ""),
+      Number.isInteger(payload.trackCount) ? payload.trackCount : null,
+      payload.startedAt ? String(payload.startedAt) : isoNow(),
+      String(payload.runtimeDir || ""),
+    );
+    return getRun(jobId);
+  }
+
+  function updateRun(jobId, patch = {}) {
+    const row = db.prepare("SELECT * FROM runs WHERE job_id = ?").get(String(jobId));
+    if (!row) return null;
+    const fields = [];
+    const values = [];
+    if (patch.status !== undefined) { fields.push("status = ?"); values.push(String(patch.status)); }
+    if (patch.platform !== undefined) { fields.push("platform = ?"); values.push(String(patch.platform)); }
+    if (patch.playlistId !== undefined) { fields.push("playlist_id = ?"); values.push(String(patch.playlistId)); }
+    if (patch.playlistName !== undefined) { fields.push("playlist_name = ?"); values.push(String(patch.playlistName)); }
+    if (patch.trackCount !== undefined) { fields.push("track_count = ?"); values.push(patch.trackCount == null ? null : Number(patch.trackCount)); }
+    if (patch.analyzedCount !== undefined) { fields.push("analyzed_count = ?"); values.push(patch.analyzedCount == null ? null : Number(patch.analyzedCount)); }
+    if (patch.recommendationCount !== undefined) { fields.push("recommendation_count = ?"); values.push(patch.recommendationCount == null ? null : Number(patch.recommendationCount)); }
+    if (patch.error !== undefined) { fields.push("error = ?"); values.push(String(patch.error).slice(0, 2000)); }
+    if (!fields.length) return publicRun(row);
+    if (["completed", "failed", "cancelled"].includes(String(patch.status))) {
+      const finishedAt = patch.finishedAt ? String(patch.finishedAt) : isoNow();
+      const started = Date.parse(row.started_at || "") || Date.parse(finishedAt);
+      fields.push("finished_at = ?"); values.push(finishedAt);
+      fields.push("duration_ms = ?"); values.push(Math.max(0, Date.parse(finishedAt) - started));
+    }
+    values.push(String(jobId));
+    db.prepare(`UPDATE runs SET ${fields.join(", ")} WHERE job_id = ?`).run(...values);
+    return getRun(jobId);
+  }
+
+  function listRuns({ userId = null, status = null, limit = 20, offset = 0 } = {}) {
+    const where = [];
+    const values = [];
+    if (userId != null) { where.push("user_id = ?"); values.push(Number(userId)); }
+    if (status) { where.push("status = ?"); values.push(String(status)); }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const size = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    const start = Math.max(Number(offset) || 0, 0);
+    const rows = db.prepare(`SELECT * FROM runs ${clause} ORDER BY started_at DESC LIMIT ? OFFSET ?`).all(...values, size, start);
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM runs ${clause}`).get(...values).n;
+    return { total, limit: size, offset: start, runs: rows.map(publicRun) };
+  }
+
+  function runStats(userId = null) {
+    const clause = userId == null ? "" : "WHERE user_id = ?";
+    const values = userId == null ? [] : [Number(userId)];
+    const row = db.prepare(`SELECT COUNT(*) AS total, SUM(status = 'completed') AS completed, SUM(status = 'failed') AS failed, MAX(started_at) AS last_started FROM runs ${clause}`).get(...values);
+    return { total: row.total || 0, completed: row.completed || 0, failed: row.failed || 0, last_started: row.last_started || null };
+  }
+
+  function backfillRun(payload = {}) {
+    // 幂等回填历史任务：已存在时不覆盖，但会补齐缺失的歌单信息。
+    const existing = getRun(payload.jobId);
+    if (existing) {
+      const patch = {};
+      if (!existing.platform && payload.platform) patch.platform = payload.platform;
+      if (!existing.playlist_id && payload.playlistId) patch.playlistId = payload.playlistId;
+      if (!existing.playlist_name && payload.playlistName) patch.playlistName = payload.playlistName;
+      if (existing.track_count == null && payload.trackCount != null) patch.trackCount = payload.trackCount;
+      if (existing.analyzed_count == null && payload.analyzedCount != null) patch.analyzedCount = payload.analyzedCount;
+      if (existing.recommendation_count == null && payload.recommendationCount != null) patch.recommendationCount = payload.recommendationCount;
+      return Object.keys(patch).length ? updateRun(payload.jobId, patch) : existing;
+    }
+    createRun(payload);
+    return updateRun(payload.jobId, {
+      status: payload.status || "completed",
+      platform: payload.platform,
+      playlistId: payload.playlistId,
+      playlistName: payload.playlistName,
+      analyzedCount: payload.analyzedCount,
+      recommendationCount: payload.recommendationCount,
+      error: payload.error,
+      finishedAt: payload.finishedAt,
+    });
   }
 
   function getPreferences(userId) {
@@ -269,12 +415,20 @@ function createAuthStore(dbPath) {
     normalizePassword,
     createUser,
     ensureBootstrapAdmin,
+    verifyUserPassword,
     authenticate,
     createSession,
     getSessionUser,
     revokeSession,
     listUsers,
     updateUser,
+    deleteUser,
+    getRun,
+    createRun,
+    updateRun,
+    listRuns,
+    runStats,
+    backfillRun,
     getPreferences,
     savePreferences,
     listPlaylists,
