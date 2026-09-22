@@ -45,7 +45,7 @@ function projectRelative(absolutePath) {
  * 启动隔离的 server.js 实例。
  * options.executors 为 false 时模拟"执行器未配置"（POST /api/jobs 应返回 503）。
  */
-export async function createIsolatedServer({ label, executors = true, settings = null, authRequired = false } = {}) {
+export async function createIsolatedServer({ label, executors = true, settings = null, authRequired = false, beforeStart = null } = {}) {
   const runtimeDir = uniqueRuntimeDir(label || "server");
   await mkdir(runtimeDir, { recursive: true });
   const port = await getFreePort();
@@ -83,6 +83,7 @@ export async function createIsolatedServer({ label, executors = true, settings =
   // 密钥库隔离：用夹具脚本 + 临时状态文件，测试不会触碰真实系统密钥库。
   const secretStatePath = path.join(runtimeDir, "fake-secret.json");
   const authDbPath = path.join(runtimeDir, "auth.sqlite");
+  if (beforeStart) await beforeStart({ runtimeDir, authDbPath, config });
   const secretScript = path.join(PROJECT_ROOT, "tests", "fixtures", "fake_secret_store.py");
 
   const childEnv = {
@@ -194,7 +195,6 @@ export async function runFixtureWorkflow({ label, playlistName = "示例歌单" 
     "--playlist-name", playlistName,
     "--analysis-command", `${PYTHON} tests/fixtures/fake_analysis_agent.py`,
     "--recommendation-command", `${PYTHON} tests/fixtures/fake_agent.py`,
-    "--analysis-batch-size", "2",
   ];
   const proc = spawn(PYTHON, args, {
     cwd: PROJECT_ROOT,

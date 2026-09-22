@@ -1,0 +1,35 @@
+[Unit]
+Description=Music Atlas Web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/apps/music-atlas-current
+ExecStart=/usr/bin/node /home/ubuntu/apps/music-atlas-current/web/server.js
+EnvironmentFile=/home/ubuntu/.config/music-atlas/api-key.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=NODE_ENV=production
+Environment=ATLAS_AUTH_REQUIRED=1
+Environment=HOST=127.0.0.1
+Environment=PORT=8420
+Environment=ATLAS_COMPLETED_JOB_RETENTION_DAYS=14
+Environment=ATLAS_OTHER_JOB_RETENTION_DAYS=7
+Restart=on-failure
+RestartSec=3
+UMask=0077
+MemoryHigh=2800M
+MemoryMax=3400M
+CPUQuota=180%
+TasksMax=512
+OOMPolicy=stop
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/apps/music-atlas/runtime /home/ubuntu/apps/music-atlas/input
+
+[Install]
+WantedBy=multi-user.target

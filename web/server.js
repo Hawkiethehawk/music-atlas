@@ -12,8 +12,13 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { spawn } = require("child_process");
+const { spawn } = require("node:child_process");
 const { createAuthStore } = require("./auth_store");
+const { spawnWorkflowProcess, terminateProcessTree } = require("./workflow_job");
+const {
+  parseSource,
+  canonicalizePlaylistSourceSafe,
+} = require("./playlist_identity");
 
 const ROOT = __dirname; // 服务目录固定为本文件所在目录
 const PROJECT_ROOT = path.resolve(ROOT, "..");
@@ -69,6 +74,7 @@ const DEFAULT_CRAWLER_SETTINGS = {
   apple_export_timeout_seconds: 600,
 };
 const TRACK_PERCENTILE_OPTIONS = [0.25, 0.5, 1];
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled", "superseded", "interrupted"]);
 const DEFAULT_WORKFLOW_SETTINGS = {
   analysis_parallelism: 5,
   recommendation_parallelism: 4,
@@ -77,13 +83,8 @@ const DEFAULT_WORKFLOW_SETTINGS = {
   track_percentile_default: 1,
   await_limit_timeout_seconds: 1800,
   max_research_rounds: 2,
-  max_candidates: 60,
-  // 默认先收集足够候选再排序，避免 candidate_pool_min=1 时过早结束，
-  // 使项目覆盖和多样性只能依赖极少的已核验歌曲。
-  candidate_target: 10,
-  analysis_batch_size: 10,
-  analysis_context_budget: null,
-  context_budget: null,
+  initial_candidate_limit: 60,
+  hard_candidate_limit: 200,
 };
 const DEFAULT_OPENAI_SETTINGS = {
   base_url: "",
@@ -155,11 +156,8 @@ const SETTINGS_SCHEMA = [
       { path: "workflow.recommendation_timeout_seconds", label: "推荐阶段超时（秒）", type: "number", min: 1, max: 86400 },
       { path: "workflow.await_limit_timeout_seconds", label: "等待选择超时（秒）", type: "number", min: 1, max: 86400 },
       { path: "workflow.max_research_rounds", label: "最大研究轮数", type: "number", min: 1, max: 3 },
-      { path: "workflow.max_candidates", label: "最大候选数", type: "number", min: 1, max: 200 },
-      { path: "workflow.candidate_target", label: "候选目标（留空自动）", type: "number", min: 1, max: 200, optional: true },
-      { path: "workflow.analysis_batch_size", label: "分析批大小", type: "number", min: 1, max: 50 },
-      { path: "workflow.analysis_context_budget", label: "分析上下文预算（留空默认）", type: "number", min: 1000, max: 1000000, optional: true },
-      { path: "workflow.context_budget", label: "推荐上下文预算（留空默认）", type: "number", min: 1000, max: 1000000, optional: true },
+      { path: "workflow.initial_candidate_limit", label: "首轮候选上限", type: "number", min: 1, max: 1200 },
+      { path: "workflow.hard_candidate_limit", label: "候选绝对上限", type: "number", min: 1, max: 1200 },
     ],
   },
   {
@@ -192,7 +190,15 @@ function migrateSettingsOverride(value) {
   const result = JSON.parse(JSON.stringify(value));
   let changed = false;
   if (isObject(result.workflow)) {
-    for (const key of ["track_limit_options", "track_limit_default"]) {
+    if (result.workflow.max_candidates !== undefined) {
+      const legacyLimit = result.workflow.max_candidates;
+      if (result.workflow.initial_candidate_limit === undefined) result.workflow.initial_candidate_limit = legacyLimit;
+      if (result.workflow.hard_candidate_limit === undefined) result.workflow.hard_candidate_limit = legacyLimit;
+    }
+    for (const key of [
+      "track_limit_options", "track_limit_default", "max_candidates", "candidate_target",
+      "analysis_batch_size", "analysis_context_budget", "context_budget",
+    ]) {
       if (key in result.workflow) {
         delete result.workflow[key];
         changed = true;
@@ -304,8 +310,12 @@ function validateSettingsPatch(value) {
     for (const key of Object.keys(settings)) if (!allowed.has(key)) throw new Error(`runtime.openai_compat 不允许字段：${key}`);
     output.runtime.openai_compat = {};
     if (settings.base_url !== undefined) {
-      if (typeof settings.base_url !== "string" || !/^https?:\/\//i.test(settings.base_url.trim())) throw new Error("runtime.openai_compat.base_url 必须是 HTTP(S) 地址");
-      output.runtime.openai_compat.base_url = settings.base_url.trim().replace(/\/$/, "");
+      let parsed;
+      try { parsed = new URL(String(settings.base_url || "").trim()); }
+      catch { throw new Error("runtime.openai_compat.base_url 必须是有效 HTTPS 地址"); }
+      const loopbackHttp = parsed.protocol === "http:" && ["127.0.0.1", "::1", "localhost"].includes(parsed.hostname);
+      if (parsed.protocol !== "https:" && !loopbackHttp) throw new Error("runtime.openai_compat.base_url 必须使用 HTTPS（本机回环地址除外）");
+      output.runtime.openai_compat.base_url = parsed.toString().replace(/\/$/, "");
     }
     if (settings.model !== undefined) {
       if (typeof settings.model !== "string" || !settings.model.trim() || settings.model.length > 200) throw new Error("runtime.openai_compat.model 无效");
@@ -352,12 +362,13 @@ function validateSettingsPatch(value) {
       analysis_parallelism: [1, 16], recommendation_parallelism: [1, 8],
       analysis_timeout_seconds: [1, 86400], recommendation_timeout_seconds: [1, 86400],
       await_limit_timeout_seconds: [1, 86400],
-      max_research_rounds: [1, 3], max_candidates: [1, 200], analysis_batch_size: [1, 50],
+      max_research_rounds: [1, 3], initial_candidate_limit: [1, 1200], hard_candidate_limit: [1, 1200],
     };
     for (const [key, range] of Object.entries(ints)) if (workflow[key] !== undefined) output.workflow[key] = settingInteger(workflow[key], `workflow.${key}`, range[0], range[1]);
-    if (workflow.candidate_target !== undefined) output.workflow.candidate_target = settingOptionalInteger(workflow.candidate_target, "workflow.candidate_target", 1, 200);
-    if (workflow.analysis_context_budget !== undefined) output.workflow.analysis_context_budget = settingOptionalInteger(workflow.analysis_context_budget, "workflow.analysis_context_budget", 1000, 1000000);
-    if (workflow.context_budget !== undefined) output.workflow.context_budget = settingOptionalInteger(workflow.context_budget, "workflow.context_budget", 1000, 1000000);
+    if (output.workflow.initial_candidate_limit !== undefined && output.workflow.hard_candidate_limit !== undefined
+        && output.workflow.initial_candidate_limit > output.workflow.hard_candidate_limit) {
+      throw new Error("workflow.initial_candidate_limit 不得超过 workflow.hard_candidate_limit");
+    }
     if (workflow.track_percentile_default !== undefined) {
       const percentile = Number(workflow.track_percentile_default);
       if (!TRACK_PERCENTILE_OPTIONS.includes(percentile)) throw new Error("workflow.track_percentile_default 必须是 0.25、0.5 或 1");
@@ -378,10 +389,14 @@ function editableSettings(config) {
   const runtime = isObject(config.runtime) ? config.runtime : {};
   const openai = isObject(runtime.openai_compat) ? runtime.openai_compat : {};
   const workflow = isObject(config.workflow) ? config.workflow : {};
+  const workflowSettings = { ...DEFAULT_WORKFLOW_SETTINGS };
+  for (const key of Object.keys(DEFAULT_WORKFLOW_SETTINGS)) {
+    if (Object.hasOwn(workflow, key)) workflowSettings[key] = workflow[key];
+  }
   return {
     crawler: { ...DEFAULT_CRAWLER_SETTINGS, ...(isObject(config.crawler) ? config.crawler : {}) },
     runtime: { openai_compat: { ...DEFAULT_OPENAI_SETTINGS, ...openai }, codex_reasoning_effort: String(runtime.codex_reasoning_effort || "").trim().toLowerCase() },
-    workflow: { ...DEFAULT_WORKFLOW_SETTINGS, ...workflow },
+    workflow: workflowSettings,
     recommendation_policy: { ...DEFAULT_POLICY_SETTINGS, ...(isObject(config.recommendation_policy) ? config.recommendation_policy : {}) },
     editorial: { ...DEFAULT_EDITORIAL_SETTINGS, ...(isObject(config.editorial) ? config.editorial : {}) },
   };
@@ -400,8 +415,9 @@ function runtimeConfigSnapshot() {
   if (!TRACK_PERCENTILE_OPTIONS.includes(trackPercentileDefault)) throw new Error("workflow.track_percentile_default 必须是 0.25、0.5 或 1");
   const awaitLimitTimeoutSeconds = settingInteger(Number(workflow.await_limit_timeout_seconds ?? 1800), "workflow.await_limit_timeout_seconds", 1, 86400);
   const maxResearchRounds = settingInteger(Number(workflow.max_research_rounds ?? 2), "workflow.max_research_rounds", 1, 3);
-  const maxCandidates = settingInteger(Number(workflow.max_candidates ?? 80), "workflow.max_candidates", 1, 200);
-  const candidateTarget = workflow.candidate_target === null || workflow.candidate_target === undefined ? null : settingInteger(Number(workflow.candidate_target), "workflow.candidate_target", 1, 200);
+  const initialCandidateLimit = settingInteger(Number(workflow.initial_candidate_limit ?? workflow.max_candidates ?? DEFAULT_WORKFLOW_SETTINGS.initial_candidate_limit), "workflow.initial_candidate_limit", 1, 1200);
+  const hardCandidateLimit = settingInteger(Number(workflow.hard_candidate_limit ?? DEFAULT_WORKFLOW_SETTINGS.hard_candidate_limit), "workflow.hard_candidate_limit", 1, 1200);
+  if (initialCandidateLimit > hardCandidateLimit) throw new Error("workflow.initial_candidate_limit 不得超过 workflow.hard_candidate_limit");
   const executors = config.executors || {};
   const analysisExecutor = configureExecutor(executors.analysis, "executors.analysis", python);
   const recommendationExecutor = configureExecutor(executors.recommendation, "executors.recommendation", python);
@@ -418,11 +434,8 @@ function runtimeConfigSnapshot() {
     trackPercentileDefault,
     awaitLimitTimeoutSeconds,
     maxResearchRounds,
-    maxCandidates,
-    candidateTarget,
-    analysisBatchSize: workflow.analysis_batch_size === null || workflow.analysis_batch_size === undefined ? null : settingInteger(Number(workflow.analysis_batch_size), "workflow.analysis_batch_size", 1, 50),
-    analysisContextBudget: workflow.analysis_context_budget === null || workflow.analysis_context_budget === undefined ? null : settingInteger(Number(workflow.analysis_context_budget), "workflow.analysis_context_budget", 1000, 1000000),
-    contextBudget: workflow.context_budget === null || workflow.context_budget === undefined ? null : settingInteger(Number(workflow.context_budget), "workflow.context_budget", 1000, 1000000),
+    initialCandidateLimit,
+    hardCandidateLimit,
     recommendationPolicy: isObject(config.recommendation_policy) ? config.recommendation_policy : null,
     editorial: isObject(config.editorial) ? config.editorial : null,
   };
@@ -508,6 +521,8 @@ const PYTHON = INITIAL_RUNTIME.python;
 // 与 web_workflow.py 的 LIMIT_REQUEST_FILENAME 保持一致：网页写请求，工作流读请求。
 const LIMIT_REQUEST_FILENAME = "requested_track_limit.json";
 const JOB_STATE_FILENAME = "web_job_state.json";
+const COMPLETED_JOB_RETENTION_DAYS = Math.max(1, Number(process.env.ATLAS_COMPLETED_JOB_RETENTION_DAYS || 14));
+const OTHER_JOB_RETENTION_DAYS = Math.max(1, Number(process.env.ATLAS_OTHER_JOB_RETENTION_DAYS || 7));
 const jobs = new Map();
 const jobSubscribers = new Map();
 // 多用户并行：按任务记录归属用户。网页面板仍一次只跑一个任务，
@@ -539,7 +554,14 @@ const MIME = {
 
 const META_TTL = 60 * 60 * 1000; // 成功缓存 1h
 const NEG_TTL = 10 * 60 * 1000;  // 失败负缓存 10min（避免反复打外网）
-const metaCache = new Map();     // key → { at, data }
+const META_CACHE_MAX = 500;
+const META_QUERY_MAX_LENGTH = 200;
+const META_RATE_WINDOW = 60 * 1000;
+const META_RATE_LIMIT = 60;
+const metaCache = new Map();     // LRU: key → { at, data }
+const metaInflight = new Map();
+const metaRateBuckets = new Map();
+let atlasPayloadCache = { mtimeMs: -1, payload: null, response: null };
 
 function jfetch(url, opts = {}, timeout = 6000) {
   const ctrl = new AbortController();
@@ -553,12 +575,61 @@ function jfetch(url, opts = {}, timeout = 6000) {
 }
 
 async function loadAtlasPayload() {
+  const stat = await fs.promises.stat(DATA_PATH);
+  if (atlasPayloadCache.payload && atlasPayloadCache.mtimeMs === stat.mtimeMs) {
+    return atlasPayloadCache.payload;
+  }
   const raw = await fs.promises.readFile(DATA_PATH, "utf8");
   const payload = JSON.parse(raw);
   if (!payload || payload.payload_type !== "music_atlas_web") {
     throw new Error("invalid web payload");
   }
+  atlasPayloadCache = {
+    mtimeMs: stat.mtimeMs,
+    payload,
+    response: JSON.stringify({ ok: true, ...payload }),
+  };
   return payload;
+}
+
+async function loadAtlasResponse() {
+  await loadAtlasPayload();
+  return atlasPayloadCache.response;
+}
+
+function isLoopbackAddress(value) {
+  return value === "127.0.0.1" || value === "::1" || value === "::ffff:127.0.0.1";
+}
+
+function forwardedAddresses(req) {
+  return String(req.headers["x-forwarded-for"] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function clientAddress(req) {
+  const remoteAddress = String(req.socket?.remoteAddress || "unknown");
+  const isLocalProxy = isLoopbackAddress(remoteAddress);
+  if (!isLocalProxy) return remoteAddress;
+  const forwarded = forwardedAddresses(req);
+  return forwarded.at(-1) || remoteAddress;
+}
+
+function allowMetaRequest(req) {
+  const now = Date.now();
+  const key = clientAddress(req);
+  let bucket = metaRateBuckets.get(key);
+  if (!bucket || now - bucket.startedAt >= META_RATE_WINDOW) {
+    bucket = { startedAt: now, count: 0 };
+  }
+  bucket.count += 1;
+  metaRateBuckets.delete(key);
+  metaRateBuckets.set(key, bucket);
+  while (metaRateBuckets.size > META_CACHE_MAX) {
+    metaRateBuckets.delete(metaRateBuckets.keys().next().value);
+  }
+  return bucket.count <= META_RATE_LIMIT;
 }
 
 function sendJson(res, status, value, extraHeaders = {}) {
@@ -814,11 +885,26 @@ function syncRunFromEvent(job, event) {
     if (Number.isFinite(Number(event.track_count)) && (event.stage === "snapshot" || event.task_kind === "track_limit")) patch.trackCount = Number(event.track_count);
     if (Number.isFinite(Number(event.source_track_count)) && event.event === "completed" && event.stage === "analysis") patch.analyzedCount = Number(event.source_track_count);
     if (Number.isFinite(Number(event.recommendation_count)) && event.event === "completed") patch.recommendationCount = Number(event.recommendation_count);
-    if (event.status === "completed" || event.event === "failed") {
-      patch.status = event.status === "completed" ? "completed" : "failed";
-      if (event.event === "failed") patch.error = String(event.error || event.message || "").slice(0, 500);
+    if (TERMINAL_JOB_STATUSES.has(event.status)) {
+      patch.status = event.status;
+      if (event.status !== "completed") patch.error = String(event.error || event.message || "").slice(0, 500);
     }
     if (Object.keys(patch).length) authStore.updateRun(job.id, patch);
+    if (job.user_id && event.stage === "snapshot" && event.event === "completed" && event.source) {
+      const source = event.source;
+      const playlistId = String(source.playlist_id || "");
+      const platform = source.kind === "netease_public" ? "netease"
+        : source.kind === "qq_public" ? "qq_music"
+          : source.kind === "apple_music" ? "apple_music" : job.platform;
+      const canonicalUrl = String(source.resolved_url || source.url || job.source_url || "");
+      authStore.upsertPlaylist(job.user_id, {
+        source_url: canonicalUrl,
+        canonical_url: canonicalUrl,
+        canonical_key: playlistId ? `${platform}:${playlistId}` : "",
+        name: event.playlist_name || "",
+        platform,
+      });
+    }
   } catch (error) {
     console.error(`运行记录同步失败 ${job.id}：${error.message}`);
   }
@@ -832,7 +918,9 @@ function summarizeRunFromJob(job) {
     if (Number.isFinite(Number(event.track_count))) trackCount = Number(event.track_count);
     if (Number.isFinite(Number(event.source_track_count)) && event.stage === "analysis") analyzedCount = Number(event.source_track_count);
     if (Number.isFinite(Number(event.recommendation_count))) recommendationCount = Number(event.recommendation_count);
-    if (event.event === "failed") error = String(event.error || event.message || "").slice(0, 500);
+    if (TERMINAL_JOB_STATUSES.has(event.status) && event.status !== "completed") {
+      error = String(event.error || event.message || "").slice(0, 500);
+    }
     if (event.stage === "snapshot" && event.event === "completed") {
       if (event.playlist_name) playlistName = String(event.playlist_name);
       if (event.snapshot_id) playlistId = playlistId || String(event.snapshot_id);
@@ -978,18 +1066,27 @@ function restoreRecentJobs() {
       if (fs.existsSync(statePath)) {
         const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
         if (state && state.id === entry.name && Array.isArray(state.events)) {
-          const terminal = ["completed", "failed"].includes(state.status);
+          const terminal = TERMINAL_JOB_STATUSES.has(state.status);
           const events = [...state.events];
           let status = state.status;
           let updatedAt = state.updated_at;
+          if (status === "failed") {
+            const last = [...events].reverse().find((event) => event.status === "failed");
+            const message = String(last?.error || last?.message || "");
+            if (/任务已取消/.test(message)) status = "cancelled";
+            else if (/已改用.*已有分析/.test(message)) status = "superseded";
+            if (status !== "failed" && last) {
+              const index = events.indexOf(last);
+              events[index] = { ...last, status, event: status, legacy_status: "failed" };
+            }
+          }
           if (!terminal) {
-            // 服务重启会结束子进程：把未完成任务标成失败并写明原因，
-            // 前端才能给出明确提示，而不是轮询到“找不到网页工作流任务”。
+            // 服务重启会结束子进程：将未完成任务记为 interrupted，并同步落盘与数据库。
             const at = new Date().toISOString();
-            events.push({ event: "failed", status: "failed", stage: state.stage || "workflow",
+            events.push({ event: "interrupted", status: "interrupted", stage: state.stage || "workflow",
               error: "服务重启，任务已中断；请重新运行", at,
               seq: Math.max(0, ...events.map((item) => Number(item.seq) || 0)) + 1 });
-            status = "failed";
+            status = "interrupted";
             updatedAt = at;
           }
           job = { ...state, status, updated_at: updatedAt, events, runtime_dir: runtimeDir, user_id: state.user_id || null,
@@ -998,7 +1095,10 @@ function restoreRecentJobs() {
       }
     } catch {}
     job = job || restoredLegacyJob(entry.name, runtimeDir);
-    if (job) restored.push(job);
+    if (job) {
+      persistJobState(job);
+      restored.push(job);
+    }
   }
   restored.sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""));
   for (const job of restored.slice(0, 20)) jobs.set(job.id, job);
@@ -1019,7 +1119,7 @@ function restoreRecentJobs() {
         recommendationCount: summary.recommendationCount,
         startedAt: job.created_at,
         finishedAt: job.updated_at,
-        status: job.status === "failed" ? "failed" : "completed",
+        status: TERMINAL_JOB_STATUSES.has(job.status) ? job.status : "interrupted",
         runtimeDir: job.runtime_dir || "",
         error: summary.error,
       });
@@ -1030,13 +1130,14 @@ function restoreRecentJobs() {
 }
 
 function recordJobEvent(job, event) {
+  if (TERMINAL_JOB_STATUSES.has(job.status)) return;
   const safeEvent = event && typeof event === "object" ? { ...event } : { event: "message", message: String(event) };
   safeEvent.at = safeEvent.at || new Date().toISOString();
   safeEvent.seq = ++job.event_seq;
   job.events.push(safeEvent);
   if (job.events.length > 1000) job.events.shift();
   if (typeof safeEvent.stage === "string") job.stage = safeEvent.stage;
-  if (safeEvent.status === "completed" || safeEvent.event === "failed") job.status = safeEvent.status === "completed" ? "completed" : "failed";
+  if (TERMINAL_JOB_STATUSES.has(safeEvent.status)) job.status = safeEvent.status;
   else if (safeEvent.status === "running") job.status = "running";
   else if (safeEvent.status === "awaiting_limit") job.status = "awaiting_limit";
   job.updated_at = safeEvent.at;
@@ -1118,57 +1219,19 @@ function latestAnalysisJob(userId = null) {
   return analysisSourceJobs(userId)[0] || null;
 }
 
-// 直接粘贴 App 分享文字时（如「分享歌单: xxx https://163cn.tv/xxx (@网易云音乐)」），
-// 只取其中的公开链接，去掉尾巴上的括号与标点。
-function extractSourceCandidates(value) {
-  const text = String(value || "").trim();
-  const matches = text.match(/https?:\/\/[^\s"'<>，。；、」』）】]+/g) || [];
-  return matches
-    .map((item) => item.replace(/[)\]）】}>,.;；，。」』]+$/g, ""))
-    .filter(Boolean);
-}
-
-// 分享文字形如「分享歌单: Hawk1e喜欢的音乐 https://... (@网易云音乐)」：
-// 顺带取出歌单名，供最近歌单列表与任务事件使用；取不到时留空（由任务读取后回填）。
-function extractPlaylistName(raw, url) {
-  const text = String(raw || "").trim();
-  const before = (url ? text.split(url)[0] : text).trim();
-  const index = Math.max(before.lastIndexOf(":"), before.lastIndexOf("："));
-  if (index < 0) return "";
-  const name = before.slice(index + 1).trim();
-  return name && name.length <= 60 ? name : "";
-}
-
-function allowedSource(body) {
+async function allowedSource(body) {
   const raw = String(body.source_url || body.url || "").trim();
-  if (!raw) throw new Error("请提交歌单公开链接");
-  const candidates = extractSourceCandidates(raw);
-  const attempts = candidates.length ? candidates : [raw];
-  const sourceByHost = {
-    "music.apple.com": { kind: "apple_music", platform: "apple_music" },
-    "music.163.com": { kind: "netease_public", platform: "netease" },
-    "163cn.tv": { kind: "netease_public", platform: "netease" },
-    "www.163cn.tv": { kind: "netease_public", platform: "netease" },
-    "y.qq.com": { kind: "qq_public", platform: "qq_music" },
-    "i.y.qq.com": { kind: "qq_public", platform: "qq_music" },
+  const parsed = parseSource(raw);
+  const identity = await canonicalizePlaylistSourceSafe(raw);
+  return {
+    ...parsed,
+    source_url: identity.canonical_url || identity.source_url,
+    canonical_url: identity.canonical_url || identity.source_url,
+    canonical_key: identity.canonical_key,
+    playlist_id: identity.playlist_id || "",
+    playlist_name: parsed.playlist_name,
+    expected_count: null,
   };
-  for (const candidate of attempts) {
-    const normalized = candidate.replace(/^http:\/\//i, "https://");
-    let parsed;
-    try { parsed = new URL(normalized); } catch { continue; }
-    if (parsed.protocol !== "https:") continue;
-    const hostname = (parsed.hostname || "").toLowerCase().replace(/\.$/, "");
-    const source = sourceByHost[hostname];
-    if (!source) continue;
-    return {
-      ...source,
-      source_url: normalized,
-      playlist_id: "",
-      playlist_name: extractPlaylistName(raw, candidate),
-      expected_count: null,
-    };
-  }
-  throw new Error("只支持 Apple Music、网易云音乐或 QQ 音乐公开歌单链接");
 }
 
 async function startWorkflowJob(config, options = {}) {
@@ -1244,19 +1307,16 @@ async function startWorkflowJob(config, options = {}) {
     "--analysis-timeout", String(runtime.analysisTimeoutSeconds),
     "--recommendation-timeout", String(runtime.recommendationTimeoutSeconds),
     "--max-research-rounds", String(runtime.maxResearchRounds),
-    "--max-candidates", String(runtime.maxCandidates),
+    "--initial-candidate-limit", String(runtime.initialCandidateLimit),
+    "--hard-candidate-limit", String(runtime.hardCandidateLimit),
     "--await-track-limit",
     "--await-limit-timeout", String(runtime.awaitLimitTimeoutSeconds),
   ];
   if (options.recommendationOnly) {
     args.push("--recommendation-only", "--source-runtime-dir", options.sourceRuntimeDir);
   }
-  if (runtime.analysisBatchSize !== null && !options.recommendationOnly) args.push("--analysis-batch-size", String(runtime.analysisBatchSize));
-  if (!options.recommendationOnly && runtime.analysisContextBudget !== null) args.push("--analysis-context-budget", String(runtime.analysisContextBudget));
-  if (!options.recommendationOnly && runtime.contextBudget !== null) args.push("--context-budget", String(runtime.contextBudget));
-  if (!options.recommendationOnly && runtime.candidateTarget !== null) args.push("--candidate-target", String(runtime.candidateTarget));
-  if (!options.recommendationOnly && policySnapshotPath) args.push("--policy-file", policySnapshotPath);
-  if (!options.recommendationOnly && editorialSnapshotPath) args.push("--editorial", editorialSnapshotPath);
+  if (policySnapshotPath) args.push("--policy-file", policySnapshotPath);
+  if (editorialSnapshotPath) args.push("--editorial", editorialSnapshotPath);
   args.push("--analysis-command", runtime.analysisExecutor.command, "--recommendation-command", runtime.recommendationExecutor.command);
   // 歌单解析完成后只允许网页选择 25%、50% 或 100% 分位。
   if (!options.recommendationOnly) {
@@ -1279,13 +1339,30 @@ async function startWorkflowJob(config, options = {}) {
     if (apiKeyValue) childEnvironment.MUSIC_ATLAS_API_KEY = apiKeyValue;
   } catch {} // 密钥库不可用时执行器会自动回退到环境变量或报错。
   // windowsHide：避免在 Windows 上为每个工作流子进程弹出 python.exe 控制台窗口。
-  const child = spawn(runtime.python, args, {
+  const child = spawnWorkflowProcess(runtime.python, args, {
     cwd: PROJECT_ROOT,
     env: childEnvironment,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
   });
   job.child = child;
+  let stageTimer = null;
+  let budgetStage = null;
+  const acceptEvent = (event) => {
+    if (TERMINAL_JOB_STATUSES.has(job.status)) return;
+    if (["analysis", "recommendation", "export"].includes(event.stage)) {
+      const stage = event.stage === "export" ? "recommendation" : event.stage;
+      if (stage !== budgetStage) {
+        clearTimeout(stageTimer);
+        budgetStage = stage;
+        const seconds = stage === "analysis" ? runtime.analysisTimeoutSeconds : runtime.recommendationTimeoutSeconds;
+        stageTimer = setTimeout(() => {
+          recordJobEvent(job, { event: "failed", status: "failed", stage,
+            error: `${stage === "analysis" ? "分析" : "推荐"}阶段超过 ${seconds} 秒总预算` });
+          terminateWorkflow(job);
+        }, seconds * 1000);
+      }
+    }
+    recordJobEvent(job, event);
+  };
   let stdoutBuffer = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -1294,7 +1371,7 @@ async function startWorkflowJob(config, options = {}) {
     stdoutBuffer = lines.pop() || "";
     for (const line of lines) {
       if (!line.trim()) continue;
-      try { recordJobEvent(job, JSON.parse(line)); }
+      try { acceptEvent(JSON.parse(line)); }
       catch { recordJobEvent(job, { event: "diagnostic", status: job.status, stage: job.stage, message: "工作流输出无法解析" }); }
     }
   });
@@ -1303,6 +1380,7 @@ async function startWorkflowJob(config, options = {}) {
     job.stderr_tail = (job.stderr_tail + chunk).slice(-2000);
   });
   const release = () => {
+    clearTimeout(stageTimer);
     activeJobs.delete(id);
     job.child = undefined;
   };
@@ -1314,15 +1392,23 @@ async function startWorkflowJob(config, options = {}) {
   child.on("close", (code) => {
     job.exit_code = code;
     if (stdoutBuffer.trim()) {
-      try { recordJobEvent(job, JSON.parse(stdoutBuffer)); } catch {}
+      try { acceptEvent(JSON.parse(stdoutBuffer)); } catch {}
     }
-    if (job.status !== "completed" && job.status !== "failed") {
+    if (!TERMINAL_JOB_STATUSES.has(job.status)) {
       if (code === 0) recordJobEvent(job, { event: "completed", status: "completed", stage: "export" });
       else recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: job.stderr_tail.trim() || `工作流退出码 ${code}` });
     }
     release();
+    persistJobState(job);
   });
   return publicJob(job);
+}
+
+function terminateWorkflow(job) {
+  const child = job.child;
+  if (!child) return;
+  try { terminateProcessTree(child); }
+  catch (error) { console.error(`停止任务失败：${error.message}`); }
 }
 
 function normalizeMetaText(value) {
@@ -1401,36 +1487,57 @@ async function qqSong(artist, track) {
 async function resolveMeta(artist, track) {
   const key = artist + "|" + track;
   const hit = metaCache.get(key);
-  if (hit && Date.now() - hit.at < (hit.data.cover ? META_TTL : NEG_TTL)) return hit.data;
+  if (hit && Date.now() - hit.at < (hit.data.cover ? META_TTL : NEG_TTL)) {
+    metaCache.delete(key);
+    metaCache.set(key, hit);
+    return hit.data;
+  }
+  if (hit) metaCache.delete(key);
+  if (metaInflight.has(key)) return metaInflight.get(key);
 
-  const term = `${artist} ${track}`;
-  const [it, ne, qq] = await Promise.all([itunesSong(artist, track), neteaseSong(artist, track), qqSong(artist, track)]);
+  const pending = (async () => {
+    const term = `${artist} ${track}`;
+    const [it, ne, qq] = await Promise.all([itunesSong(artist, track), neteaseSong(artist, track), qqSong(artist, track)]);
 
-  const data = {
-    cover:
-      (it && it.artworkUrl100 && it.artworkUrl100.replace("100x100", "600x600")) ||
-      (ne && ne.album && ne.album.picUrl) ||
-      null,
-    links: {
-      apple:
-        (it && it.trackViewUrl) ||
-        `https://music.apple.com/us/search?term=${encodeURIComponent(term)}`,
-      netease: ne
-        ? `https://music.163.com/song?id=${ne.id}`
-        : `https://music.163.com/#/search/m/?s=${encodeURIComponent(term)}`,
-      qq: qq
-        ? `https://y.qq.com/n/ryqq/songDetail/${qq.songmid}`
-        : `https://y.qq.com/n/ryqq/search?w=${encodeURIComponent(term)}`,
-    },
-    matched: { apple: !!it, netease: !!ne, qq: !!qq },
-  };
-  metaCache.set(key, { at: Date.now(), data });
-  return data;
+    const data = {
+      cover:
+        (it && it.artworkUrl100 && it.artworkUrl100.replace("100x100", "600x600")) ||
+        (ne && ne.album && ne.album.picUrl) ||
+        null,
+      links: {
+        apple:
+          (it && it.trackViewUrl) ||
+          `https://music.apple.com/us/search?term=${encodeURIComponent(term)}`,
+        netease: ne
+          ? `https://music.163.com/song?id=${ne.id}`
+          : `https://music.163.com/#/search/m/?s=${encodeURIComponent(term)}`,
+        qq: qq
+          ? `https://y.qq.com/n/ryqq/songDetail/${qq.songmid}`
+          : `https://y.qq.com/n/ryqq/search?w=${encodeURIComponent(term)}`,
+      },
+      matched: { apple: !!it, netease: !!ne, qq: !!qq },
+    };
+    metaCache.set(key, { at: Date.now(), data });
+    while (metaCache.size > META_CACHE_MAX) {
+      metaCache.delete(metaCache.keys().next().value);
+    }
+    return data;
+  })();
+  metaInflight.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    metaInflight.delete(key);
+  }
 }
 
+
 function isLocalRequest(req) {
-  const address = req.socket && req.socket.remoteAddress;
-  return !address || address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  const address = String(req.socket?.remoteAddress || "");
+  if (!isLoopbackAddress(address)) return false;
+  // 本机反代会把外部地址放进 X-Forwarded-For。只要链路中存在非回环地址，
+  // 请求就不是本机管理请求；这也避免公网客户端伪造一个 127.0.0.1 前缀。
+  return forwardedAddresses(req).every(isLoopbackAddress);
 }
 
 function sendSettings(req, res, status = 200) {
@@ -1450,6 +1557,8 @@ function sendSettings(req, res, status = 200) {
 /* ---------------- 静态服务 ---------------- */
 
 restoreRecentJobs();
+require("./maintenance").scheduleMaintenance({ authStore, jobRoot: JOB_ROOT,
+  completedDays: COMPLETED_JOB_RETENTION_DAYS, otherDays: OTHER_JOB_RETENTION_DAYS });
 
 const server = http.createServer(async (req, res) => {
   let urlPath, query;
@@ -1471,7 +1580,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/api/auth/register" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      const user = authStore.createUser(body.username, body.password, "user");
+      const user = await authStore.createUserAsync(body.username, body.password, "user");
       const session = authStore.createSession(user.id, "user");
       authStore.writeAudit(user.id, "user.register");
       setSessionCookie(res, req, USER_SESSION_COOKIE, session.token, 30 * 24 * 60 * 60);
@@ -1485,7 +1594,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/api/auth/login" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      const user = authStore.authenticate(body.username, body.password, "user");
+      const user = await authStore.authenticateAsync(body.username, body.password, "user");
       const session = authStore.createSession(user.id, "user");
       authStore.writeAudit(user.id, "user.login");
       setSessionCookie(res, req, USER_SESSION_COOKIE, session.token, 30 * 24 * 60 * 60);
@@ -1536,7 +1645,7 @@ const server = http.createServer(async (req, res) => {
     if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
     try {
       const body = await readJsonBody(req);
-      const updated = authStore.updateUser(user.id, { username: body.username });
+      const updated = await authStore.updateUserAsync(user.id, { username: body.username });
       authStore.writeAudit(user.id, "user.profile.update");
       sendJson(res, 200, { ok: true, user: updated });
     } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "资料更新失败" }); }
@@ -1549,8 +1658,8 @@ const server = http.createServer(async (req, res) => {
     if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
     try {
       const body = await readJsonBody(req);
-      if (!authStore.verifyUserPassword(user.id, body.current_password)) throw new Error("当前密码不正确");
-      const updated = authStore.updateUser(user.id, { password: body.new_password });
+      if (!(await authStore.verifyUserPasswordAsync(user.id, body.current_password))) throw new Error("当前密码不正确");
+      const updated = await authStore.updateUserAsync(user.id, { password: body.new_password });
       // 改密后全部会话已失效；为当前浏览器重建会话，避免修改密码后被登出。
       const session = authStore.createSession(user.id, "user");
       setSessionCookie(res, req, USER_SESSION_COOKIE, session.token, 30 * 24 * 60 * 60);
@@ -1648,7 +1757,14 @@ const server = http.createServer(async (req, res) => {
     if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
     try {
       const body = await readJsonBody(req);
-      sendJson(res, 201, { ok: true, playlist: authStore.upsertPlaylist(user.id, body) });
+      const identity = await canonicalizePlaylistSourceSafe(body.source_url || body.url || "");
+      sendJson(res, 201, { ok: true, playlist: authStore.upsertPlaylist(user.id, {
+        ...body,
+        source_url: identity.canonical_url || identity.source_url,
+        canonical_url: identity.canonical_url || identity.source_url,
+        canonical_key: identity.canonical_key,
+        platform: identity.platform || body.platform,
+      }) });
     } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "歌单保存失败" }); }
     return;
   }
@@ -1656,7 +1772,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/api/admin/login" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      const user = authStore.authenticate(body.username, body.password, "admin");
+      const user = await authStore.authenticateAsync(body.username, body.password, "admin");
       const session = authStore.createSession(user.id, "admin");
       authStore.writeAudit(user.id, "admin.login");
       setSessionCookie(res, req, ADMIN_SESSION_COOKIE, session.token, 8 * 60 * 60);
@@ -1693,7 +1809,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const role = body.role === "admin" ? "admin" : "user";
-      const created = authStore.createUser(body.username, body.password, role);
+      const created = await authStore.createUserAsync(body.username, body.password, role);
       authStore.writeAudit(admin.id, "admin.user.create", { target_user_id: created.id, username: created.username, role });
       sendJson(res, 201, { ok: true, user: created });
     } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "创建用户失败" }); }
@@ -1715,7 +1831,7 @@ const server = http.createServer(async (req, res) => {
         const activeAdmins = authStore.listUsers().filter((user) => user.role === "admin" && user.status === "enabled").length;
         if (activeAdmins <= 1) throw new Error("至少保留一名启用状态的管理员");
       }
-      const updated = authStore.updateUser(targetId, body);
+      const updated = await authStore.updateUserAsync(targetId, body);
       authStore.writeAudit(admin.id, "admin.user.update", { target_user_id: targetId, fields: Object.keys(body) });
       sendJson(res, 200, { ok: true, user: updated });
     } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "用户更新失败" }); }
@@ -1971,7 +2087,8 @@ const server = http.createServer(async (req, res) => {
             analysis_parallelism: runtime.analysisParallelism,
             recommendation_parallelism: runtime.recommendationParallelism,
             max_research_rounds: runtime.maxResearchRounds,
-            max_candidates: runtime.maxCandidates,
+            initial_candidate_limit: runtime.initialCandidateLimit,
+            hard_candidate_limit: runtime.hardCandidateLimit,
             recommendation_parallelism_options: [1, 2, 3, 4, 5, 6, 7, 8],
             await_limit_timeout_seconds: runtime.awaitLimitTimeoutSeconds,
             analysis_timeout_seconds: runtime.analysisTimeoutSeconds,
@@ -2017,14 +2134,21 @@ const server = http.createServer(async (req, res) => {
       const user = requireUser(req, res);
       if (!user && AUTH_REQUIRED) return;
       const body = await readJsonBody(req);
-      const config = allowedSource(body);
+      const config = await allowedSource(body);
       const runtime = runtimeConfigSnapshot();
       if (!runtime.analysisExecutor.command || !runtime.recommendationExecutor.command) {
         sendJson(res, 503, { ok: false, error: "当前暂不可生成推荐" });
         return;
       }
       const job = await startWorkflowJob(config, { user });
-      if (user) authStore.upsertPlaylist(user.id, { source_url: config.source_url, name: config.playlist_name, platform: config.platform, config });
+      if (user) authStore.upsertPlaylist(user.id, {
+        source_url: config.source_url,
+        canonical_url: config.canonical_url,
+        canonical_key: config.canonical_key,
+        name: config.playlist_name,
+        platform: config.platform,
+        config,
+      });
       sendJson(res, 202, { ok: true, job });
     } catch (error) {
       const message = error && error.message ? error.message : "无法创建网页工作流";
@@ -2077,8 +2201,8 @@ const server = http.createServer(async (req, res) => {
         percentile, limit, trackTotal: maximum,
       });
       if (reusable && job.child) {
-        job.child.kill();
-        recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: "已改用同链接、同范围的已有分析" });
+        terminateWorkflow(job);
+        recordJobEvent(job, { event: "superseded", status: "superseded", stage: job.stage, error: "已改用同链接、同范围的已有分析" });
         activeJobs.delete(job.id);
         const reused = await startWorkflowJob(
           { kind: "local_json", source_url: job.source_url || "", input: "", playlist_id: job.playlist_id || "",
@@ -2109,7 +2233,7 @@ const server = http.createServer(async (req, res) => {
     if (!job) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
     const user = requireUser(req, res);
     if (!canAccessJob(job, user)) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
-    if (job.status !== "failed") { sendJson(res, 409, { ok: false, error: "只有失败的任务可以续跑" }); return; }
+    if (!["failed", "interrupted"].includes(job.status)) { sendJson(res, 409, { ok: false, error: "只有失败或中断的任务可以续跑" }); return; }
     try {
       const config = { kind: "local_json", source_url: job.source_url || "", input: "",
                        playlist_id: job.playlist_id || "", playlist_name: "",
@@ -2137,8 +2261,8 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 409, { ok: false, error: "当前任务已经结束" });
       return;
     }
-    job.child.kill();
-    recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: "任务已取消" });
+    terminateWorkflow(job);
+    recordJobEvent(job, { event: "cancelled", status: "cancelled", stage: job.stage, error: "任务已取消" });
     sendJson(res, 200, { ok: true, job: publicJob(job) });
     return;
   }
@@ -2176,12 +2300,12 @@ const server = http.createServer(async (req, res) => {
   /* 当前 Atlas 数据：只读脱敏视图模型，不直接暴露 runtime */
   if (urlPath === "/api/atlas") {
     try {
-      const payload = await loadAtlasPayload();
+      const response = await loadAtlasResponse();
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      res.end(JSON.stringify({ ok: true, ...payload }));
+      res.end(response);
     } catch {
       res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ ok: false, error: "Atlas 数据暂不可用" }));
@@ -2221,6 +2345,14 @@ const server = http.createServer(async (req, res) => {
     if (!artist || !track) {
       res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ ok: false, error: "artist & track required" }));
+      return;
+    }
+    if (artist.length > META_QUERY_MAX_LENGTH || track.length > META_QUERY_MAX_LENGTH) {
+      sendJson(res, 400, { ok: false, error: `artist & track must be at most ${META_QUERY_MAX_LENGTH} characters` });
+      return;
+    }
+    if (!allowMetaRequest(req)) {
+      sendJson(res, 429, { ok: false, error: "too many metadata requests" }, { "Retry-After": "60" });
       return;
     }
     try {
@@ -2266,12 +2398,22 @@ const server = http.createServer(async (req, res) => {
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(`[music-atlas] 端口 ${PORT} 已被占用，可能服务已在运行：http://${HOST}:${PORT}`);
-    process.exit(0);
+    process.exit(1);
   }
   console.error("[music-atlas] 启动失败:", err.message);
   process.exit(1);
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`[music-atlas] Editorial Atlas 已固化: http://${HOST}:${PORT}`);
-});
+authStore.reconcilePlaylists(canonicalizePlaylistSourceSafe)
+  .then((result) => {
+    if (result.merged || result.normalized) {
+      console.log(`[music-atlas] 最近歌单身份回填：规范化 ${result.normalized}，合并 ${result.merged}`);
+    }
+    server.listen(PORT, HOST, () => {
+      console.log(`[music-atlas] Editorial Atlas 已固化: http://${HOST}:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error(`[music-atlas] 最近歌单迁移失败：${error.message}`);
+    process.exit(1);
+  });

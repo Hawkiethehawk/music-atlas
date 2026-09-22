@@ -99,9 +99,15 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 1234)
         system = payload["messages"][0]["content"]
         self.assertIn("歌单分析研究", system)
-        self.assertIn("TASK-1", system)
-        self.assertIn("MUSIC ATLAS TASK", system)
+        self.assertNotIn("TASK-1", system)
         self.assertEqual(payload["messages"][1]["content"], "TASK-1")
+
+    def test_rejects_insecure_base_url(self) -> None:
+        with mock.patch.object(executor, "openai_compat_settings", return_value={
+            "base_url": "http://example.invalid/v1", "model": "m",
+        }):
+            with self.assertRaisesRegex(RuntimeError, "HTTPS"):
+                executor._settings()
 
     def test_payload_disables_thinking_by_default(self) -> None:
         """实测 reasoning 占单次调用约 80% 耗时，因此默认关闭。"""

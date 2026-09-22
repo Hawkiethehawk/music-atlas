@@ -44,11 +44,19 @@ test("元数据接口：/api/config 与 /api/health", { concurrency: false }, as
   assert.equal(config.workflow.await_limit_timeout_seconds, 1800);
   // 隔离配置未声明研究预算时应回落到默认值。
   assert.equal(config.workflow.max_research_rounds, 2);
-  assert.equal(config.workflow.max_candidates, 80);
+  assert.equal(config.workflow.initial_candidate_limit, 60);
+  assert.equal(config.workflow.hard_candidate_limit, 200);
   assert.equal(config.workflow.analysis_executor_configured, true);
   assert.equal(config.workflow.recommendation_executor_configured, true);
   assert.ok(config.paths.published.includes("runtime"), "发布路径应位于 runtime 隔离目录");
   assert.match(config.paths.jobs, /web-e2e-meta/);
+
+  const proxiedConfig = await (await fetch(`${baseUrl}/api/config`, {
+    headers: { "x-forwarded-for": "127.0.0.1, 203.0.113.9" },
+  })).json();
+  assert.equal(proxiedConfig.config_file, undefined, "反代公网请求不得获得本机配置路径");
+  assert.equal(proxiedConfig.paths, undefined, "反代公网请求不得获得本机目录");
+  assert.equal(proxiedConfig.workflow.analysis_parallelism, undefined, "反代公网请求不得获得内部并行配置");
 
   // 未发布数据时 health 为 503，data_available=false，且服务本身可用。
   const health = await fetch(`${baseUrl}/api/health`);
@@ -173,6 +181,7 @@ test("旧设置迁移：含已删除的 api_key_env 时仍能启动并自动剥�
     settings: {
       runtime: { openai_compat: { model: "legacy-model", api_key_env: "LEGACY_KEY" } },
       crawler: { qq_page_size: 80 },
+      workflow: { max_candidates: 40, candidate_target: 10, context_budget: 40000 },
     },
   });
   t.after(() => server.stop());
@@ -183,11 +192,16 @@ test("旧设置迁移：含已删除的 api_key_env 时仍能启动并自动剥�
   assert.equal(payload.settings.runtime.openai_compat.model, "legacy-model");
   assert.equal(payload.settings.runtime.openai_compat.api_key_env, undefined);
   assert.equal(payload.settings.crawler.qq_page_size, 80);
+  assert.equal(payload.settings.workflow.initial_candidate_limit, 40);
+  assert.equal(payload.settings.workflow.hard_candidate_limit, 40);
 
   // 迁移写回磁盘：文件里也不应再出现 api_key_env。
   const { readFile } = await import("node:fs/promises");
   const stored = await readFile(`${runtimeDir}/settings.json`, "utf8");
   assert.equal(stored.includes("api_key_env"), false);
+  assert.equal(stored.includes("max_candidates"), false);
+  assert.equal(stored.includes("candidate_target"), false);
+  assert.equal(stored.includes("context_budget"), false);
   assert.match(stored, /legacy-model/);
 });
 

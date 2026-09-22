@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -100,6 +101,16 @@ def is_compatible(health: dict[str, Any] | None) -> bool:
 def process_exists(pid: int) -> bool:
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
     result = subprocess.run(
         ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -144,6 +155,35 @@ def clear_state(port: int | None = None, pid: int | None = None) -> bool:
 
 
 def kill_pid(pid: int) -> None:
+    if os.name != "nt":
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError as exc:
+            raise ServiceError(f"SIGTERM 失败：{exc}") from exc
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                waited, _status = os.waitpid(pid, os.WNOHANG)
+                if waited == pid:
+                    return
+            except ChildProcessError:
+                pass
+            if not process_exists(pid):
+                return
+            time.sleep(0.1)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError as exc:
+            raise ServiceError(f"SIGKILL 失败：{exc}") from exc
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+        return
     result = subprocess.run(
         ["taskkill", "/PID", str(pid), "/T", "/F"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -261,7 +301,7 @@ def stop(port: int) -> dict[str, Any]:
     if state and int(state.get("port", -1)) == port and state_pid and process_exists(state_pid):
         raise ServiceError(
             f"状态文件 PID {state_pid} 存活但健康端点不可用，拒绝停止；"
-            f"请先人工确认该进程（tasklist /FI \"PID eq {state_pid}\"）")
+            f"请先人工确认该进程（PID {state_pid}）")
     stale = clear_state(port)
     return {"action": "stop", "running": False, "stopped": False, "port": port,
             "detail": "已清理过期状态文件" if stale else "面板未在运行"}

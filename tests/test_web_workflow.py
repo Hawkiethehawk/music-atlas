@@ -23,6 +23,7 @@ from web_workflow import (
     _apply_track_limit,
     _await_track_limit,
     _build_source,
+    _configured_candidate_limits,
     _read_limit_request,
     _read_limit_request_details,
     _percentile_track_limit,
@@ -51,6 +52,14 @@ def fixture_snapshot() -> dict:
 
 
 class WebWorkflowSourceTests(unittest.TestCase):
+    def test_candidate_limits_use_split_initial_and_hard_fields(self) -> None:
+        args = SimpleNamespace(initial_candidate_limit=60, hard_candidate_limit=200)
+        self.assertEqual(_configured_candidate_limits(args, required=30), (60, 200))
+
+        args = SimpleNamespace(initial_candidate_limit=240, hard_candidate_limit=120)
+        with self.assertRaises(ContractError):
+            _configured_candidate_limits(args, required=30)
+
     def test_apple_public_link_does_not_need_a_manual_track_count(self) -> None:
         with TemporaryDirectory() as directory:
             runtime_dir = Path(directory)
@@ -88,7 +97,7 @@ class WebWorkflowSourceTests(unittest.TestCase):
         opener = mock.MagicMock()
         opener.__enter__.return_value = response
         opener.__exit__.return_value = None
-        with mock.patch("web_workflow.urlopen", return_value=opener):
+        with mock.patch("playlist_source.urlopen", return_value=opener):
             self.assertEqual(
                 _resolve_netease_source("https://163cn.tv/bf2PivdY"),
                 ("7786449876", "https://music.163.com/playlist?id=7786449876"),
@@ -186,8 +195,12 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
         saturated = {"canonical_track_ids": {f"id-{i}" for i in range(180)}, "track_keys": set()}
 
         self.assertEqual(_candidate_discovery_limits(60, 30, empty), [60, 200])
-        self.assertEqual(_candidate_discovery_limits(60, 30, crowded), [180, 200])
-        self.assertEqual(_candidate_discovery_limits(60, 30, saturated), [200, 330])
+        self.assertEqual(_candidate_discovery_limits(60, 30, crowded), [60, 200])
+        self.assertEqual(_candidate_discovery_limits(60, 30, saturated), [60, 200, 330])
+        self.assertEqual(
+            _candidate_discovery_limits(60, 30, saturated, hard_limit=200),
+            [60, 200],
+        )
 
     def test_candidate_discovery_retries_at_hard_cap_after_weekly_exclusion(self) -> None:
         history = {
@@ -210,8 +223,8 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
                 {}, history, 6, 5, lambda previous, current, eligible: expanded.append((previous, current, eligible))
             )
 
-        self.assertEqual([call.kwargs["max_candidates"] for call in discover.call_args_list], [28, 200])
-        self.assertEqual(expanded, [(28, 200, 4)])
+        self.assertEqual([call.kwargs["max_candidates"] for call in discover.call_args_list], [6, 200])
+        self.assertEqual(expanded, [(6, 200, 4)])
         self.assertEqual(len(candidates), 6)
         self.assertTrue(report["pool_expanded"])
         self.assertEqual(report["eligible_candidate_count"], 6)

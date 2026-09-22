@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Music Atlas identity database backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+Unit=music-atlas-backup.service
+
+[Install]
+WantedBy=timers.target

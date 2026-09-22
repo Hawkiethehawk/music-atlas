@@ -11,6 +11,24 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
+const scryptAsync = require("node:util").promisify(crypto.scrypt);
+
+async function hashPasswordAsync(password) {
+  const salt = crypto.randomBytes(16);
+  const derived = await scryptAsync(normalizePassword(password), salt, 64, { N: 16384, r: 8, p: 1 });
+  return `scrypt$16384$8$1$${salt.toString("base64url")}$${derived.toString("base64url")}`;
+}
+
+async function verifyPasswordAsync(password, encoded) {
+  try {
+    const [scheme, n, r, p, saltText, digestText] = String(encoded || "").split("$");
+    if (scheme !== "scrypt" || n !== "16384" || r !== "8" || p !== "1") return false;
+    const expected = Buffer.from(digestText, "base64url");
+    if (expected.length !== 64) return false;
+    const actual = await scryptAsync(String(password || ""), Buffer.from(saltText, "base64url"), 64, { N: 16384, r: 8, p: 1 });
+    return crypto.timingSafeEqual(actual, expected);
+  } catch { return false; }
+}
 
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60;
@@ -95,6 +113,7 @@ function createAuthStore(dbPath) {
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, kind);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at, revoked_at);
     CREATE TABLE IF NOT EXISTS preferences (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       data_json TEXT NOT NULL DEFAULT '{}',
@@ -104,6 +123,8 @@ function createAuthStore(dbPath) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       source_url TEXT NOT NULL,
+      canonical_key TEXT NOT NULL DEFAULT '',
+      canonical_url TEXT NOT NULL DEFAULT '',
       name TEXT NOT NULL DEFAULT '',
       platform TEXT NOT NULL DEFAULT '',
       config_json TEXT NOT NULL DEFAULT '{}',
@@ -119,6 +140,7 @@ function createAuthStore(dbPath) {
       detail_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
     CREATE TABLE IF NOT EXISTS runs (
       job_id TEXT PRIMARY KEY,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -140,11 +162,21 @@ function createAuthStore(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
   `);
 
+  // 旧生产库原地升级。先增加可空身份列，再使用部分唯一索引；异步短链
+  // 回填会在 server 启动监听前运行，并在写入 canonical_key 时合并重复行。
+  const playlistColumns = new Set(db.prepare("PRAGMA table_info(playlists)").all().map((row) => row.name));
+  if (!playlistColumns.has("canonical_key")) db.exec("ALTER TABLE playlists ADD COLUMN canonical_key TEXT NOT NULL DEFAULT ''");
+  if (!playlistColumns.has("canonical_url")) db.exec("ALTER TABLE playlists ADD COLUMN canonical_url TEXT NOT NULL DEFAULT ''");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_user_canonical
+      ON playlists(user_id, canonical_key) WHERE canonical_key <> '';
+  `);
+
   function getUserById(id) {
     return db.prepare("SELECT * FROM users WHERE id = ?").get(Number(id)) || null;
   }
 
-  function createUser(usernameValue, passwordValue, role = "user") {
+  function createUser(usernameValue, passwordValue, role = "user", preparedHash = null) {
     const username = normalizeUsername(usernameValue);
     const password = normalizePassword(passwordValue);
     if (!["user", "admin"].includes(role)) throw new Error("用户角色无效");
@@ -152,7 +184,7 @@ function createAuthStore(dbPath) {
     try {
       const result = db.prepare(
         "INSERT INTO users (username, password_hash, role, status, created_at, updated_at) VALUES (?, ?, ?, 'enabled', ?, ?)",
-      ).run(username, hashPassword(password), role, now, now);
+      ).run(username, preparedHash || hashPassword(password), role, now, now);
       return publicUser(getUserById(result.lastInsertRowid));
     } catch (error) {
       if (String(error && error.message).includes("UNIQUE")) throw new Error("用户名已存在");
@@ -220,7 +252,7 @@ function createAuthStore(dbPath) {
       .all().map(publicUser);
   }
 
-  function updateUser(id, patch = {}) {
+  function updateUser(id, patch = {}, preparedHash = null) {
     const user = getUserById(id);
     if (!user) throw new Error("用户不存在");
     const fields = [];
@@ -240,7 +272,7 @@ function createAuthStore(dbPath) {
       fields.push("role = ?"); values.push(patch.role);
     }
     if (patch.password !== undefined) {
-      fields.push("password_hash = ?"); values.push(hashPassword(normalizePassword(patch.password)));
+      fields.push("password_hash = ?"); values.push(preparedHash || hashPassword(normalizePassword(patch.password)));
     }
     if (!fields.length) return publicUser(user);
     fields.push("updated_at = ?"); values.push(isoNow(), Number(id));
@@ -309,7 +341,7 @@ function createAuthStore(dbPath) {
     if (patch.recommendationCount !== undefined) { fields.push("recommendation_count = ?"); values.push(patch.recommendationCount == null ? null : Number(patch.recommendationCount)); }
     if (patch.error !== undefined) { fields.push("error = ?"); values.push(String(patch.error).slice(0, 2000)); }
     if (!fields.length) return publicRun(row);
-    if (["completed", "failed", "cancelled"].includes(String(patch.status))) {
+    if (["completed", "failed", "cancelled", "superseded", "interrupted"].includes(String(patch.status))) {
       const finishedAt = patch.finishedAt ? String(patch.finishedAt) : isoNow();
       const started = Date.parse(row.started_at || "") || Date.parse(finishedAt);
       fields.push("finished_at = ?"); values.push(finishedAt);
@@ -336,8 +368,22 @@ function createAuthStore(dbPath) {
   function runStats(userId = null) {
     const clause = userId == null ? "" : "WHERE user_id = ?";
     const values = userId == null ? [] : [Number(userId)];
-    const row = db.prepare(`SELECT COUNT(*) AS total, SUM(status = 'completed') AS completed, SUM(status = 'failed') AS failed, MAX(started_at) AS last_started FROM runs ${clause}`).get(...values);
-    return { total: row.total || 0, completed: row.completed || 0, failed: row.failed || 0, last_started: row.last_started || null };
+    const row = db.prepare(`SELECT COUNT(*) AS total,
+      SUM(status = 'completed') AS completed,
+      SUM(status = 'failed') AS failed,
+      SUM(status = 'cancelled') AS cancelled,
+      SUM(status = 'superseded') AS superseded,
+      SUM(status = 'interrupted') AS interrupted,
+      MAX(started_at) AS last_started FROM runs ${clause}`).get(...values);
+    return {
+      total: row.total || 0,
+      completed: row.completed || 0,
+      failed: row.failed || 0,
+      cancelled: row.cancelled || 0,
+      superseded: row.superseded || 0,
+      interrupted: row.interrupted || 0,
+      last_started: row.last_started || null,
+    };
   }
 
   function backfillRun(payload = {}) {
@@ -345,6 +391,11 @@ function createAuthStore(dbPath) {
     const existing = getRun(payload.jobId);
     if (existing) {
       const patch = {};
+      if (payload.status && payload.status !== existing.status) {
+        patch.status = payload.status;
+        patch.finishedAt = payload.finishedAt;
+        patch.error = payload.error || "";
+      }
       if (!existing.platform && payload.platform) patch.platform = payload.platform;
       if (!existing.playlist_id && payload.playlistId) patch.playlistId = payload.playlistId;
       if (!existing.playlist_name && payload.playlistName) patch.playlistName = payload.playlistName;
@@ -382,9 +433,11 @@ function createAuthStore(dbPath) {
   }
 
   function listPlaylists(userId) {
-    return db.prepare("SELECT id, source_url, name, platform, config_json, created_at, updated_at FROM playlists WHERE user_id = ? ORDER BY updated_at DESC")
+    return db.prepare("SELECT id, source_url, canonical_key, canonical_url, name, platform, config_json, created_at, updated_at FROM playlists WHERE user_id = ? ORDER BY updated_at DESC")
       .all(Number(userId)).map((row) => ({
-        id: Number(row.id), source_url: row.source_url, name: row.name, platform: row.platform,
+        id: Number(row.id), source_url: row.source_url,
+        canonical_key: row.canonical_key || "", canonical_url: row.canonical_url || row.source_url,
+        name: row.name, platform: row.platform,
         config: (() => { try { return JSON.parse(row.config_json); } catch { return {}; } })(),
         created_at: row.created_at, updated_at: row.updated_at,
       }));
@@ -393,15 +446,78 @@ function createAuthStore(dbPath) {
   function upsertPlaylist(userId, data = {}) {
     const sourceUrl = String(data.source_url || "").trim();
     if (!sourceUrl) throw new Error("歌单链接不能为空");
+    const canonicalUrl = String(data.canonical_url || sourceUrl).trim() || sourceUrl;
+    const canonicalKey = String(data.canonical_key || "").trim()
+      || `${String(data.platform || "url").trim() || "url"}:url:${crypto.createHash("sha256").update(canonicalUrl).digest("hex").slice(0, 24)}`;
     const now = isoNow();
     const config = data.config && typeof data.config === "object" ? data.config : {};
-    db.prepare(`
-      INSERT INTO playlists (user_id, source_url, name, platform, config_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, source_url) DO UPDATE SET name = excluded.name, platform = excluded.platform,
-        config_json = excluded.config_json, updated_at = excluded.updated_at
-    `).run(Number(userId), sourceUrl, String(data.name || "").slice(0, 200), String(data.platform || "").slice(0, 50), JSON.stringify(config), now, now);
-    return listPlaylists(userId).find((item) => item.source_url === sourceUrl) || null;
+    const existing = db.prepare(`SELECT * FROM playlists WHERE user_id = ?
+      AND (canonical_key = ? OR source_url = ?) ORDER BY id LIMIT 1`).get(Number(userId), canonicalKey, sourceUrl);
+    let id;
+    if (existing) {
+      const name = String(data.name || existing.name || "").slice(0, 200);
+      const platform = String(data.platform || existing.platform || "").slice(0, 50);
+      db.prepare(`UPDATE playlists SET source_url = ?, canonical_key = ?, canonical_url = ?,
+        name = ?, platform = ?, config_json = ?, updated_at = ? WHERE id = ?`)
+        .run(canonicalUrl, canonicalKey, canonicalUrl, name, platform, JSON.stringify(config), now, existing.id);
+      id = Number(existing.id);
+    } else {
+      const result = db.prepare(`INSERT INTO playlists
+        (user_id, source_url, canonical_key, canonical_url, name, platform, config_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(Number(userId), canonicalUrl, canonicalKey, canonicalUrl,
+          String(data.name || "").slice(0, 200), String(data.platform || "").slice(0, 50), JSON.stringify(config), now, now);
+      id = Number(result.lastInsertRowid);
+    }
+    return listPlaylists(userId).find((item) => item.id === id) || null;
+  }
+
+  async function reconcilePlaylists(normalize) {
+    if (typeof normalize !== "function") throw new Error("缺少歌单链接规范化器");
+    const rows = db.prepare("SELECT * FROM playlists ORDER BY user_id, created_at, id").all();
+    let normalized = 0;
+    let merged = 0;
+    for (const row of rows) {
+      // 前一轮可能已将本行作为重复项删除。
+      if (!db.prepare("SELECT 1 FROM playlists WHERE id = ?").get(row.id)) continue;
+      if (row.canonical_key && row.canonical_url) continue;
+      let identity;
+      try { identity = await normalize(row.source_url); } catch { continue; }
+      if (!identity || !identity.canonical_key) continue;
+      const duplicate = db.prepare(`SELECT * FROM playlists WHERE user_id = ? AND id <> ?
+        AND canonical_key = ? ORDER BY created_at, id LIMIT 1`)
+        .get(row.user_id, row.id, identity.canonical_key);
+      if (!duplicate) {
+        db.prepare(`UPDATE playlists SET source_url = ?, canonical_key = ?, canonical_url = ?,
+          platform = CASE WHEN ? <> '' THEN ? ELSE platform END WHERE id = ?`)
+          .run(identity.canonical_url || identity.source_url, identity.canonical_key,
+            identity.canonical_url || identity.source_url, identity.platform || "", identity.platform || "", row.id);
+        normalized += 1;
+        continue;
+      }
+      const keeper = Number(duplicate.id) < Number(row.id) ? duplicate : row;
+      const other = keeper.id === row.id ? duplicate : row;
+      const latest = Date.parse(row.updated_at || "") >= Date.parse(duplicate.updated_at || "") ? row : duplicate;
+      const createdAt = [row.created_at, duplicate.created_at].filter(Boolean).sort()[0] || isoNow();
+      const updatedAt = [row.updated_at, duplicate.updated_at].filter(Boolean).sort().at(-1) || isoNow();
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare("DELETE FROM playlists WHERE id = ?").run(other.id);
+        db.prepare(`UPDATE playlists SET source_url = ?, canonical_key = ?, canonical_url = ?,
+          name = ?, platform = ?, config_json = ?, created_at = ?, updated_at = ? WHERE id = ?`)
+          .run(identity.canonical_url || identity.source_url, identity.canonical_key,
+            identity.canonical_url || identity.source_url, latest.name || keeper.name || "",
+            identity.platform || latest.platform || keeper.platform || "", latest.config_json || "{}",
+            createdAt, updatedAt, keeper.id);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      merged += 1;
+      normalized += 1;
+    }
+    return { normalized, merged, total: db.prepare("SELECT COUNT(*) AS count FROM playlists").get().count };
   }
 
   function writeAudit(userId, action, detail = {}) {
@@ -409,11 +525,45 @@ function createAuthStore(dbPath) {
       .run(userId == null ? null : Number(userId), String(action), JSON.stringify(detail || {}), isoNow());
   }
 
+  function maintenance({ auditRetentionDays = 180, revokedSessionRetentionDays = 30 } = {}) {
+    const now = Date.now();
+    const sessionCutoff = new Date(now - Math.max(1, Number(revokedSessionRetentionDays) || 30) * 86400000).toISOString();
+    const auditCutoff = new Date(now - Math.max(1, Number(auditRetentionDays) || 180) * 86400000).toISOString();
+    const sessions = db.prepare(`DELETE FROM sessions
+      WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)`).run(isoNow(), sessionCutoff).changes;
+    const audits = db.prepare("DELETE FROM audit_log WHERE created_at < ?").run(auditCutoff).changes;
+    db.exec("PRAGMA wal_checkpoint(PASSIVE); PRAGMA optimize;");
+    return { sessions: Number(sessions), audits: Number(audits) };
+  }
+
+  async function authenticateAsync(usernameValue, passwordValue, requiredRole = "user") {
+    const row = db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(String(usernameValue || "").trim());
+    if (!row || row.status !== "enabled" || !(await verifyPasswordAsync(passwordValue, row.password_hash))) throw new Error("用户名或密码错误");
+    const current = getUserById(row.id);
+    if (!current || current.status !== "enabled" || current.password_hash !== row.password_hash) throw new Error("用户名或密码错误");
+    if (requiredRole === "admin" && current.role !== "admin") throw new Error("无管理员权限");
+    const now = isoNow();
+    db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(now, now, row.id);
+    return publicUser({ ...current, last_login_at: now });
+  }
+
   return {
     dbPath: resolvedPath,
     normalizeUsername,
     normalizePassword,
     createUser,
+    async createUserAsync(username, password, role = "user") {
+      normalizeUsername(username);
+      return createUser(username, password, role, await hashPasswordAsync(password));
+    },
+    authenticateAsync,
+    async updateUserAsync(id, patch = {}) {
+      return updateUser(id, patch, patch.password === undefined ? null : await hashPasswordAsync(patch.password));
+    },
+    async verifyUserPasswordAsync(id, password) {
+      const user = getUserById(id);
+      return Boolean(user && await verifyPasswordAsync(password, user.password_hash));
+    },
     ensureBootstrapAdmin,
     verifyUserPassword,
     authenticate,
@@ -433,7 +583,9 @@ function createAuthStore(dbPath) {
     savePreferences,
     listPlaylists,
     upsertPlaylist,
+    reconcilePlaylists,
     writeAudit,
+    maintenance,
     close() { db.close(); },
   };
 }

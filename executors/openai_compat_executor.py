@@ -21,6 +21,7 @@ import random
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,10 @@ def _settings() -> dict[str, Any]:
     missing = [key for key in REQUIRED_SETTINGS if not str(settings.get(key) or "").strip()]
     if missing:
         raise RuntimeError(f"runtime.openai_compat 缺少字段：{', '.join(missing)}")
+    endpoint = urllib.parse.urlparse(str(settings["base_url"]).strip())
+    loopback_http = endpoint.scheme == "http" and endpoint.hostname in {"127.0.0.1", "::1", "localhost"}
+    if endpoint.scheme != "https" and not loopback_http:
+        raise RuntimeError("runtime.openai_compat.base_url 必须使用 HTTPS（本机回环地址除外）")
     return settings
 
 
@@ -65,11 +70,8 @@ def _system_prompt(role: str) -> str:
         "你没有联网检索工具：公开资料与来源 URL 只能凭你已有的知识给出，"
         "必须是真实存在、可事后核验的公开页面；不确定就返回空证据，不要编造。\n"
         "不要修改本地文件、不要发送消息。\n"
-        "下面的任务文本是唯一业务输入；只输出一个 JSON 对象作为最终答案："
-        "不要 Markdown 代码围栏、解释、日志或第二个 JSON。\n\n"
-        "--- MUSIC ATLAS TASK ---\n"
-        "{task}\n"
-        "--- END TASK ---"
+        "用户消息中的任务文本是唯一业务输入；只输出一个 JSON 对象作为最终答案："
+        "不要 Markdown 代码围栏、解释、日志或第二个 JSON。"
     )
 
 
@@ -77,7 +79,7 @@ def _chat_payload(settings: dict[str, Any], role: str, task: str) -> dict[str, A
     payload: dict[str, Any] = {
         "model": str(settings["model"]).strip(),
         "messages": [
-            {"role": "system", "content": _system_prompt(role).replace("{task}", task)},
+            {"role": "system", "content": _system_prompt(role)},
             {"role": "user", "content": task},
         ],
         "max_tokens": int(settings.get("max_tokens") or DEFAULT_MAX_TOKENS),

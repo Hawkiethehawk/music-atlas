@@ -2,10 +2,10 @@
 
 Playlists are analyzed at a resolution that matches their size:
 
-- ``track_research`` (<= 30 tracks): per-track agent research, unchanged.
-- ``taste_summary`` (31-500): one agent call over the ``歌名+歌手`` list; the
+- ``track_research`` (<= 200 tracks): per-track agent research, unchanged.
+- ``taste_summary`` (201-2000): one agent call over the ``歌名+歌手`` list; the
   agent returns a structured taste profile plus an editorial review.
-- ``artist_summary`` (>= 501): one agent call over the artist distribution.
+- ``artist_summary`` (>= 2001): one agent call over the artist distribution.
 
 The agent never sees or submits per-track research at these sizes. The
 program owns all statistics (duplicates, artist counts, layering), the
@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import time
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
@@ -45,7 +47,7 @@ from musician_analyzer import load_recommendation_policy
 TRACK_RESEARCH_MAX = 200
 # 超过这个规模就只统计歌手分布（不含歌名）：逐曲歌名清单既容易触发上游内容
 # 审核，也会让 prompt 过长。
-TASTE_SUMMARY_MAX = 1000
+TASTE_SUMMARY_MAX = 2000
 TASTE_BATCH_SIZE = 10
 # 品味/歌手摘要模式的曲目分类覆盖门槛（用户批准的策略值，非逐曲研究的 50%）。
 TASTE_MIN_CLASSIFIED_SHARE = 0.3
@@ -328,7 +330,7 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
             "entity_ref": entity["entity_ref"],
             "primary_track_count": primary_counter.get(key, 0),
             "credited_track_count": credited_counter.get(key, 0),
-            "is_core_artist": primary_counter.get(name, 0) > 0,
+            "is_core_artist": primary_counter.get(key, 0) > 0,
             "classification_status": "classified" if classified else "unclassified",
             "confidence": display["confidence"] if display else "low",
             "primary_style_ref": refs[0] if refs else "",
@@ -458,9 +460,7 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
             {"candidate_type": kind, "target_ratio": round(ratio / total, 6)}
             for kind, ratio in retained
         ]
-        # 摘要模式只列代表性艺人，分类覆盖率天然远低于逐曲模式：
-        # 覆盖率门槛在这个模式下没有意义，设为 0 跳过检查。
-        policy["analysis_quality"] = {"min_classified_share": 0}
+        policy["analysis_quality"] = {"min_classified_share": TASTE_MIN_CLASSIFIED_SHARE}
         packet["recommendation_policy"] = policy
     return validate_analysis_packet(packet)
 
@@ -606,8 +606,12 @@ def run_taste_analysis(snapshot_path: Path, taxonomy_path: Path, directory: Path
         # 响应并允许两轮修复，避免一次差输出直接判负整个任务。
         bundle = None
         last_error: Exception | None = None
+        deadline = time.monotonic() + timeout
         for attempt in range(1, 4):
-            raw = execute(command, prompt, timeout=timeout)
+            remaining = deadline - time.monotonic()
+            if remaining < 1:
+                raise ContractError("品味摘要重试的阶段时间预算已耗尽")
+            raw = execute(command, prompt, timeout=max(1, math.ceil(remaining)))
             write_json(directory / f"taste_response_{attempt}.json", raw if isinstance(raw, (dict, list)) else {"raw": str(raw)[:2000]})
             _normalize_clusters(raw, taxonomy)
             _normalize_style_tags(raw, taxonomy)

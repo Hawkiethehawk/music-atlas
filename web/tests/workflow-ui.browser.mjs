@@ -721,6 +721,7 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     counters.latestJobId = job.id;
     await page.reload();
     await page.waitForFunction(() => document.querySelector("#flow .fstep")?.textContent.includes("新 Atlas 运行已完成"), undefined, { timeout: 3000 });
+    await page.waitForFunction(() => document.querySelectorAll('#flow [data-wf-tasks="analysis"] .wf-task-row.reused').length === 4, undefined, { timeout: 3000 });
     assert.equal(await page.locator('#flow [data-wf-tasks="analysis"] .wf-task-row.reused').count(), 4, "刷新后仍应恢复复用视图");
     assert.equal(await page.locator('#flow [data-wf-count]').textContent(), "47 个候选已核验 · 3 组 Atlas");
     assert.doesNotMatch(await page.locator("#flow").textContent(), /0\/0 批|0\/0 首|并行槽位空闲/);

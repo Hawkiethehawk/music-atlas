@@ -718,7 +718,7 @@ function islandSourcesInner(i){
  function closeAuth(){const root=document.getElementById("auth-root");if(root)root.innerHTML="";}
  async function loadAuth(){try{const response=await fetch("/api/auth/me",{cache:"no-store"});const payload=await response.json();if(response.ok&&payload.ok){CURRENT_USER=payload.user||null;AUTH_REQUIRED=Boolean(payload.auth_required);}}catch{}refreshAuthChrome();}
  function refreshAuthChrome(){const node=document.querySelector("[data-auth-slot]");if(node)node.innerHTML=authHeader();}
- async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");const password=form.querySelector("#auth-password")?.value||"";const confirm=form.querySelector("#auth-password2");if(mode==="register"&&confirm&&confirm.value!==password){if(message){message.textContent="两次输入的密码不一致";message.className="auth-message error";}confirm.focus();return;}if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());delete body.password_confirm;const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const rememberNode=form.querySelector("[data-auth-remember]");const remember=mode==="register"?true:Boolean(rememberNode?.checked);const name=String(body.username||CURRENT_USER.username||"").trim();if(remember&&name)localStorage.setItem("atlas_remembered_username",name);else if(!remember)localStorage.removeItem("atlas_remembered_username");}catch{}try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();render();renderPlaylistHistory();toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
+ async function submitAuth(form){const mode=form.dataset.mode||"login";const message=form.querySelector("[data-auth-message]"),button=form.querySelector("button[type=submit]");const password=form.querySelector("#auth-password")?.value||"";const confirm=form.querySelector("#auth-password2");if(mode==="register"&&confirm&&confirm.value!==password){if(message){message.textContent="两次输入的密码不一致";message.className="auth-message error";}confirm.focus();return;}if(button)button.disabled=true;if(message){message.textContent=mode==="register"?"正在创建账号…":"正在登录…";message.className="auth-message";}try{const body=Object.fromEntries(new FormData(form).entries());delete body.password_confirm;const response=await fetch(`/api/auth/${mode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"认证失败");CURRENT_USER=payload.user||null;try{const rememberNode=form.querySelector("[data-auth-remember]");const remember=mode==="register"?true:Boolean(rememberNode?.checked);const name=String(body.username||CURRENT_USER.username||"").trim();if(remember&&name)localStorage.setItem("atlas_remembered_username",name);else if(!remember)localStorage.removeItem("atlas_remembered_username");}catch{}try{const [saved,prefs]=await Promise.all([fetch("/api/me/playlists",{cache:"no-store"}).then(r=>r.json()),fetch("/api/me/preferences",{cache:"no-store"}).then(r=>r.json())]);if(saved.ok)SAVED_PLAYLISTS=Array.isArray(saved.playlists)?saved.playlists:[];if(prefs.ok)USER_PREFERENCES=prefs.preferences||{};}catch{}closeAuth();render();renderPlaylistHistory();syncLocalPlaylistHistory().catch(()=>{});toast(mode==="register"?"账号已创建并登录":"已登录");}catch(error){if(message){message.textContent=error.message||"认证失败";message.className="auth-message error";}if(button)button.disabled=false;}}
  async function bootAtlas(){
   const configPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.json()).catch(()=>null);
   const atlasPromise=fetch("/api/atlas",{cache:"no-store"}).then(async r=>{const p=await r.json();if(!r.ok||!p.ok)throw new Error(p.error||"Atlas 数据不可用");return p;});
@@ -1051,13 +1051,13 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   const records=definitions.map(step=>{
    if(recommendationOnly&&(group==="snapshot"||group==="analysis"))return{...step,state:"reused",detail:"沿用已有分析",event:null};
    const event=workflowLatestTask(events,step.key);let state=event?workflowTaskState(event):workflowLegacyStepState(events,step.key);
-   if(job.status==="failed"&&state==="running")state="failed";
+   if(["failed","interrupted"].includes(job.status)&&state==="running")state="failed";
    let detail=workflowStepDetail(step,event);
    // 失败时最后一条事件可能仍是“进行中”，不能把进行中的话术当作失败说明。
    if(state==="failed"&&event&&event.event==="task_started")detail="未完成（任务中断或超时）";
    return{...step,state,detail,event};
   });
-  if(job.status==="failed"&&!records.some(item=>item.state==="failed")){
+  if(["failed","interrupted"].includes(job.status)&&!records.some(item=>item.state==="failed")){
    const effectiveStage=workflowEffectiveStage(job,events);const targetGroup=effectiveStage==="analysis"?"analysis":effectiveStage==="recommendation"||effectiveStage==="export"?"recommendation":"";
    if(group===targetGroup){const target=[...records].reverse().find(item=>item.state==="done")||null;const index=target?records.indexOf(target)+1:0;if(index<records.length&&records[index].state==="waiting")records[index].state="failed";}
   }
@@ -1110,7 +1110,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   if(job.status==="completed")return"done";
   const completed=events.some(event=>event.stage===stage&&event.event==="completed");if(completed)return"done";
   const effective=workflowEffectiveStage(job,events);
-  if(job.status==="failed"&&stage===effective)return"failed";
+  if(["failed","interrupted"].includes(job.status)&&stage===effective)return"failed";
   if(recommendationOnly&&job.status==="queued")return stage==="recommendation"?"current":"pending";
   const current=workflowStageRank(effective),rank=workflowStageRank(stage);if(job.status==="queued")return stage==="snapshot"?"current":"pending";
   if(current>=0&&rank<current)return"done";return stage===effective?"current":"pending";
@@ -1147,7 +1147,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
  }
  function renderWorkflowJob(job){
   rememberJobPlaylist(job);
-  const flow=document.getElementById("flow");if(!flow||!job)return;const active=workflowActive(job.status),completed=job.status==="completed",failed=job.status==="failed",terminal=completed||failed;syncLimitControls(job);
+  const flow=document.getElementById("flow");if(!flow||!job)return;const active=workflowActive(job.status),completed=job.status==="completed",failed=["failed","interrupted"].includes(job.status),stopped={cancelled:"任务已取消",superseded:"已改用已有分析"}[job.status],terminal=completed||failed||Boolean(stopped);syncLimitControls(job);
   if(!active&&!terminal){flow.classList.remove("on");clearInterval(workflowClockTimer);workflowClockTimer=null;return;}
   flow.classList.add("on");const jobId=String(job.id||"");let step=flow.querySelector(".fstep");
   if(!step||flow.dataset.jobId!==jobId){
@@ -1155,20 +1155,20 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
    flow.dataset.jobId=jobId;step=flow.querySelector(".fstep");
   }
   const view=workflowProgressView(job),events=view.events;
-  const stepText=completed?(view.recommendationOnly?"新 Atlas 运行已完成":"运行已完成"):failed?(view.recommendationOnly?"新 Atlas 运行失败":"运行未完成"):view.recommendationOnly?"正在生成新 Atlas · 生成推荐":`正在处理歌单 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`;
+  const stepText=stopped|| (completed?(view.recommendationOnly?"新 Atlas 运行已完成":"运行已完成"):failed?(view.recommendationOnly?"新 Atlas 运行失败":"运行未完成"):view.recommendationOnly?"正在生成新 Atlas · 生成推荐":`正在处理歌单 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`);
   if(step.textContent!==stepText)step.textContent=stepText;step.className=`fstep ${terminal?failed?"failed":"done":""}`;
   WORKFLOW_STAGE_ORDER.forEach(stage=>{const node=flow.querySelector(`[data-stage="${stage}"]`);if(!node)return;const state=workflowStageState(stage,job,events,view.recommendationOnly);node.className=`wf-stage ${state}`;const stateNode=node.querySelector(".wf-stage-state");if(stateNode)stateNode.textContent=state==="done"?"已完成":state==="reused"?"已复用":state==="failed"?"失败":state==="current"?"进行中":"等待";});
   const snapshotRecords=workflowPipelineRecords(job,"snapshot",view.recommendationOnly),analysisRecords=workflowPipelineRecords(job,"analysis",view.recommendationOnly),recommendationRecords=workflowPipelineRecords(job,"recommendation",view.recommendationOnly),exportRecords=workflowPipelineRecords(job,"export",view.recommendationOnly);
   workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="snapshot"]'),snapshotRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="analysis"]'),analysisRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="recommendation"]'),recommendationRecords);workflowSyncPipelineList(flow.querySelector('[data-wf-tasks="export"]'),exportRecords);workflowSyncStagePanels(flow,job,events,view.recommendationOnly);
   const summary=flow.querySelector("[data-wf-summary]"),count=flow.querySelector("[data-wf-count]"),analysisNote=flow.querySelector('[data-wf-note="analysis"]'),recommendationNote=flow.querySelector('[data-wf-note="recommendation"]');
-  if(summary)summary.textContent=completed?(view.recommendationOnly?"新 Atlas 已生成 · 网页数据已更新":"运行已完成 · Atlas 已更新"):failed?`运行未完成 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`:view.recommendationOnly?(job.status==="queued"?"新 Atlas 排队中":"正在生成新 Atlas"):`${job.status==="queued"?"排队中":job.status==="awaiting_limit"?"等待选择处理数量":"正在处理"} · ${workflowStageLabel(workflowEffectiveStage(job,events))}`;
-  const limitView=workflowLimitView(job);if(count)count.textContent=failed?`退出码 ${job.exit_code===null||job.exit_code===undefined?"—":job.exit_code}`:view.recommendationOnly?(completed?`${view.candidateCount||view.totalUniqueRecommendations||0} 个候选已核验${view.atlasGroupCount?` · ${view.atlasGroupCount} 组 Atlas`:""}`:"正在生成新候选"):limitView?`歌单已读取 ${limitView.maximum} 首`:completed?`${view.analysisTrackCompleted||view.analysisTrackTotal||0} 首已分析 · ${view.atlasGroupCount||3} 组 Atlas`:`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
+  if(summary)summary.textContent=stopped|| (completed?(view.recommendationOnly?"新 Atlas 已生成 · 网页数据已更新":"运行已完成 · Atlas 已更新"):failed?`运行未完成 · ${workflowStageLabel(workflowEffectiveStage(job,events))}`:view.recommendationOnly?(job.status==="queued"?"新 Atlas 排队中":"正在生成新 Atlas"):`${job.status==="queued"?"排队中":job.status==="awaiting_limit"?"等待选择处理数量":"正在处理"} · ${workflowStageLabel(workflowEffectiveStage(job,events))}`);
+  const limitView=workflowLimitView(job);if(count)count.textContent=stopped?"":failed?`退出码 ${job.exit_code===null||job.exit_code===undefined?"—":job.exit_code}`:view.recommendationOnly?(completed?`${view.candidateCount||view.totalUniqueRecommendations||0} 个候选已核验${view.atlasGroupCount?` · ${view.atlasGroupCount} 组 Atlas`:""}`:"正在生成新候选"):limitView?`歌单已读取 ${limitView.maximum} 首`:completed?`${view.analysisTrackCompleted||view.analysisTrackTotal||0} 首已分析 · ${view.atlasGroupCount||3} 组 Atlas`:`${view.analysisTrackCompleted||0}/${view.analysisTrackTotal||0} 首已处理`;
   if(analysisNote){const scaleEvent=(Array.isArray(events)?events:[]).find(event=>event&&event.event==="started"&&event.stage==="analysis"&&typeof event.analysis_mode==="string");const scale=scaleEvent?scaleEvent.analysis_mode:"";analysisNote.textContent=view.recommendationOnly?"沿用已有分析，本次不重新分析。":scale==="taste_summary"?"品味摘要模式：跳过逐曲核验。":scale==="artist_summary"?"歌手摘要模式：按歌手分布整体分析。":"逐曲核验公开资料，归纳风格与兴趣岛。";}
   if(recommendationNote)recommendationNote.textContent="寻找候选、复核后生成三组 Atlas。";
   const terminalError=flow.querySelector("[data-wf-terminal-error]");
   if(terminalError){
    terminalError.classList.toggle("on",failed);
-   if(failed&&job.status==="failed"&&!active){
+   if(failed&&!active){
     const detail=workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。";
     terminalError.innerHTML=`<span class="wf-fail-text">失败原因：${esc(detail)}</span><button class="btn tiny" type="button" data-wf-resume="${esc(job.id)}">续跑（跳过已完成步骤）</button>`;
    }else{
@@ -1271,14 +1271,16 @@ function syncLimitControls(job){
   if(workflowFinishedJobId===job.id)return;workflowFinishedJobId=job.id;
   const recommendationOnly=workflowProgressView(job).recommendationOnly;
   if(job.status==="completed"){await refreshAtlas();toast(recommendationOnly?"新 Atlas 已生成，网页数据已更新":"歌单分析与推荐已完成，网页数据已更新");}
-  else if(job.status==="failed"){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else{const detail=workflowFailureDetail(job),prefix=recommendationOnly?"新 Atlas 生成未完成":"歌单处理未完成";toast(detail?`${prefix}：${detail}`:`${prefix}，展开运行日志查看详情。`);}}
+  else if(job.status==="cancelled"){workflowCancelledJobId=null;toast("任务已取消。");}
+  else if(job.status==="superseded"){toast("已改用已有分析。");}
+  else if(["failed","interrupted"].includes(job.status)){if(workflowCancelledJobId===job.id){workflowCancelledJobId=null;toast("任务已取消。");}else{const detail=workflowFailureDetail(job),prefix=recommendationOnly?"新 Atlas 生成未完成":"歌单处理未完成";toast(detail?`${prefix}：${detail}`:`${prefix}，展开运行日志查看详情。`);}}
  }
  /* 失败原因优先取失败事件里的 error，其次取子进程 stderr 最后一行，避免只提示“看日志”。 */
  function workflowFailureDetail(job){
   const events=Array.isArray(job&&job.events)?job.events:[];
   for(let index=events.length-1;index>=0;index--){
    const event=events[index];
-   if(event&&event.event==="failed"&&event.error)return String(event.error).replace(/\s+/g," ").slice(0,160);
+   if(event&&["failed","interrupted","cancelled","superseded"].includes(event.event)&&event.error)return String(event.error).replace(/\s+/g," ").slice(0,160);
   }
   const lines=String(job&&job.stderr_tail||"").split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
   return lines.length?lines[lines.length-1].slice(0,160):"";
@@ -1315,22 +1317,40 @@ function syncLimitControls(job){
   return "";
  }
  function playlistPlatformLabel(row){return PLAYLIST_PLATFORM_LABELS[playlistPlatformKey(row)]||"";}
+ function playlistCanonicalKey(row){
+  const explicit=String(row?.canonical_key||"").trim();if(explicit)return explicit;
+  const url=String(row?.canonical_url||row?.source_url||row?.url||"").trim();
+  const netease=url.match(/(?:[?&#]id=|\/playlist\/)(\d+)/i);if(netease)return`netease:${netease[1]}`;
+  const apple=url.match(/\/(pl\.[A-Za-z0-9.-]+)(?:[/?#]|$)/);if(apple)return`apple_music:${apple[1]}`;
+  try{const parsed=new URL(url);const qq=parsed.searchParams.get("id")||parsed.searchParams.get("disstid")||parsed.searchParams.get("playlistId");if(qq&&/^[A-Za-z0-9_-]+$/.test(qq))return`qq_music:${qq}`;}catch{}
+  return url?`url:${url}`:"";
+ }
  function playlistHistory(){try{const rows=JSON.parse(localStorage.getItem(PLAYLIST_HISTORY_KEY)||"[]");return Array.isArray(rows)?rows.filter(r=>r&&typeof r.url==="string"&&/^https:\/\//.test(r.url)).slice(0,20):[];}catch{return [];}}
+ function savePlaylistHistory(rows){try{localStorage.setItem(PLAYLIST_HISTORY_KEY,JSON.stringify(rows.slice(0,20)));}catch{}}
+ let playlistHistorySyncing=false;
+ async function syncLocalPlaylistHistory(){
+  if(!CURRENT_USER||playlistHistorySyncing)return;playlistHistorySyncing=true;
+  try{const local=playlistHistory();if(!local.length)return;const normalized=[];
+   for(const row of local){try{const response=await fetch("/api/me/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:row.url,name:row.name,platform:row.platform})});const payload=await response.json();if(payload?.playlist){const item=payload.playlist;normalized.push({url:item.canonical_url||item.source_url,name:item.name||row.name,platform:item.platform||row.platform,canonical_key:item.canonical_key,usedAt:item.updated_at||row.usedAt});SAVED_PLAYLISTS=[item,...SAVED_PLAYLISTS.filter(saved=>playlistCanonicalKey(saved)!==playlistCanonicalKey(item))];continue;}}catch{}normalized.push(row);}
+   const deduped=normalized.filter((row,index,all)=>{const key=playlistCanonicalKey(row);return key&&all.findIndex(item=>playlistCanonicalKey(item)===key)===index;});savePlaylistHistory(deduped);renderPlaylistHistory();
+  }finally{playlistHistorySyncing=false;}
+ }
  function rememberPlaylist(url,name="",platform=""){
   if(!url||!/^https:\/\//.test(url))return;
-  const rows=playlistHistory(),old=rows.find(r=>r.url===url);
-  const row={url,name:name||old?.name||"",platform:platform||playlistPlatformKey({url})||old?.platform||"",usedAt:new Date().toISOString()};
-  try{localStorage.setItem(PLAYLIST_HISTORY_KEY,JSON.stringify([row,...rows.filter(r=>r.url!==url)].slice(0,20)));}catch{}
-  if(CURRENT_USER){fetch("/api/me/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,name:row.name})}).then(r=>r.ok?r.json():null).then(payload=>{if(payload?.playlist){SAVED_PLAYLISTS=[payload.playlist,...SAVED_PLAYLISTS.filter(item=>item.source_url!==url)];renderPlaylistHistory();}}).catch(()=>{});}
+  const rows=playlistHistory(),key=playlistCanonicalKey({url}),old=rows.find(r=>playlistCanonicalKey(r)===key);
+  const row={url,name:name||old?.name||"",platform:platform||playlistPlatformKey({url})||old?.platform||"",canonical_key:key,usedAt:new Date().toISOString()};
+  savePlaylistHistory([row,...rows.filter(r=>playlistCanonicalKey(r)!==key)]);
+  if(CURRENT_USER){fetch("/api/me/playlists",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,name:row.name,platform:row.platform})}).then(r=>r.ok?r.json():null).then(payload=>{if(payload?.playlist){const item=payload.playlist,SKey=playlistCanonicalKey(item);SAVED_PLAYLISTS=[item,...SAVED_PLAYLISTS.filter(saved=>playlistCanonicalKey(saved)!==SKey)];const canonicalRow={url:item.canonical_url||item.source_url,name:item.name||row.name,platform:item.platform||row.platform,canonical_key:item.canonical_key,usedAt:item.updated_at};savePlaylistHistory([canonicalRow,...playlistHistory().filter(saved=>playlistCanonicalKey(saved)!==SKey&&saved.url!==url)]);renderPlaylistHistory();}}).catch(()=>{});}
   renderPlaylistHistory();
  }
- function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;const local=playlistHistory();const remote=SAVED_PLAYLISTS.map(item=>({url:item.source_url,name:item.name,platform:item.platform,usedAt:item.updated_at}));const rows=[...remote,...local].filter((row,index,all)=>row.url&&all.findIndex(item=>item.url===row.url)===index).slice(0,20);select.innerHTML='<option value="">选择最近使用的歌单</option>'+rows.map(r=>{const platform=playlistPlatformLabel(r);return `<option value="${esc(r.url)}">${esc(r.name||r.url)}${platform?` · ${esc(platform)}`:''}</option>`;}).join("");}
+ function renderPlaylistHistory(){const select=document.getElementById("wf-history");if(!select)return;const local=playlistHistory();const remote=SAVED_PLAYLISTS.map(item=>({url:item.canonical_url||item.source_url,name:item.name,platform:item.platform,canonical_key:item.canonical_key,usedAt:item.updated_at}));const rows=[...remote,...local].filter((row,index,all)=>{const key=playlistCanonicalKey(row);return row.url&&key&&all.findIndex(item=>playlistCanonicalKey(item)===key)===index;}).slice(0,20);select.innerHTML='<option value="">选择最近使用的歌单</option>'+rows.map(r=>{const platform=playlistPlatformLabel(r);return `<option value="${esc(r.url)}">${esc(r.name||r.url)}${platform?` · ${esc(platform)}`:''}</option>`;}).join("");}
  const rememberedPlaylistJobs=new Set();
  function rememberJobPlaylist(job){if(!job||rememberedPlaylistJobs.has(job.id))return;for(const e of job?.events||[]){if(e.stage==="snapshot"&&e.event==="completed"&&e.source?.url){rememberPlaylist(e.source.url,e.playlist_name||"",e.source.platform||"");rememberedPlaylistJobs.add(job.id);break;}}}
  function bindWorkflowControls(){
   const form=document.getElementById("workflow-form");if(!form)return;
   const input=document.getElementById("wf-source-url");
   renderPlaylistHistory();
+  if(CURRENT_USER)syncLocalPlaylistHistory().catch(()=>{});
   if(input&&!input.value)input.value=document.querySelector("#wf-history option:nth-child(2)")?.value||"";
   document.getElementById("wf-history")?.addEventListener("change",event=>{if(input&&event.target.value){input.value=event.target.value;workflowFieldError("");}});
   if(input)input.addEventListener("input",()=>workflowFieldError(""));
@@ -1439,7 +1459,7 @@ function settingsPayloadFromForm(form){
   crawler:{request_timeout_seconds:settingsInt(form,"crawler_timeout"),request_retries:settingsInt(form,"crawler_retries",false,0),user_agent:form.elements.crawler_user_agent.value.trim(),netease_detail_url:form.elements.netease_detail_url.value.trim(),netease_song_detail_url:form.elements.netease_song_detail_url.value.trim(),netease_referer:form.elements.netease_referer.value.trim(),netease_song_detail_batch_size:settingsInt(form,"netease_batch"),qq_page_size:settingsInt(form,"qq_page_size"),qq_max_pages:settingsInt(form,"qq_max_pages"),qq_musicu_url:form.elements.qq_musicu_url.value.trim(),qq_referer:form.elements.qq_referer.value.trim(),apple_export_timeout_seconds:settingsInt(form,"apple_timeout")},
   recommendation_policy:{max_per_artist:settingsInt(form,"policy_max_artist"),max_per_project:settingsInt(form,"policy_max_project"),min_projects:settingsInt(form,"policy_min_projects"),candidate_pool_min:settingsInt(form,"policy_pool_min")},
   editorial:{title:form.elements.editorial_title.value.trim(),lede:form.elements.editorial_lede.value.trim()},
-  workflow:{analysis_parallelism:settingsInt(form,"analysis_parallelism"),recommendation_parallelism:settingsInt(form,"recommendation_parallelism"),analysis_timeout_seconds:settingsInt(form,"analysis_timeout"),recommendation_timeout_seconds:settingsInt(form,"recommendation_timeout"),track_percentile_default:defaultPercentile,await_limit_timeout_seconds:settingsInt(form,"await_timeout"),max_research_rounds:settingsInt(form,"max_research_rounds"),max_candidates:settingsInt(form,"max_candidates"),candidate_target:settingsInt(form,"candidate_target",true),analysis_batch_size:settingsInt(form,"analysis_batch_size",true),analysis_context_budget:settingsInt(form,"analysis_context_budget",true),context_budget:settingsInt(form,"context_budget",true)}}};
+  workflow:{analysis_parallelism:settingsInt(form,"analysis_parallelism"),recommendation_parallelism:settingsInt(form,"recommendation_parallelism"),analysis_timeout_seconds:settingsInt(form,"analysis_timeout"),recommendation_timeout_seconds:settingsInt(form,"recommendation_timeout"),track_percentile_default:defaultPercentile,await_limit_timeout_seconds:settingsInt(form,"await_timeout"),max_research_rounds:settingsInt(form,"max_research_rounds"),initial_candidate_limit:settingsInt(form,"initial_candidate_limit"),hard_candidate_limit:settingsInt(form,"hard_candidate_limit")}}};
 }
 function settingsMessage(text,error=false){const node=document.getElementById("settings-message");if(node){node.textContent=text||"";node.classList.toggle("error",Boolean(error));}}
 function renderSettingsModal(message="",error=false){
@@ -1490,11 +1510,8 @@ function renderSettingsModal(message="",error=false){
    <div class="settings-field"><label for="settings-track-percentile-default">默认分析范围</label><select id="settings-track-percentile-default" name="track_percentile_default"><option value="0.25" ${Number(workflow.track_percentile_default)===0.25?"selected":""}>25%</option><option value="0.5" ${Number(workflow.track_percentile_default)===0.5?"selected":""}>50%</option><option value="1" ${!TRACK_PERCENTILE_OPTIONS.includes(Number(workflow.track_percentile_default))||Number(workflow.track_percentile_default)===1?"selected":""}>100%（全部）</option></select></div>
    <div class="settings-field"><label for="settings-await-timeout">等待选择超时（秒）</label><input id="settings-await-timeout" name="await_timeout" type="number" min="1" max="86400" value="${esc(settingsValue(workflow.await_limit_timeout_seconds))}" required></div>
    <div class="settings-field"><label for="settings-rounds">最大研究轮数</label><input id="settings-rounds" name="max_research_rounds" type="number" min="1" max="3" value="${esc(settingsValue(workflow.max_research_rounds))}" required></div>
-   <div class="settings-field"><label for="settings-candidates">最大候选数</label><input id="settings-candidates" name="max_candidates" type="number" min="1" max="200" value="${esc(settingsValue(workflow.max_candidates))}" required></div>
-   <div class="settings-field"><label for="settings-target">候选目标（留空=自动）</label><input id="settings-target" name="candidate_target" type="number" min="1" max="200" value="${esc(settingsValue(workflow.candidate_target))}"></div>
-   <div class="settings-field"><label for="settings-batch">分析批大小（留空=默认）</label><input id="settings-batch" name="analysis_batch_size" type="number" min="1" max="50" value="${esc(settingsValue(workflow.analysis_batch_size))}"></div>
-   <div class="settings-field"><label for="settings-analysis-budget">分析上下文预算（留空=默认）</label><input id="settings-analysis-budget" name="analysis_context_budget" type="number" min="1000" value="${esc(settingsValue(workflow.analysis_context_budget))}"></div>
-   <div class="settings-field"><label for="settings-context-budget">推荐上下文预算（留空=默认）</label><input id="settings-context-budget" name="context_budget" type="number" min="1000" value="${esc(settingsValue(workflow.context_budget))}"></div>
+   <div class="settings-field"><label for="settings-initial-candidates">首轮候选上限</label><input id="settings-initial-candidates" name="initial_candidate_limit" type="number" min="1" max="1200" value="${esc(settingsValue(workflow.initial_candidate_limit))}" required></div>
+   <div class="settings-field"><label for="settings-hard-candidates">候选绝对上限</label><input id="settings-hard-candidates" name="hard_candidate_limit" type="number" min="1" max="1200" value="${esc(settingsValue(workflow.hard_candidate_limit))}" required></div>
   </div></section>
   </div>
   <div class="settings-actions"><span id="settings-message" class="settings-message ${error?"error":""}">${esc(message)}</span><button type="button" class="btn" data-settings-reset>恢复默认覆盖</button><button type="button" class="btn" data-settings-close>取消</button><button type="submit" class="btn primary">保存设置</button></div>
@@ -1509,7 +1526,7 @@ async function openSettings(){
 }
 function closeSettings(){const root=document.getElementById("settings-root");if(root)root.innerHTML="";}
 /* ================= ACCOUNT CENTER ================= */
-const ACCOUNT_RUN_STATUS={running:"进行中",completed:"已完成",failed:"失败",cancelled:"已取消",queued:"排队中"};
+const ACCOUNT_RUN_STATUS={running:"进行中",completed:"已完成",failed:"失败",cancelled:"已取消",superseded:"已复用分析",interrupted:"已中断",queued:"排队中"};
 function accountDuration(ms){const value=Number(ms);if(!Number.isFinite(value)||value<0)return"—";return value<60000?Math.round(value/1000)+" 秒":Math.round(value/60000)+" 分钟";}
 function closeAccount(){const root=document.getElementById("account-root");if(root)root.innerHTML="";}
 function accountTabContent(name){
@@ -1534,7 +1551,7 @@ async function loadAccountRuns(){
  try{
   const response=await fetch("/api/me/runs?limit=20",{cache:"no-store"});const payload=await response.json();if(!response.ok||!payload.ok)throw new Error(payload.error||"读取失败");
   const runs=payload.runs||[],stats=payload.stats||{},note=document.querySelector("[data-account-runs-note]");
-  if(note)note.textContent=`共 ${stats.total||0} 次运行 · 成功 ${stats.completed||0} · 失败 ${stats.failed||0}`;
+  if(note)note.textContent=`共 ${stats.total||0} 次运行 · 成功 ${stats.completed||0} · 失败 ${stats.failed||0} · 取消 ${stats.cancelled||0} · 复用 ${stats.superseded||0} · 中断 ${stats.interrupted||0}`;
   if(!runs.length){box.innerHTML='<p class="account-note" style="margin:0">还没有运行记录。</p>';return;}
   box.innerHTML=`<table class="account-table"><thead><tr><th>时间</th><th>歌单</th><th>状态</th><th>范围</th><th>耗时</th><th>推荐</th></tr></thead><tbody>${runs.map(run=>`<tr><td>${esc((run.started_at||"").replace("T"," ").slice(0,16))||"—"}</td><td>${esc(run.playlist_name||run.playlist_id||"—")}</td><td>${esc(ACCOUNT_RUN_STATUS[run.status]||run.status)}${run.status==="failed"&&run.error?`<br><span class="account-note">${esc(String(run.error).slice(0,60))}</span>`:""}</td><td>${run.analyzed_count??"—"}/${run.track_count??"—"}</td><td>${accountDuration(run.duration_ms)}</td><td>${run.recommendation_count??"—"}</td></tr>`).join("")}</tbody></table>`;
  }catch(error){box.innerHTML=`<p class="message error">${esc(error.message)}</p>`;}

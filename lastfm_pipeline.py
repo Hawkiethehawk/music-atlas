@@ -118,7 +118,7 @@ def validate_knowledge(packet):
                 raise ContractError('风格标签缺少来源或获取时间')
 
 
-def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,relation_project_limit=4,relation_top_track_limit=2,excluded_track_keys=None,excluded_canonical_track_ids=None):
+def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,relation_project_limit=4,relation_top_track_limit=2,excluded_track_keys=None,excluded_canonical_track_ids=None,concurrency=8):
     from metadata_verify import verify_many
     favorites=set(packet['playlist_exclusion']['track_keys'])
     extra_excluded_keys={str(value) for value in (excluded_track_keys or set()) if value}
@@ -173,7 +173,7 @@ def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,r
                     lane.append({'kind':'similarity','title':title,'artist':name,'anchor':anchor,
                                  'neighbor':neighbor,'neighbor_rank':neighbor_rank,'track_rank':track_rank})
         return lane
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
         # 大歌单只对出现频率最高的一批艺人做相似艺人召回：
         # 对上千位艺人逐个查询会把召回阶段拖到十分钟以上。
         similarity_anchors=list(packet['primary_distribution'])[:16]
@@ -201,7 +201,7 @@ def discover(packet,client,max_candidates=60,similar_limit=4,top_track_limit=3,r
             continue
         unique.setdefault(key,proposal)
     proposed=list(unique.values())[:max_candidates]
-    facts=verify_many([(p['title'],p['artist']) for p in proposed],concurrency=8)
+    facts=verify_many([(p['title'],p['artist']) for p in proposed],concurrency=concurrency)
     result=[];seen=set(favorites)
     verification_rejected_count=0
     for proposal,fact in zip(proposed,facts):

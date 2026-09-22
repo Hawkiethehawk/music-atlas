@@ -26,7 +26,9 @@ music-atlas-web/
 ├── server.js                     # 零依赖 Node 静态服务器、Atlas API 与受控工作流 API
 ├── package.json                 # npm start 入口
 ├── deploy/
-│   └── music-atlas-web.service  # Linux systemd 单元（部署用）
+│   ├── music-atlas.service      # 生产 Web systemd 单元
+│   ├── music-atlas-backup.*     # SQLite 日备份服务与定时器
+│   └── atlas.hawkie.cloud.nginx.conf
 └── README.md
 ```
 
@@ -94,14 +96,14 @@ Node 服务以项目根目录的 `config/web.json` 为基础，并在网页设�
   },
   "workflow": {
     "analysis_parallelism": 5,
-    "recommendation_parallelism": 8,
+    "recommendation_parallelism": 4,
     "analysis_timeout_seconds": 7200,
     "recommendation_timeout_seconds": 3600,
-    "track_percentile_options": [0.25, 0.5, 1],
     "track_percentile_default": 1,
     "await_limit_timeout_seconds": 1800,
     "max_research_rounds": 2,
-    "max_candidates": 60
+    "initial_candidate_limit": 60,
+    "hard_candidate_limit": 200
   }
 }
 ```
@@ -195,12 +197,15 @@ npm start          # 或 node server.js
 服务监听 `127.0.0.1:8420`。若需要局域网/公网访问，建议前置 Nginx/Caddy 反代，而不是改代码。
 
 ```bash
-# 1. 拷贝整个目录到服务器，例如 /opt/music-atlas-web
-# 2. 安装 systemd 服务（按需修改 .service 里的 User/路径/端口）
-sudo cp deploy/music-atlas-web.service /etc/systemd/system/
+# 1. 仓库位于 /home/ubuntu/apps/music-atlas
+# 2. 安装 Web 服务、数据库日备份和 Nginx 站点模板
+sudo cp web/deploy/music-atlas.service /etc/systemd/system/
+sudo cp web/deploy/music-atlas-backup.service web/deploy/music-atlas-backup.timer /etc/systemd/system/
+sudo cp web/deploy/atlas.hawkie.cloud.nginx.conf /etc/nginx/sites-available/atlas.hawkie.cloud.conf
 sudo systemctl daemon-reload
-sudo systemctl enable --now music-atlas-web
-systemctl status music-atlas-web
+sudo systemctl enable --now music-atlas music-atlas-backup.timer
+sudo nginx -t && sudo systemctl reload nginx
+systemctl status music-atlas
 ```
 
 ## 配置
@@ -216,7 +221,8 @@ systemctl status music-atlas-web
 | `runtime.codex_reasoning_effort` | `low` | 本机 Codex 批处理推理级别；模型、登录和供应商仍读取本机配置 |
 | `runtime.openai_compat.disable_thinking` | `true` | 关闭模型思维链；实测 reasoning 占单次调用约 80% 耗时（真实批次 65s → 15.8s） |
 | `workflow.max_research_rounds` | `2` | 候选研究轮数上限；第 2 轮只补缺失类型 |
-| `workflow.max_candidates` | `60` | 候选池上限；过小会导致探索类型产出不足 |
+| `workflow.initial_candidate_limit` | `60` | 首轮候选召回上限 |
+| `workflow.hard_candidate_limit` | `200` | 所有扩容轮次均不可突破的候选绝对上限 |
 | `runtime.openai_compat` | 无 | OpenAI 兼容执行器的 `base_url` / `model`，以及可选 `timeout_seconds` / `max_tokens` / `temperature`；密钥不进仓库，由系统密钥库或环境变量提供 |
 | `crawler.request_timeout_seconds` / `crawler.request_retries` | `30` / `1` | 网易云/QQ 接口单次请求超时与 0–3 次重试 |
 | `crawler.user_agent` | `MusicAtlas/1.0 (+local)` | 公开接口请求 User-Agent；禁止换行，长度受限 |
@@ -229,8 +235,7 @@ systemctl status music-atlas-web
 | `executors.analysis` | 空 | 项目内 Step 2 Python 执行器脚本 |
 | `executors.recommendation` | 空 | 项目内 Step 3 Python 执行器脚本 |
 | `workflow.analysis_timeout_seconds` | `600` | Step 2 总执行预算；大歌单可在项目配置中提高 |
-| `workflow.recommendation_parallelism` | `4` | Step 3 内部并行数，只接受 `3` 或 `4` |
-| `workflow.track_percentile_options` | `[0.25, 0.5, 1]` | 页面歌单分位选项 |
+| `workflow.recommendation_parallelism` | `4` | Step 3 内部并行数，允许 1 到 8 |
 | `workflow.track_percentile_default` | `1` | 默认分析 100% 歌单 |
 | `workflow.await_limit_timeout_seconds` | `1800` | 等待选择处理数量的秒数，超时任务失败（1 到 86400） |
 | `workflow.recommendation_timeout_seconds` | `600` | Step 3 总执行预算 |

@@ -51,10 +51,7 @@
     "track_percentile_default": 1,
     "await_limit_timeout_seconds": 1800,
     "max_research_rounds": 2,
-    "max_candidates": 60,
-    "candidate_target": 10,
-    "analysis_batch_size": 10,
-    "analysis_context_budget": null,
-    "context_budget": null
+    "initial_candidate_limit": 60,
+    "hard_candidate_limit": 200
   }
 }

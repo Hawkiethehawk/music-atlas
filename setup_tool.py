@@ -142,10 +142,10 @@ def wrapper_content(interpreter: str, atlas_py: Path) -> str:
 def append_path_entry(current: str, entry: str) -> tuple[str, bool]:
     """把 ``entry`` 追加到 Windows PATH 值；已存在则原样返回。"""
 
-    target = os.path.normcase(os.path.normpath(str(entry)))
+    target = os.path.normpath(str(entry)).casefold()
     parts = [part.strip() for part in str(current or "").split(os.pathsep) if part.strip()]
     for part in parts:
-        if os.path.normcase(os.path.normpath(part)) == target:
+        if os.path.normpath(part).casefold() == target:
             return current, False
     parts.append(str(entry))
     return os.pathsep.join(parts), True
@@ -153,9 +153,9 @@ def append_path_entry(current: str, entry: str) -> tuple[str, bool]:
 
 def path_contains_dir(entry: Path, path_value: str | None = None) -> bool:
     raw = os.environ.get("PATH", "") if path_value is None else path_value
-    target = os.path.normcase(os.path.normpath(str(entry)))
+    target = os.path.normpath(str(entry)).casefold()
     for part in raw.split(os.pathsep):
-        if part and os.path.normcase(os.path.normpath(part)) == target:
+        if part and os.path.normpath(part).casefold() == target:
             return True
     return False
 

@@ -26,8 +26,8 @@ RELATION_WORDS = ('乐队成员', '创始成员', '现任成员', '前成员', '
 QUOTA_LABELS = {'style_neighbor': '风格邻近', 'artist_continuation': '艺人延伸',
                 'musician_relation': '音乐人关系', 'exploration': '探索推荐'}
 
-# 措辞类问题只丢弃单条候选；结构、事实与字段缺失仍然整批拒绝。
-MINOR_COPY_MARKERS = ('空泛词', '消极词', '文案长度要求')
+# 空泛或消极措辞可丢弃单条候选；结构、字段长度与事实问题整批重试。
+MINOR_COPY_MARKERS = ('空泛词', '消极词')
 
 def validate_copy(text, minimum=1, maximum=300, reject_vague=True):
     if not isinstance(text, str):
@@ -64,24 +64,10 @@ def validate_overall_summary(text, tracks, *, allow_known_artists=False):
                 raise ContractError('整体风格总结不得包含具体曲名或艺人名')
     return text
 
-# 过短文案的合规后缀：模型经常只写十来个字，直接丢弃会掏空候选池。
-SHORT_COPY_SUFFIXES = {
-    'agent_reason': '，值得与本批其他候选对照聆听。',
-    'preference_basis': '，这是本期整体品味的底色。',
-    'music_fit': '，可与本次收藏中的同类作品对照。',
-    'novelty': '，用于拓宽本期的探索方向。',
-    'listening_tip': '，建议与熟悉的作品并排比较差异。',
-}
-
-
 def _trim_candidate_copy(candidate: dict[str, Any]) -> None:
-    """把理由与四栏详情规范到 15–130 字：过长截断、过短补后缀。
+    """清理空白并截断过长文案；过短字段交回 Agent 整批修复。"""
 
-    模型普遍写不准字数；程序修正比丢弃候选或重新生成都快得多，
-    也避免“凑不齐三组 Atlas”。
-    """
-
-    def fit(value: Any, *, minimum: int, maximum: int, suffix: str) -> Any:
+    def fit(value: Any, *, maximum: int) -> Any:
         if not isinstance(value, str):
             return value
         # 空泛词（力量感/旋律感/氛围感）直接删掉：模型很喜欢用，
@@ -97,19 +83,14 @@ def _trim_candidate_copy(candidate: dict[str, Any]) -> None:
                 if cut >= maximum // 2:
                     text = text[:cut + 1]
                     break
-        if len(text) < minimum and suffix:
-            text = text.rstrip('。') + suffix if text else suffix.lstrip('，')
         return text
 
     details = candidate.get('agent_details')
-    detail_suffix = {key: SHORT_COPY_SUFFIXES.get(key, '，可与本次收藏对照聆听。') for key in
-                     ('preference_basis', 'music_fit', 'novelty', 'listening_tip')}
     if isinstance(details, dict):
         for key, value in list(details.items()):
-            details[key] = fit(value, minimum=15, maximum=130, suffix=detail_suffix.get(key, ''))
+            details[key] = fit(value, maximum=130)
     if isinstance(candidate.get('agent_reason'), str):
-        candidate['agent_reason'] = fit(candidate['agent_reason'], minimum=15, maximum=120,
-                                        suffix=SHORT_COPY_SUFFIXES['agent_reason'])
+        candidate['agent_reason'] = fit(candidate['agent_reason'], maximum=120)
 
 
 def _candidate_copy_errors(candidate):
@@ -174,7 +155,7 @@ def invoke(role, payload, command, timeout, directory):
     (directory/(role+'_prompt.txt')).write_text(prompt,encoding='utf-8')
     command=command or f'"{sys.executable}" "{Path(__file__).parent / "executors" / ("openai_"+role+".py")}"'
     start=time.monotonic()
-    result=run_external_agent(command,prompt,timeout=min(int(timeout),240))
+    result=run_external_agent(command,prompt,timeout=int(timeout))
     write_json(directory/(role+'_response.json'),result)
     write_json(directory/(role+'_telemetry.json'),{'agent_executed':True,'seconds':round(time.monotonic()-start,3),'role':role})
     return result
@@ -204,9 +185,9 @@ def _repair_digest(result, error_text, limit=3):
 def invoke_validated(role, payload, command, timeout, directory, validator, on_regeneration=None):
     """Regenerate rejected output within one shared budget, preserving all hard gates."""
     start = time.monotonic()
-    # 30 首候选及完整详情的真实响应通常需要 50–120 秒；首轮给足 200 秒，
+    # 30 首候选及完整详情的真实响应通常需要 50–120 秒；首轮给足 150 秒，
     # 只有校验拒绝或真实超时才使用后续 120 秒修复轮。总预算保持有界。
-    budget = min(int(timeout), 420)
+    budget = int(timeout)
     errors = []
     max_attempts = 3
     base_payload = payload
@@ -219,7 +200,7 @@ def invoke_validated(role, payload, command, timeout, directory, validator, on_r
             if remaining < 1:
                 raise ContractError('Agent 重新生成的共用时间预算已耗尽')
             attempt = next_attempt
-            attempt_cap = 200 if next_attempt == 1 else 120
+            attempt_cap = 150 if next_attempt == 1 else 120
             attempt_timeout = max(1, min(int(remaining), attempt_cap))
             try:
                 result = invoke(role, payload, command, attempt_timeout, directory)

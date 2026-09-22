@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            tools/package-lock.json
+
+      - name: Compile Python sources
+        run: python -m compileall -q .
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Run web protocol tests
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+      - name: Run Apple export tests
+        working-directory: tools
+        run: |
+          npm ci --ignore-scripts
+          npm test

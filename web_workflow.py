@@ -17,10 +17,9 @@ import shutil
 import sys
 import threading
 import time
+from copy import deepcopy
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 from analysis_agent import execute_analysis_research
@@ -36,15 +35,14 @@ from skill_runner import run_skill
 from taste_summary import TASTE_BATCH_SIZE, resolve_analysis_mode, run_taste_analysis
 from web_view_model import export_web_payload
 from review import review_candidates, review_groups
+from playlist_source import (
+    PUBLIC_HOSTS,
+    SOURCE_KINDS,
+    resolve_netease_source as _resolve_netease_source,
+    source_id as _source_id,
+    validate_url as _validate_url,
+)
 
-
-SOURCE_KINDS = {"apple_music", "netease_public", "qq_public", "local_json", "csv"}
-PUBLIC_HOSTS = {
-    "apple_music": {"music.apple.com"},
-    "netease_public": {"music.163.com", "163cn.tv", "www.163cn.tv"},
-    "qq_public": {"y.qq.com", "i.y.qq.com"},
-}
-NETEASE_SHORT_HOSTS = {"163cn.tv", "www.163cn.tv"}
 _EMIT_LOCK = threading.Lock()
 
 
@@ -62,63 +60,6 @@ def emit_progress(message: dict[str, object]) -> None:
     event = str(message.get("event") or "progress")
     payload = {key: value for key, value in message.items() if key != "event"}
     emit(event, **payload)
-
-
-def _validate_url(kind: str, value: str) -> str:
-    url = value.strip()
-    parsed = urlparse(url)
-    hostname = (parsed.hostname or "").casefold().rstrip(".")
-    if parsed.scheme != "https" or hostname not in PUBLIC_HOSTS[kind]:
-        raise ContractError(f"{kind} 只接受受支持平台的 HTTPS 公开链接")
-    return url
-
-
-def _netease_playlist_id_from_url(value: str) -> str:
-    parsed = urlparse(value)
-    for query in (parsed.query, parsed.fragment.lstrip("#/")):
-        playlist_id = parse_qs(query).get("id", [""])[0].strip()
-        if playlist_id.isdigit():
-            return playlist_id
-    for pattern in (r"/playlist/(\d+)", r"[?&#]id=(\d+)"):
-        match = re.search(pattern, value)
-        if match:
-            return match.group(1)
-    raise ContractError(f"无法从网易云公开链接解析歌单 ID：{value}")
-
-
-def _resolve_netease_source(url: str) -> tuple[str, str]:
-    """Resolve a music.163.com URL or 163cn.tv short link to a playlist id."""
-
-    parsed = urlparse(url)
-    hostname = (parsed.hostname or "").casefold().rstrip(".")
-    if hostname == "music.163.com":
-        return _netease_playlist_id_from_url(url), url
-    if hostname not in NETEASE_SHORT_HOSTS:
-        raise ContractError("网易云公开链接域名不受支持")
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Referer": "https://music.163.com/",
-        },
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            resolved_url = response.geturl()
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise ContractError(f"网易云短链解析失败：{exc}") from exc
-    resolved_parsed = urlparse(resolved_url)
-    resolved_host = (resolved_parsed.hostname or "").casefold().rstrip(".")
-    if resolved_parsed.scheme != "https" or resolved_host != "music.163.com":
-        raise ContractError("网易云短链未跳转到受支持的网易云歌单页面")
-    playlist_id = _netease_playlist_id_from_url(resolved_url)
-    # Do not persist redirect tracking parameters such as userid/app_version
-    # in job events or runtime reports.
-    return playlist_id, f"https://music.163.com/playlist?id={playlist_id}"
-
-
-def _source_id(kind: str, value: str) -> str:
-    return f"{kind}-{hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _publish_payload(source: Path, target: Path) -> None:
@@ -261,29 +202,48 @@ def _merge_candidates(primary: list[dict[str, Any]], extra: list[dict[str, Any]]
     return merged
 
 
-def _candidate_discovery_limits(configured_max: int, required: int, history: dict[str, Any]) -> list[int]:
-    """计算候选数量上限，兼容原有首轮与 200 首硬上限记录。"""
+def _candidate_discovery_limits(
+    initial_limit: int,
+    required: int,
+    history: dict[str, Any],
+    *,
+    hard_limit: int = 1200,
+) -> list[int]:
+    """计算逐轮候选预算，所有扩容都不得突破绝对硬上限。"""
+    if hard_limit < required:
+        raise ContractError(f"候选硬上限 {hard_limit} 小于工作流最低需求 {required}")
     history_ids = {str(value) for value in history.get("canonical_track_ids", set()) if value}
     history_keys = {str(value) for value in history.get("track_keys", set()) if value}
     history_size = len(history_ids | history_keys)
     baseline = required + history_size
-    verification_buffer = max(20, (baseline + 4) // 5)
-    initial = min(200, max(configured_max, baseline + verification_buffer))
-    limits = [initial] if initial == 200 else [initial, 200]
+    initial = min(hard_limit, initial_limit)
+    limits = [initial]
+    if initial < min(200, hard_limit):
+        limits.append(min(200, hard_limit))
     # 缓存排除较多时，单次 200 首召回可能在排除后只剩个位数。
     # 逐级扩大召回上限；上限只约束本次研究池，不影响原歌单和缓存的硬排除。
     if history_size > 150 and limits[-1] == 200:
-        limits.append(min(360, max(240, baseline + 120)))
+        expanded = min(hard_limit, 360, max(240, baseline + 120))
+        if expanded > limits[-1]:
+            limits.append(expanded)
     if history_size > 300 or baseline > 360:
         for target in (480, 720, 960, 1200):
-            expanded = min(1200, max(target, baseline + 180))
+            expanded = min(hard_limit, max(target, baseline + 180))
             if expanded > limits[-1]:
                 limits.append(expanded)
+            if limits[-1] >= hard_limit:
+                break
     return limits
 
 
-def _candidate_discovery_profiles(configured_max: int, required: int, history: dict[str, Any]) -> list[dict[str, int]]:
-    limits = _candidate_discovery_limits(configured_max, required, history)
+def _candidate_discovery_profiles(
+    initial_limit: int,
+    required: int,
+    history: dict[str, Any],
+    *,
+    hard_limit: int = 1200,
+) -> list[dict[str, int]]:
+    limits = _candidate_discovery_limits(initial_limit, required, history, hard_limit=hard_limit)
     profiles: list[dict[str, int]] = []
     for index, limit in enumerate(limits):
         if index == 0:
@@ -339,12 +299,26 @@ def _save_candidate_pool(runtime_dir: Path, packet: dict[str, Any], candidates: 
         print(f'[resume] 候选池落盘失败：{error}', file=sys.stderr, flush=True)
 
 
+def _configured_candidate_limits(args: argparse.Namespace, required: int) -> tuple[int, int]:
+    initial = int(getattr(args, "initial_candidate_limit", getattr(args, "max_candidates", 80)))
+    hard = int(getattr(args, "hard_candidate_limit", 1200))
+    if initial <= 0 or hard <= 0 or initial > hard:
+        raise ContractError("initial-candidate-limit 必须为正数且不得超过 hard-candidate-limit")
+    if hard < required:
+        raise ContractError(f"候选硬上限 {hard} 小于工作流最低需求 {required}")
+    return initial, hard
+
+
 def _discover_unique_candidates(
     packet: dict[str, Any],
     history: dict[str, Any],
-    configured_max: int,
+    initial_limit: int,
     required: int,
     on_expand=None,
+    *,
+    hard_limit: int = 1200,
+    max_rounds: int = 3,
+    concurrency: int = 8,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """多轮召回、核验并应用一周排除，直到满足三组 Atlas 的最低数量。"""
 
@@ -356,7 +330,9 @@ def _discover_unique_candidates(
     discovery_report: dict[str, Any] = {}
     platform_candidates: list[dict[str, Any]] = []
     platform_report: dict[str, Any] = {}
-    profiles = _candidate_discovery_profiles(configured_max, required, history)
+    profiles = _candidate_discovery_profiles(
+        initial_limit, required, history, hard_limit=hard_limit,
+    )[:max_rounds]
     client = LastFM(ROOT / "runtime" / "lastfm-cache", seconds=180)
     for attempt_index, options in enumerate(profiles, 1):
         if attempt_index == 1:
@@ -364,7 +340,7 @@ def _discover_unique_candidates(
             platform_candidates, platform_report = discover_platform_candidates(
                 packet,
                 max_candidates=options["max_candidates"],
-                concurrency=analysis_verify_concurrency(int(packet.get("source_track_count") or 0)),
+                concurrency=concurrency,
                 tags_client=client,
             )
         discovered, discovery_report = discover(
@@ -373,9 +349,11 @@ def _discover_unique_candidates(
             **options,
             excluded_track_keys=history.get("track_keys", set()),
             excluded_canonical_track_ids=history.get("canonical_track_ids", set()),
+            concurrency=concurrency,
         )
         merged = _merge_candidates(discovered, platform_candidates)
-        candidates = _exclude_recent_recommendations(merged, history)
+        eligible = _exclude_recent_recommendations(merged, history)
+        candidates = eligible[:hard_limit]
         attempts.append({
             "attempt": attempt_index,
             **options,
@@ -383,7 +361,8 @@ def _discover_unique_candidates(
             "platform_candidate_count": len(platform_candidates),
             "artist_continuation_count": sum(1 for item in candidates if item.get("candidate_type") == "artist_continuation"),
             "discovered_similarity_count": len(discovered),
-            "history_excluded_count": int(discovery_report.get("history_excluded_count", 0) or 0) + len(merged) - len(candidates),
+            "history_excluded_count": int(discovery_report.get("history_excluded_count", 0) or 0) + len(merged) - len(eligible),
+            "hard_limit_trimmed_count": max(0, len(eligible) - len(candidates)),
             "eligible_candidate_count": len(candidates),
             "playlist_excluded_count": int(discovery_report.get("playlist_excluded_count", 0) or 0) + int(platform_report.get("playlist_excluded_count", 0) or 0),
             "verification_rejected_count": int(discovery_report.get("verification_rejected_count", 0) or 0),
@@ -965,8 +944,11 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
     try:
         from contracts import TASTE_MODES
         from musician_analyzer import load_recommendation_policy
-        override_path = ROOT / "runtime" / "recommendation_policy.json"
-        current = load_recommendation_policy(override_path if override_path.is_file() else None)
+        policy_file = getattr(args, "policy_file", None)
+        current = (
+            load_recommendation_policy(Path(policy_file).resolve())
+            if policy_file else deepcopy(packet["recommendation_policy"])
+        )
         mix = [(str(item.get("candidate_type")), float(item.get("target_ratio") or 0.0))
                for item in current.get("recall_mix") or []
                if isinstance(item, dict) and item.get("candidate_type")]
@@ -974,15 +956,14 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
             # 摘要模式没有逐曲关系研究，配比中不含音乐人关系。
             mix = [(kind, ratio) for kind, ratio in mix if kind != "musician_relation"]
         total = sum(ratio for _, ratio in mix)
+        packet["recommendation_policy"] = current
         if mix and total > 0:
-            packet["recommendation_policy"] = {
-                **packet["recommendation_policy"],
-                "recall_mix": [{"candidate_type": kind, "target_ratio": round(ratio / total, 6)}
-                               for kind, ratio in mix],
-            }
-    except Exception as error:  # 策略文件异常不应让复用任务失败，保持分析包原配比
-        emit("stage_detail", status="running", stage="recommendation",
-             message=f"沿用分析包中的召回配比：{error}")
+            packet["recommendation_policy"]["recall_mix"] = [
+                {"candidate_type": kind, "target_ratio": round(ratio / total, 6)}
+                for kind, ratio in mix
+            ]
+    except Exception as error:
+        raise ContractError(f"推荐策略快照无效：{error}") from error
     from contracts import validate_analysis_packet
     validate_analysis_packet(packet)
     # 报告只在完整跑完的任务里存在；断点续跑时由快照重建来源信息。
@@ -1002,8 +983,10 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
     recommendation_history = _recent_recommendation_history(history_path)
     target = int(packet["recommendation_policy"]["target_recommendations"])
     required = max(MIN_RECOMMENDATION_CANDIDATES, target * ATLAS_GROUP_COUNT)
+    initial_limit, hard_limit = _configured_candidate_limits(args, required)
     candidates = _reuse_candidate_pool(runtime_dir, packet)
     if candidates is not None:
+        candidates = _exclude_recent_recommendations(candidates, recommendation_history)[:hard_limit]
         # 断点续跑：同一任务重试时沿用上一轮召回的候选（省下平台搜索与风格补全）。
         discovery_report = {"provider": "cached_candidate_pool", "candidate_count": len(candidates)}
         emit("task_completed", status="running", stage="recommendation", task_kind="platform_discovery",
@@ -1011,10 +994,11 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
              completed=1, total=1, candidate_count=len(candidates),
              message=f"续跑：沿用上一轮的 {len(candidates)} 首候选")
     else:
+        initial_limit, hard_limit = _configured_candidate_limits(args, required)
         candidates, discovery_report = _discover_unique_candidates(
             packet,
             recommendation_history,
-            args.max_candidates,
+            initial_limit,
             required,
             lambda previous, current, eligible: emit(
                 "stage_detail",
@@ -1023,6 +1007,9 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
                 message=(f"排除原歌单与近一周推荐后暂有 {eligible}/{required} 首，"
                          f"正在扩大候选召回范围 {previous}→{current}"),
             ),
+            hard_limit=hard_limit,
+            max_rounds=args.max_research_rounds,
+            concurrency=args.recommendation_parallelism,
         )
         _save_candidate_pool(runtime_dir, packet, candidates)
     _save_candidate_pool(runtime_dir, packet, candidates)
@@ -1045,7 +1032,9 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
     candidates, groups, review_report = _curate_review_groups(
         packet, candidates, required=required, curate_fn=curate,
         curate_args=(args.recommendation_command, args.recommendation_timeout, runtime_dir / "agent"),
-        hydrate_fn=hydrate_netease_covers,
+        hydrate_fn=lambda items: hydrate_netease_covers(
+            items, concurrency=args.recommendation_parallelism,
+        ),
         curate_reuse_dir=runtime_dir,
         regeneration_event=lambda stage, attempt, feedback: emit(
             "stage_detail", status="running", stage=stage,
@@ -1063,10 +1052,13 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
          total_unique_recommendation_count=sum(len(group["recommendations"]) for group in groups),
          parallelism=args.recommendation_parallelism)
     payloads = []
+    editorial_file = getattr(args, "editorial", None)
+    editorial_path = Path(editorial_file).resolve() if editorial_file else None
     for index in range(1, ATLAS_GROUP_COUNT + 1):
         out = runtime_dir / f"web_payload_group_{index}.json"
         export_web_payload(runtime_dir, out, snapshot_path=snapshot_path, analysis_path=analysis_path,
                            bundle_path=runtime_dir / f"recommendation_bundle_group_{index}.json",
+                           editorial_path=editorial_path,
                            evidence_audit_path=source_runtime / "evidence_audit.json",
                            review_report_path=runtime_dir / "review_report.json")
         payloads.append(read_json(out))
@@ -1194,7 +1186,7 @@ def run_web_workflow(args: argparse.Namespace) -> int:
         def _collect_facts_worker() -> None:
             try:
                 fact_holder["bundle"] = collect_track_facts(
-                    snapshot, concurrency=analysis_verify_concurrency(len(snapshot["tracks"])))
+                    snapshot, concurrency=args.analysis_parallelism)
             except BaseException as error:  # noqa: BLE001 — 在收口处原样抛出
                 fact_errors.append(error)
 
@@ -1259,7 +1251,11 @@ def run_web_workflow(args: argparse.Namespace) -> int:
         packet["source_tags"] = taste_source_tags(packet)
     else:
         packet["selection_mode"] = "lastfm_constraints_v1"
-        packet["source_tags"] = collect_tags(packet, LastFM(ROOT / "runtime" / "lastfm-cache"), concurrency=20)
+        packet["source_tags"] = collect_tags(
+            packet,
+            LastFM(ROOT / "runtime" / "lastfm-cache"),
+            concurrency=args.analysis_parallelism,
+        )
         validate_knowledge(packet)
     write_json(runtime_dir / "lastfm_analysis.json", packet["source_tags"])
     from agent_lastfm import analyze, curate
@@ -1378,9 +1374,11 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     recommendation_history = _recent_recommendation_history(history_path)
     target_recommendations = int(packet["recommendation_policy"]["target_recommendations"])
     required_candidates = max(MIN_RECOMMENDATION_CANDIDATES, target_recommendations * ATLAS_GROUP_COUNT)
+    initial_limit, hard_limit = _configured_candidate_limits(args, required_candidates)
     # 同一任务失败重试时沿用本目录上一轮召回的候选（断点续跑）。
     candidates = _reuse_candidate_pool(runtime_dir, packet)
     if candidates is not None:
+        candidates = _exclude_recent_recommendations(candidates, recommendation_history)[:hard_limit]
         discovery_report = {"provider": "cached_candidate_pool", "candidate_count": len(candidates),
                             "reused_from": str(runtime_dir)}
         emit("task_completed", status="running", stage="recommendation", task_kind="platform_discovery",
@@ -1388,10 +1386,11 @@ def run_web_workflow(args: argparse.Namespace) -> int:
              completed=1, total=1, candidate_count=len(candidates),
              message=f"续跑：沿用上一轮的 {len(candidates)} 首候选")
     else:
+        initial_limit, hard_limit = _configured_candidate_limits(args, required_candidates)
         candidates, discovery_report = _discover_unique_candidates(
             packet,
             recommendation_history,
-            args.max_candidates,
+            initial_limit,
             required_candidates,
             lambda previous, current, eligible: emit(
                 "stage_detail",
@@ -1400,6 +1399,9 @@ def run_web_workflow(args: argparse.Namespace) -> int:
                 message=(f"排除原歌单与近一周推荐后暂有 {eligible}/{required_candidates} 首，"
                          f"正在扩大候选召回范围 {previous}→{current}"),
             ),
+            hard_limit=hard_limit,
+            max_rounds=args.max_research_rounds,
+            concurrency=args.recommendation_parallelism,
         )
         _save_candidate_pool(runtime_dir, packet, candidates)
     write_json(runtime_dir / "platform_discovery.json", discovery_report)
@@ -1419,7 +1421,9 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     candidates, atlas_groups, review_report = _curate_review_groups(
         packet, candidates, required=required_candidates, curate_fn=curate,
         curate_args=(args.recommendation_command, args.recommendation_timeout, runtime_dir / "agent"),
-        hydrate_fn=hydrate_netease_covers,
+        hydrate_fn=lambda items: hydrate_netease_covers(
+            items, concurrency=args.recommendation_parallelism,
+        ),
         curate_reuse_dir=runtime_dir,
         regeneration_event=lambda stage, attempt, feedback: regeneration_event(stage, attempt, feedback),
         stage="recommendation",
@@ -1569,18 +1573,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--await-limit-timeout", type=int, default=DEFAULT_AWAIT_LIMIT_TIMEOUT_SECONDS)
     parser.add_argument("--analysis-command", default=None)
     parser.add_argument("--recommendation-command", default=None)
-    parser.add_argument("--analysis-parallelism", type=int, default=5)
+    parser.add_argument("--analysis-parallelism", type=int, choices=tuple(range(1, 17)), default=5)
     parser.add_argument("--recommendation-parallelism", type=int, choices=tuple(range(1, 9)), default=4)
-    parser.add_argument("--analysis-batch-size", type=int, default=None)
-    parser.add_argument("--analysis-context-budget", type=int, default=None)
     parser.add_argument("--analysis-timeout", type=int, default=600)
-    parser.add_argument("--context-budget", type=int, default=None)
     parser.add_argument("--recommendation-timeout", type=int, default=600)
     parser.add_argument("--recommendation-only", action="store_true")
     parser.add_argument("--source-runtime-dir", default=None)
-    parser.add_argument("--max-research-rounds", type=int, default=2)
-    parser.add_argument("--candidate-target", type=int, default=None)
-    parser.add_argument("--max-candidates", type=int, default=80)
+    parser.add_argument("--max-research-rounds", type=int, choices=(1, 2, 3), default=2)
+    parser.add_argument("--initial-candidate-limit", "--max-candidates",
+                        dest="initial_candidate_limit", type=int, default=80)
+    parser.add_argument("--hard-candidate-limit", type=int, default=1200)
     parser.add_argument("--policy-file", default=None, help="网页任务使用的推荐策略部分覆盖")
     parser.add_argument("--editorial", default=None, help="网页任务使用的 editorial 展示配置")
     return parser

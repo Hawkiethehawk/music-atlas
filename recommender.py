@@ -491,12 +491,30 @@ def rank_candidates(
             similarity = max((_candidate_similarity(candidate, chosen, packet) for chosen in selected), default=0.0)
             type_bonus = float(diversity["candidate_type_bonus"])
             project_bonus = float(diversity["new_project_bonus"]) if project_marker not in project_counts and len(project_counts) < min_projects else 0.0
-            adjusted = float(candidate["ranking_score"]) + type_bonus + project_bonus - similarity * float(diversity["mmr_penalty"])
+            reservation_priority = 0
+            if candidate["candidate_type"] == "musician_relation":
+                artist_marker = normalized_name(candidate["artist"])
+                project_marker_for_reservation = normalized_name(candidate["project"])
+                if any(
+                    item["candidate_type"] != "musician_relation"
+                    and (
+                        normalized_name(item["artist"]) == artist_marker
+                        or normalized_name(item["project"]) == project_marker_for_reservation
+                    )
+                    for item in eligible
+                ):
+                    reservation_priority = 1
+            adjusted = (
+                float(candidate["ranking_score"])
+                + type_bonus
+                + project_bonus
+                - similarity * float(diversity["mmr_penalty"])
+            )
             if candidate["matched_interest_id"] and candidate["matched_interest_id"] not in interest_counts:
                 adjusted += float(diversity.get("new_interest_bonus", 4.0))
-            options.append((candidate, adjusted))
-        options.sort(key=lambda option: -option[1])
-        for chosen, adjusted in options:
+            options.append((candidate, adjusted, reservation_priority))
+        options.sort(key=lambda option: (-option[2], -option[1]))
+        for chosen, adjusted, _reservation_priority in options:
             selected.append(chosen)
             keys = (
                 (artist_counts, normalized_name(chosen["artist"])),

@@ -22,7 +22,8 @@ test("管理员页面沿用主页面视觉并完成登录后加载控制台", { 
   await page.getByRole("button", { name: "进入后台" }).click();
   await page.getByText("后台控制台").waitFor();
   assert.equal(await page.locator("header .logo").textContent(), "MUSIC ATLAS");
-  assert.equal(await page.locator(".panel").count(), 2);
+  assert.equal(await page.locator("[data-panel]").count(), 3);
+  assert.equal(await page.locator("[data-panel]:not([hidden])").count(), 1);
   assert.match(await page.locator("body").textContent(), /用户管理/);
   assert.match(await page.locator("body").textContent(), /系统设置/);
   assert.deepEqual(errors, []);
