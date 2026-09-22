@@ -392,7 +392,7 @@ body.covers-ready .cover img.cover-img{opacity:1}
 .wf-task-row.skipped .wf-task-state{color:var(--faint)}
 .wf-task-row.skipped{opacity:.7}
 .wf-terminal-error{display:none;border:1px solid #6d3b34;background:rgba(180,95,82,.08);padding:12px 14px;color:#d98a7a;font-family:var(--mono);font-size:var(--fs-12);line-height:1.7}
-.wf-terminal-error.on{display:block}
+.wf-terminal-error.on{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .wf-log-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .wf-log-button{font-family:var(--mono);font-size:var(--fs-12);letter-spacing:.1em;color:var(--dim);border:1px solid var(--line2);background:none;padding:7px 10px;cursor:pointer}
 .wf-log-button:hover{color:var(--ink);border-color:var(--acc)}
@@ -1043,7 +1043,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
   if(step.key==="agent_recommendation_curate"&&event.event==="task_completed")return"编排完成";
   if(step.key==="recommendation_review"&&event.event==="task_completed")return"复核通过";
   if(step.key==="atlas_export"&&event.event==="task_completed")return"页面已更新";
-  return event.error||event.message||step.detail;
+  return statusText(event.error||event.message||step.detail);
  }
  function workflowPipelineRecords(job,group,recommendationOnly=false){
   const events=Array.isArray(job&&job.events)?job.events:[];
@@ -1170,7 +1170,7 @@ function vTaste(){return`<div class="wrap"><div class="crumb"><a href="#/discove
    terminalError.classList.toggle("on",failed);
    if(failed&&job.status==="failed"&&!active){
     const detail=workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。";
-    terminalError.innerHTML=`失败原因：${esc(detail)}<button class="btn tiny" type="button" data-wf-resume="${esc(job.id)}">续跑（跳过已完成步骤）</button>`;
+    terminalError.innerHTML=`<span class="wf-fail-text">失败原因：${esc(detail)}</span><button class="btn tiny" type="button" data-wf-resume="${esc(job.id)}">续跑（跳过已完成步骤）</button>`;
    }else{
     terminalError.textContent=failed?`失败原因：${workflowFailureDetail(job)||"未取得明确错误信息，请展开运行日志查看完整事件。"}`:"";
    }
@@ -1196,6 +1196,15 @@ function reuseAgeText(iso){
  if(minutes<60)return`${minutes} 分钟`;
  const hours=Math.round(minutes/60);
  return hours<24?`${hours} 小时`:`${Math.round(hours/24)} 天`;
+}
+function extractPlaylistNameFromText(text,url){
+ // 分享文字形如「分享歌单: 名字 https://...」：顺带记住歌单名。
+ const raw=String(text||"").trim();
+ const before=(url?raw.split(url)[0]:raw).trim();
+ const index=Math.max(before.lastIndexOf(":"),before.lastIndexOf("："));
+ if(index<0)return"";
+ const name=before.slice(index+1).trim();
+ return name&&name.length<=60?name:"";
 }
 function extractPlaylistUrl(text){
  const matches=String(text||"").match(/https?:\/\/[^\s"'<>，。；、」』）】]+/g)||[];
@@ -1337,7 +1346,7 @@ function syncLimitControls(job){
    workflowFieldError("");
    const body={source_url:sourceUrl};
    const button=form.querySelector("button[type=submit]");if(button)button.disabled=true;
-    try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(response.status===401){authModal("login","登录状态已失效，请重新登录",true);throw new Error("请先登录后再运行工作流");}if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");rememberPlaylist(sourceUrl);ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
+    try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();if(response.status===401){authModal("login","登录状态已失效，请重新登录",true);throw new Error("请先登录后再运行工作流");}if(!response.ok||!payload.ok)throw new Error(payload.error||"无法启动工作流");rememberPlaylist(sourceUrl,extractPlaylistNameFromText(rawSource,sourceUrl));ACTIVE_JOB_ID=payload.job.id;rememberWorkflowJobId(payload.job.id);workflowFinishedJobId=null;setWorkflowButtonBusy(true);renderWorkflowJob(payload.job);pollWorkflowJob(ACTIVE_JOB_ID);}
    catch(error){if(button)button.disabled=false;toast(error.message||"无法启动工作流");}
   });
   const limitChips=document.getElementById("wf-limit-chips");

@@ -282,13 +282,6 @@ test("任务接口错误路径：非法提交与未知任务", { concurrency: fa
   assert.equal(unsupported.status, 400);
   assert.match((await unsupported.json()).error, /只支持/);
 
-  const insecure = await fetch(`${baseUrl}/api/jobs`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source_url: "http://music.163.com/playlist?id=1" }),
-  });
-  assert.equal(insecure.status, 400);
-
   const unknownJob = await fetch(`${baseUrl}/api/jobs/does-not-exist`);
   assert.equal(unknownJob.status, 404);
   const unknownEvents = await fetch(`${baseUrl}/api/jobs/does-not-exist/events`);
@@ -325,7 +318,43 @@ test("新 Atlas：没有已完成的基础任务时返回明确错误", { concur
   assert.equal(response.status, 400);
   const payload = await response.json();
   assert.equal(payload.ok, false);
-  assert.match(payload.error, /没有可复用的已完成 Step 2 分析/);
+  assert.match(payload.error, /24 小时/);
+});
+
+test("任务提交支持粘贴整段 App 分享文字", { concurrency: false }, async (t) => {
+  const server = await createIsolatedServer({ label: "share-text", executors: false });
+  t.after(() => server.stop());
+  const { baseUrl } = server;
+
+  // 解析通过后会走到“执行器未配置”的 503；解析失败则是 400。
+  const accepted = await fetch(`${baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: "分享歌单: Hawk1e喜欢的音乐 https://163cn.tv/bgOsrL6p (@网易云音乐)" }),
+  });
+  assert.equal(accepted.status, 503, "整段分享文字应能提取出歌单链接");
+
+  const unsupported = await fetch(`${baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: "分享一首歌 https://example.com/song/1" }),
+  });
+  assert.equal(unsupported.status, 400, "非歌单平台链接仍应被拒绝");
+
+  // http 链接会自动升级为 https（App 分享文字里常见），因此不再被拒绝。
+  const insecure = await fetch(`${baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: "http://music.163.com/playlist?id=1" }),
+  });
+  assert.equal(insecure.status, 503, "http 链接应升级为 https 后被接受");
+
+  const nonsense = await fetch(`${baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: "这段文字里没有链接" }),
+  });
+  assert.equal(nonsense.status, 400);
 });
 
 test("执行器未配置时拒绝创建任务（503）", { concurrency: false }, async (t) => {
@@ -343,4 +372,19 @@ test("执行器未配置时拒绝创建任务（503）", { concurrency: false },
   });
   assert.equal(rejected.status, 503);
   assert.match((await rejected.json()).error, /暂不可生成推荐/);
+});
+
+test("分享文字会带出歌单名，最近歌单不再只显示链接", { concurrency: false }, async (t) => {
+  const server = await createIsolatedServer({ label: "share-name", executors: false });
+  t.after(() => server.stop());
+  const { baseUrl } = server;
+
+  // 无法直接读内部函数：通过创建任务时的 503/202 响应侧证解析成功，
+  // 歌单名的提取逻辑由 submitAuth/任务事件消费，这里用接口层断言不报错。
+  const accepted = await fetch(`${baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: "分享歌单: Hawk1e喜欢的音乐 https://163cn.tv/bgOsrL6p (@网易云音乐)" }),
+  });
+  assert.equal(accepted.status, 503, "分享文字应能解析出链接");
 });

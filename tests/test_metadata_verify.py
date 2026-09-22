@@ -226,3 +226,17 @@ class VerifyManyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TitleCleanupTests(unittest.TestCase):
+    def test_platform_title_with_artist_suffix_is_cleaned(self):
+        from metadata_verify import _strip_artist_suffix
+        cases = [
+            ("Just Pretend - Bad Omens", "Bad Omens", "Just Pretend"),
+            ("Song – Artist", "Artist", "Song"),
+            ("Love Me - Bad Omens", "Bad Omens", "Love Me"),
+            ("Just Pretend", "Bad Omens", "Just Pretend"),
+            ("A - B", "C", "A - B"),
+            ("Bad Omens", "Bad Omens", "Bad Omens"),
+        ]
+        for title, artist, expected in cases:
+            self.assertEqual(_strip_artist_suffix(title, artist), expected)

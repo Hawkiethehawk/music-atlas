@@ -91,6 +91,22 @@ def _get_json(url: str, *, data: bytes | None = None, headers: dict[str, str] | 
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
+def _strip_artist_suffix(title: Any, artist: Any) -> str:
+    """去掉歌名尾部重复的歌手名。平台数据常把歌手拼进标题
+    （例如网易云对某首单曲的 name 直接返回 “Just Pretend - Bad Omens”），
+    而 artists 字段里已经有同一位歌手，展示时必须去重。"""
+
+    text = str(title or "").strip()
+    name = str(artist or "").strip()
+    if not text or not name:
+        return text
+    for separator in (" - ", " – ", " — ", " - ", " -\t"):
+        suffix = f"{separator}{name}"
+        if len(text) > len(suffix) and text.casefold().endswith(suffix.casefold()):
+            return text[: -len(suffix)].strip()
+    return text
+
+
 def _hit(
     title: Any,
     artist: Any,
@@ -100,9 +116,10 @@ def _hit(
     platform_id: Any,
     url: Any,
 ) -> dict[str, Any]:
+    primary_artist = str(artist or "").strip()
     return {
-        "title": str(title or "").strip(),
-        "artist": str(artist or "").strip(),
+        "title": _strip_artist_suffix(title, primary_artist),
+        "artist": primary_artist,
         "artists": [name for name in artists if name],
         "album": str(album or "").strip(),
         "cover": str(cover).strip() if cover else None,

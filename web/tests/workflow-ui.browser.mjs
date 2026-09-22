@@ -323,7 +323,8 @@ test("正常序列：四阶段推进、Step 2/3 真实环节与事件上限", as
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.waiting').count(), 2, "尚未执行的真实环节显示等待");
     assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 4, "推荐面板固定显示四个真实环节");
     assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 4);
-    assert.equal(await page.locator('[data-wf-stat="analysis"]').textContent(), "进行中 · 1/4");
+    assert.equal(await page.locator('[data-wf-stage-panel-state="analysis"]').textContent(), "进行中");
+    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.done').count(), 1, "分析面板已完成 1 项");
     assert.match(await page.locator('[data-wf-count]').textContent(), /^4\/4 首已处理$/);
     assert.doesNotMatch(await flow.textContent(), /0\/0 批|并行槽位空闲|等待下一个任务/);
     assert.equal(await flow.locator(".wf-events").count(), 0, "不应再显示下方最近事件列表");
@@ -336,8 +337,8 @@ test("正常序列：四阶段推进、Step 2/3 真实环节与事件上限", as
     await pushJob(page, job);
     assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 1, "导出在推荐完成后等待执行");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.waiting').count(), 0);
-    assert.equal(await page.locator('[data-wf-stat="recommendation"]').textContent(), "等待 · 3/4");
-    assert.match(await page.locator('[data-wf-note="recommendation"]').textContent(), /分析通过校验后/);
+    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.done').count(), 3, "推荐面板已完成 3 项（导出等待）");
+    assert.match(await page.locator('[data-wf-note="recommendation"]').textContent(), /寻找候选/);
 
     await page.click("[data-wf-log-toggle]");
     assert.match(await page.locator("[data-wf-log-text]").textContent(), /曲目事实来源已写入审计包/);
@@ -371,7 +372,8 @@ test("乱序事件：每个真实环节按最大 seq 收敛，不随数组顺序
       assert.match(await page.locator(`#flow [data-task-key="${key}"]`).textContent(), /已完成/,
         `${key} 应按最大 seq 的完成事件显示已完成`);
     }
-    assert.equal(await page.locator('[data-wf-stat="analysis"]').textContent(), "已完成 · 4/4");
+    assert.equal(await page.locator('[data-wf-stage-panel-state="analysis"]').textContent(), "已完成");
+    assert.equal(await page.locator('[data-wf-tasks="analysis"] .wf-task-row.done').count(), 4, "四项环节全部完成");
   } finally {
     await context.close();
   }
@@ -696,7 +698,7 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     assert.equal(await flow.locator(".wf-stage.reused").count(), 2, "整理与分析阶段应明确标记为已复用");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row').count(), 4, "复用流程保留四个 Step 2 环节并标记已复用");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.reused').count(), 4);
-    assert.match(await flow.locator('[data-wf-stat="analysis"]').textContent(), /分析结果已复用/);
+    assert.equal(await flow.locator('[data-wf-stage-panel-state="analysis"]').textContent(), "已复用");
     assert.match(await flow.locator('[data-wf-note="analysis"]').textContent(), /本次不重新分析/);
     assert.equal(await flow.locator('[data-wf-count]').textContent(), "正在生成新候选");
     assert.doesNotMatch(await flow.textContent(), /0\/0 批|0\/0 首|并行槽位空闲/);
@@ -704,7 +706,7 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     addRecommendationOnlyStage(job);
     await pushJob(page, job);
     assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 4);
-    assert.equal(await flow.locator('[data-wf-stat="recommendation"]').textContent(), "进行中 · 0/4");
+    assert.equal(await flow.locator('[data-wf-stage-panel-state="recommendation"]').textContent(), "进行中");
     await page.click("[data-wf-log-toggle]");
     assert.match(await flow.locator("[data-wf-log-text]").textContent(), /沿用已有分析，生成新 Atlas/);
 

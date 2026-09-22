@@ -510,8 +510,12 @@ const LIMIT_REQUEST_FILENAME = "requested_track_limit.json";
 const JOB_STATE_FILENAME = "web_job_state.json";
 const jobs = new Map();
 const jobSubscribers = new Map();
-let activeJobId = null;
-let latestJobId = null;
+// 多用户并行：按任务记录归属用户。网页面板仍一次只跑一个任务，
+// 这里的额度用于自动化/多位使用者同时提交的场景。
+const MAX_CONCURRENT_JOBS = Math.max(1, Number(process.env.ATLAS_MAX_JOBS || 10));
+const MAX_JOBS_PER_USER = Math.max(1, Number(process.env.ATLAS_MAX_JOBS_PER_USER || 3));
+const activeJobs = new Map();   // jobId -> { userId, startedAt }
+let latestJobId = null;         // 全局最近任务（无人登录的部署仍可查看）
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -1047,6 +1051,33 @@ function recordJobEvent(job, event) {
   }
 }
 
+function activeJobCountForUser(userId) {
+  let count = 0;
+  for (const meta of activeJobs.values()) {
+    if (Number(meta.userId) === Number(userId)) count += 1;
+  }
+  return count;
+}
+
+function activeJobIdForUser(userId) {
+  for (const [jobId, meta] of activeJobs) {
+    if (Number(meta.userId) === Number(userId)) return jobId;
+  }
+  return null;
+}
+
+function latestJobIdForUser(userId) {
+  return Array.from(jobs.values())
+    .filter((job) => Number(job.user_id) === Number(userId))
+    .sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""))[0]?.id || null;
+}
+
+// 当前请求者可见的任务：优先自己正在跑的，其次自己最近一次任务。
+function visibleJobIdForUser(userId) {
+  if (userId == null) return activeJobs.keys().next().value || latestJobId;
+  return activeJobIdForUser(userId) || latestJobIdForUser(userId);
+}
+
 function latestCompletedJob(userId = null) {
   return Array.from(jobs.values())
     .filter((job) => job && job.status === "completed" && (userId == null ? !AUTH_REQUIRED : Number(job.user_id) === Number(userId)))
@@ -1097,6 +1128,17 @@ function extractSourceCandidates(value) {
     .filter(Boolean);
 }
 
+// 分享文字形如「分享歌单: Hawk1e喜欢的音乐 https://... (@网易云音乐)」：
+// 顺带取出歌单名，供最近歌单列表与任务事件使用；取不到时留空（由任务读取后回填）。
+function extractPlaylistName(raw, url) {
+  const text = String(raw || "").trim();
+  const before = (url ? text.split(url)[0] : text).trim();
+  const index = Math.max(before.lastIndexOf(":"), before.lastIndexOf("："));
+  if (index < 0) return "";
+  const name = before.slice(index + 1).trim();
+  return name && name.length <= 60 ? name : "";
+}
+
 function allowedSource(body) {
   const raw = String(body.source_url || body.url || "").trim();
   if (!raw) throw new Error("请提交歌单公开链接");
@@ -1122,7 +1164,7 @@ function allowedSource(body) {
       ...source,
       source_url: normalized,
       playlist_id: "",
-      playlist_name: "",
+      playlist_name: extractPlaylistName(raw, candidate),
       expected_count: null,
     };
   }
@@ -1130,7 +1172,12 @@ function allowedSource(body) {
 }
 
 async function startWorkflowJob(config, options = {}) {
-  if (activeJobId) throw new Error("已有网页工作流正在运行，请等待其完成");
+  if (activeJobs.size >= MAX_CONCURRENT_JOBS) {
+    throw new Error(`当前已有 ${activeJobs.size} 个任务在运行，请稍后再试`);
+  }
+  if (options.user && activeJobCountForUser(options.user.id) >= MAX_JOBS_PER_USER) {
+    throw new Error(`你已有 ${MAX_JOBS_PER_USER} 个任务在运行，请等待其完成`);
+  }
   const runtime = runtimeConfigSnapshot();
   await fs.promises.mkdir(JOB_ROOT, { recursive: true });
   const id = options.jobId
@@ -1170,7 +1217,7 @@ async function startWorkflowJob(config, options = {}) {
     source_runtime_dir: options.sourceRuntimeDir ? String(options.sourceRuntimeDir) : "",
   };
   jobs.set(id, job);
-  activeJobId = id;
+  activeJobs.set(id, { userId: job.user_id, startedAt: job.created_at });
   latestJobId = id;
   try {
     authStore.createRun({
@@ -1256,7 +1303,7 @@ async function startWorkflowJob(config, options = {}) {
     job.stderr_tail = (job.stderr_tail + chunk).slice(-2000);
   });
   const release = () => {
-    if (activeJobId === id) activeJobId = null;
+    activeJobs.delete(id);
     job.child = undefined;
   };
   child.on("error", (error) => {
@@ -1386,7 +1433,7 @@ function isLocalRequest(req) {
   return !address || address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
-function sendSettings(res, status = 200) {
+function sendSettings(req, res, status = 200) {
   const effective = loadEffectiveWebConfig();
   const override = loadSettingsOverride();
   sendJson(res, status, {
@@ -1394,8 +1441,8 @@ function sendSettings(res, status = 200) {
     settings_file: path.relative(PROJECT_ROOT, SETTINGS_PATH),
     overridden: Object.keys(override).length > 0,
     settings: editableSettings(effective),
-    active_job_id: activeJobId,
-    latest_job_id: latestJobId,
+    active_job_id: visibleJobIdForUser(currentUser(req)?.id ?? null),
+    latest_job_id: visibleJobIdForUser(currentUser(req)?.id ?? null),
     applies_to: "next_job",
   });
 }
@@ -1770,13 +1817,13 @@ const server = http.createServer(async (req, res) => {
   if (adminSettings) {
     const admin = requireAdmin(req, res); if (!admin) return;
     try {
-      if (req.method === "GET") sendSettings(res);
-      else if (req.method === "DELETE") { if (fs.existsSync(SETTINGS_PATH)) fs.rmSync(SETTINGS_PATH, { force: true }); sendSettings(res); }
+      if (req.method === "GET") sendSettings(req, res);
+      else if (req.method === "DELETE") { if (fs.existsSync(SETTINGS_PATH)) fs.rmSync(SETTINGS_PATH, { force: true }); sendSettings(req, res); }
       else {
         const body = await readJsonBody(req);
         const patch = validateSettingsPatch(body.settings ?? body);
         const merged = deepMerge(loadSettingsOverride(), patch);
-        validateSettingsPatch(merged); writeSettingsOverride(merged); sendSettings(res);
+        validateSettingsPatch(merged); writeSettingsOverride(merged); sendSettings(req, res);
       }
       authStore.writeAudit(admin.id, `admin.settings.${req.method.toLowerCase()}`);
     } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "设置保存失败" }); }
@@ -1823,17 +1870,17 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       if (req.method === "GET") {
-        sendSettings(res);
+        sendSettings(req, res);
       } else if (req.method === "DELETE") {
         if (fs.existsSync(SETTINGS_PATH)) fs.rmSync(SETTINGS_PATH, { force: true });
-        sendSettings(res);
+        sendSettings(req, res);
       } else {
         const body = await readJsonBody(req);
         const patch = validateSettingsPatch(body.settings ?? body);
         const merged = deepMerge(loadSettingsOverride(), patch);
         validateSettingsPatch(merged);
         writeSettingsOverride(merged);
-        sendSettings(res);
+        sendSettings(req, res);
       }
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error && error.message ? error.message : "设置保存失败" });
@@ -1934,7 +1981,7 @@ const server = http.createServer(async (req, res) => {
           track_percentile_default: runtime.trackPercentileDefault,
           apple_requires_expected_count: false,
         },
-        active_job_id: visibleJob(activeJobId),
+        active_job_id: visibleJob(visibleJobIdForUser(currentUser(req)?.id ?? null)),
         latest_job_id: visibleJob(latestJobId),
       });
     } catch (error) {
@@ -1947,7 +1994,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const user = requireUser(req, res);
       if (!user && AUTH_REQUIRED) return;
-      if (activeJobId) throw new Error("已有网页工作流正在运行，请等待其完成");
+      if (user && activeJobCountForUser(user.id) >= MAX_JOBS_PER_USER) throw new Error(`你已有 ${MAX_JOBS_PER_USER} 个任务在运行，请等待其完成`);
       const baseJob = latestAnalysisJob(user && user.id);
       if (!baseJob) throw new Error("没有 24 小时内可复用的分析结果，请回到推荐源重新运行");
       const runtime = runtimeConfigSnapshot();
@@ -1960,7 +2007,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 202, { ok: true, job, regenerated_from: baseJob.id });
     } catch (error) {
       const message = error && error.message ? error.message : "无法启动新 Atlas";
-      sendJson(res, message.includes("已有网页工作流") ? 409 : 400, { ok: false, error: message });
+      sendJson(res, (message.includes("已有网页工作流") || message.includes("任务在运行")) ? 409 : 400, { ok: false, error: message });
     }
     return;
   }
@@ -1981,7 +2028,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 202, { ok: true, job });
     } catch (error) {
       const message = error && error.message ? error.message : "无法创建网页工作流";
-      sendJson(res, message.includes("已有网页工作流") ? 409 : 400, { ok: false, error: message });
+      sendJson(res, (message.includes("已有网页工作流") || message.includes("任务在运行")) ? 409 : 400, { ok: false, error: message });
     }
     return;
   }
@@ -2032,7 +2079,7 @@ const server = http.createServer(async (req, res) => {
       if (reusable && job.child) {
         job.child.kill();
         recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: "已改用同链接、同范围的已有分析" });
-        activeJobId = null;
+        activeJobs.delete(job.id);
         const reused = await startWorkflowJob(
           { kind: "local_json", source_url: job.source_url || "", input: "", playlist_id: job.playlist_id || "",
             playlist_name: "", platform: job.platform || "", expected_count: null },
@@ -2071,7 +2118,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 202, { ok: true, job: publicJob(retried), resumed: true });
     } catch (error) {
       const message = error && error.message ? error.message : "无法续跑任务";
-      sendJson(res, message.includes("已有网页工作流") ? 409 : 400, { ok: false, error: message });
+      sendJson(res, (message.includes("已有网页工作流") || message.includes("任务在运行")) ? 409 : 400, { ok: false, error: message });
     }
     return;
   }

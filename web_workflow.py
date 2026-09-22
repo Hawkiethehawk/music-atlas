@@ -467,17 +467,33 @@ def _build_atlas_groups(candidates: list[dict[str, Any]], packet: dict[str, Any]
         from candidate_routes import resolve_candidate_route
         for item in candidates:
             resolved = resolve_candidate_route(item, packet).get("candidate_type")
-            if resolved and resolved != item.get("candidate_type"):
-                item["candidate_type"] = resolved
+            if not resolved or resolved == item.get("candidate_type"):
+                continue
+            # 关系类型必须自带公开关系来源：路由把普通候选判成关系时不能直接改，
+            # 否则会制造出“没有关系证据的关系候选”，被契约拒绝。
+            if resolved == "musician_relation" and not (item.get("provider_relation") or {}).get("url"):
+                continue
+            item["candidate_type"] = resolved
         # v2 选曲引擎不读 selection_exclusion（旧引擎才会读），
-        # 因此这里必须自己排除前面几组已经用过的曲目，否则三组会大量重复；
-        # 同时剥离程序计算的归属字段（由 rank_candidates 自己算）。
+        # 因此这里必须自己排除前面几组已经用过的曲目，否则三组会大量重复。
+        # 归属字段只在走 v2 时剥离（v2 自己按兴趣岛计算）；旧引擎校验依赖它。
+        strip_ownership = packet.get("selection_mode") != "lastfm_constraints_v1"
         pool_for_selection = [
-            {key: value for key, value in item.items() if key != "matched_interest_id"}
+            {key: value for key, value in item.items()
+             if not (strip_ownership and key == "matched_interest_id")}
             for item in candidates
             if str(item.get("canonical_track_id") or "") not in excluded_ids
             and track_key(item.get("title"), item.get("artist")) not in excluded_keys
         ]
+        # 旧选曲引擎要求每个候选都有兴趣岛归属与理由（程序补齐的候选可能缺）：
+        # 这里按轮转补上归属，并给空理由一个中性说明，避免整批复核失败。
+        if not strip_ownership:
+            island_ids = [group.get("id") for group in (packet.get("agent_islands") or [])]
+            for offset, item in enumerate(pool_for_selection):
+                if island_ids and item.get("matched_interest_id") not in island_ids:
+                    item["matched_interest_id"] = island_ids[offset % len(island_ids)]
+                if not isinstance(item.get("agent_reason"), str) or not item["agent_reason"].strip():
+                    item["agent_reason"] = "该候选由程序按类型配额补入，用于本批推荐的类型均衡。"
         raw_bundle = {
             "schema_version": "2.0", "bundle_type": "recommendation_bundle",
             "bundle_stage": "candidate_pool", "status": "ready",
@@ -586,15 +602,15 @@ def _curate_review_groups(
             break
         emit("task_started", status="running", stage=stage, task_kind="agent_recommendation_curate",
              task_id="agent-recommendation-curate", task_status="running", attempt=attempt,
-             message=f"Agent 正在编排候选与推荐文案（第 {attempt}/3 次）")
+             message="智能助手正在编排候选与推荐文案")
         candidates = curate_fn(packet, candidates, *curate_args,
                                lambda n, feedback: regeneration_event(stage, n, feedback))
         emit("task_completed", status="running", stage=stage, task_kind="agent_recommendation_curate",
              task_id="agent-recommendation-curate", task_status="validated", attempt=attempt,
-             candidate_count=len(candidates), message="Agent 候选编排与推荐文案已返回")
+             candidate_count=len(candidates), message="候选编排与推荐文案已生成")
         if len(candidates) < required:
             raise ContractError(
-                f"Agent 校验后仅保留 {len(candidates)} 首候选，三组 Atlas 至少需要 {required} 首"
+                f"候选校验后仅保留 {len(candidates)} 首，三组 Atlas 至少需要 {required} 首"
             )
         emit("task_started", status="running", stage=stage, task_kind="recommendation_review",
              task_id="recommendation-review", task_status="running", attempt=attempt,
@@ -615,7 +631,7 @@ def _curate_review_groups(
                 "stage_detail", status="running", stage=stage,
                 review_status="rejected", review_attempt=attempt, max_review_attempts=3,
                 review_issues=sorted({issue for entry in candidate_review["entries"] for issue in entry.get("issues", [])}),
-                message=f"候选复核未通过，Agent 正在重新生成（第 {attempt + 1}/3 次）",
+                message="候选复核未通过，正在重新生成",
             )
             continue
 
@@ -684,7 +700,7 @@ def _curate_review_groups(
             "stage_detail", status="running", stage=stage,
             review_status="rejected", review_attempt=attempt, max_review_attempts=3,
             review_issues=["atlas_groups"],
-            message=f"Atlas 分组复核未通过，Agent 正在重新生成（第 {attempt + 1}/3 次）",
+            message="Atlas 分组复核未通过，正在重新生成",
         )
     raise ContractError("复核流程未返回结果")
 
@@ -1025,7 +1041,7 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
          candidate_count=len(candidates), message=f"已取得 {len(candidates)} 首排除原歌单与一周缓存后的真实候选")
     from agent_lastfm import curate
     emit("stage_detail", status="running", stage="recommendation",
-         message=f"Agent 正在基于当前 Step 2 生成 {required} 首以上新候选，并执行本地复核")
+         message=f"正在基于当前兴趣岛生成 {required} 首以上新候选，并执行本地复核")
     candidates, groups, review_report = _curate_review_groups(
         packet, candidates, required=required, curate_fn=curate,
         curate_args=(args.recommendation_command, args.recommendation_timeout, runtime_dir / "agent"),
@@ -1035,7 +1051,7 @@ def run_recommendation_only(args: argparse.Namespace) -> int:
             "stage_detail", status="running", stage=stage,
             generation_attempt=attempt, max_generation_attempts=3,
             validation_feedback=feedback,
-            message=f"文案校验需调整，Agent 正在重新生成（第 {attempt}/3 次）"),
+            message="文案校验需调整，正在重新生成"),
         stage="recommendation",
     )
     write_json(runtime_dir / "review_report.json", review_report)
@@ -1250,7 +1266,7 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     def regeneration_event(stage, attempt, feedback):
         emit("stage_detail", status="running", stage=stage, generation_attempt=attempt,
              max_generation_attempts=3, validation_feedback=feedback,
-             message=f"文案校验需调整，Agent 正在重新生成（第 {attempt}/3 次）")
+             message="文案校验需调整，正在重新生成")
     if summary_mode:
         # 摘要 Agent 已一并产出整体总结与三个兴趣岛（按歌手）：不再单独调用一次分析 Skill。
         _apply_summary_islands(packet, analysis_research_dir / "taste_summary.json")
@@ -1260,7 +1276,7 @@ def run_web_workflow(args: argparse.Namespace) -> int:
     else:
         emit("task_started", status="running", stage="analysis", task_kind="agent_style_analysis",
              task_id="agent-style-analysis", task_status="running",
-             message="Agent 正在总结整体风格并归纳三个兴趣岛")
+             message="智能助手正在总结整体风格并归纳三个兴趣岛")
         analyze(packet, args.analysis_command, args.analysis_timeout, runtime_dir / "agent",
                 lambda attempt,feedback:regeneration_event("analysis",attempt,feedback))
         emit("task_completed", status="running", stage="analysis", task_kind="agent_style_analysis",
@@ -1399,7 +1415,7 @@ def run_web_workflow(args: argparse.Namespace) -> int:
          task_id="platform-discovery", task_index=1, task_total=1, task_status="validated", completed=1, total=1,
          candidate_count=len(candidates), message=f"已取得 {len(candidates)} 首排除原歌单与一周缓存后的真实候选")
     emit("stage_detail", status="running", stage="recommendation",
-         message=f"Agent 正在为三组 Atlas 编排 {required_candidates} 首以上真实候选与推荐理由，并执行本地复核")
+         message=f"正在为三组 Atlas 编排 {required_candidates} 首以上真实候选与推荐理由，并执行本地复核")
     candidates, atlas_groups, review_report = _curate_review_groups(
         packet, candidates, required=required_candidates, curate_fn=curate,
         curate_args=(args.recommendation_command, args.recommendation_timeout, runtime_dir / "agent"),

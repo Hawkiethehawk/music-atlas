@@ -402,6 +402,13 @@ def _recommendation_entries(
         )
         why = _public_copy(explanation.get("text")) or "本条推荐说明未提供。"
         title = _text(item.get("title"), "未命名曲目")
+        # 平台数据可能把歌手拼进歌名（网易云较常见，如「Just Pretend - Bad Omens」）；
+        # 复用旧分析包时这里是最后一道去重，保证展示不重复歌手。
+        try:
+            from metadata_verify import _strip_artist_suffix
+            title = _strip_artist_suffix(title, item.get("artist"))
+        except Exception:
+            pass
         artist = _text(item.get("artist"), "未知艺人")
         project = _text(item.get("project"), "—")
         # 平台核验结果（程序写入）：专辑名、封面与来源优先用平台数据，
