@@ -69,3 +69,37 @@ test("Atlas 缓存随发布更新失效；元数据拒绝超长参数", async (t
   }
   assert.equal((await fetch(`${server.baseUrl}/api/meta?artist=${"a".repeat(201)}&track=x`)).status, 400);
 });
+
+test("登录用户只读取自己的 Atlas；新账号不会回退到全站旧结果", async (t) => {
+  const server = await createIsolatedServer({ label: "user-atlas", authRequired: true });
+  t.after(() => server.stop());
+
+  const register = async (username) => {
+    const response = await fetch(`${server.baseUrl}/api/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username, password: "Passw0rd!123" }),
+    });
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    const cookie = String(response.headers.get("set-cookie") || "").split(";")[0];
+    assert.ok(cookie.startsWith("atlas_session="));
+    return { user: payload.user, cookie };
+  };
+
+  const hawkie = await register("hawkie-test");
+  const test1 = await register("test1-test");
+  await fs.writeFile(path.join(server.runtimeDir, "current.json"), JSON.stringify({ payload_type: "music_atlas_web", owner: "legacy-global" }));
+  const hawkieDir = path.join(server.runtimeDir, "users", String(hawkie.user.id));
+  await fs.mkdir(hawkieDir, { recursive: true });
+  await fs.writeFile(path.join(hawkieDir, "current.json"), JSON.stringify({ payload_type: "music_atlas_web", owner: "hawkie" }));
+
+  const hawkiePayload = await (await fetch(`${server.baseUrl}/api/atlas`, { headers: { cookie: hawkie.cookie } })).json();
+  assert.equal(hawkiePayload.owner, "hawkie");
+
+  const test1Payload = await (await fetch(`${server.baseUrl}/api/atlas`, { headers: { cookie: test1.cookie } })).json();
+  assert.deepEqual(test1Payload, { ok: true, empty: true, reason: "no_user_atlas" });
+
+  const guestPayload = await (await fetch(`${server.baseUrl}/api/atlas`)).json();
+  assert.deepEqual(guestPayload, { ok: true, empty: true, reason: "no_user_atlas" });
+});

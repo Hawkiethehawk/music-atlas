@@ -32,6 +32,8 @@ from web_workflow import (
     _candidate_discovery_limits,
     _curate_review_groups,
     _discover_unique_candidates,
+    _ensure_resume_playlist_exclusion,
+    _can_resume_from_analysis,
     _resolve_netease_source,
     _validate_url,
     run_web_workflow,
@@ -39,6 +41,56 @@ from web_workflow import (
 
 FIXTURE_PLAYLIST = Path(__file__).resolve().parent / "fixtures" / "playlist_sample.json"
 FIXTURE_TRACK_COUNT = 3
+
+
+class ResumePlaylistExclusionTests(unittest.TestCase):
+    def test_old_full_snapshot_rebuilds_exclusion(self):
+        snapshot = fixture_snapshot()
+        packet = {"analysis_id": "old", "favorite_tracks": snapshot["tracks"]}
+        _ensure_resume_playlist_exclusion(packet, snapshot)
+        self.assertEqual(packet["playlist_exclusion"]["source_track_count"], FIXTURE_TRACK_COUNT)
+        self.assertEqual(set(packet["playlist_exclusion"]["track_keys"]),
+                         {track["track_key"] for track in snapshot["tracks"]})
+        self.assertEqual(len(packet["playlist_exclusion"]["platform_track_ids"]), FIXTURE_TRACK_COUNT)
+
+    def test_old_partial_snapshot_does_not_under_exclude(self):
+        snapshot = fixture_snapshot()
+        limited = _apply_track_limit(snapshot, 1)
+        with self.assertRaisesRegex(ContractError, "仅含部分曲目"):
+            _ensure_resume_playlist_exclusion({}, limited)
+
+    def test_existing_full_exclusion_is_preserved(self):
+        snapshot = fixture_snapshot()
+        exclusion = {"track_keys": ["original-full-key"], "platform_track_ids": ["original-id"], "source_track_count": 99}
+        packet = {"playlist_exclusion": exclusion}
+        _ensure_resume_playlist_exclusion(packet, snapshot)
+        self.assertIs(packet["playlist_exclusion"], exclusion)
+
+    def test_partial_step_two_is_not_resumed_as_recommendation(self):
+        with TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            snapshot = fixture_snapshot()
+            (runtime / "snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+            (runtime / "musician_analysis.json").write_text(json.dumps({
+                "schema_version": "2.0", "packet_type": "musician_analysis",
+                "analysis_id": "partial", "source_track_count": FIXTURE_TRACK_COUNT,
+                "favorite_track_keys": [track["track_key"] for track in snapshot["tracks"]],
+            }), encoding="utf-8")
+            self.assertFalse(_can_resume_from_analysis(SimpleNamespace(runtime_dir=directory)))
+
+    def test_partial_step_two_reuses_only_full_snapshot(self):
+        with TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            snapshot = fixture_snapshot()
+            (runtime / "snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+            args = SimpleNamespace(source_kind="local_json", input="", playlist_name="")
+            reused, source = _build_source(args, runtime)
+            self.assertEqual(reused["snapshot_id"], snapshot["snapshot_id"])
+            self.assertTrue(source["reused_snapshot"])
+            limited = _apply_track_limit(snapshot, 1)
+            (runtime / "snapshot.json").write_text(json.dumps(limited), encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "部分歌单快照"):
+                _build_source(args, runtime)
 
 
 def fixture_snapshot() -> dict:
@@ -328,8 +380,8 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
             current_data = Path(directory) / "current.json"
             policy_file = Path(directory) / "policy.json"
             editorial_file = Path(directory) / "editorial.json"
-            # 本用例只验收“完整读取后再限额”的边界；合成歌单没有真实目录
-            # 的多艺人/多专辑分布，因此只放宽可调多样性上限，不改固定推荐数量。
+            # 本用例只验收“完整读取后再限额”的边界；合成候选只有风格邻近，
+            # 严格配比应阻止最终发布，不影响前面的截断与快照读取。
             policy_file.write_text(json.dumps({
                 "candidate_pool_min": 1,
                 "max_per_artist": 10,
@@ -395,11 +447,12 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
                                    "generated_at":"2026-09-17T00:00:00Z","seed_artists":[],
                                    "artists":{},"unresolved_artists":[],"requests":[]}
                 with mock.patch("web_workflow.emit"), mock.patch("agent_lastfm.analyze"), mock.patch("agent_lastfm.curate", side_effect=lambda packet, candidates, *args: candidates), mock.patch("lastfm_pipeline.LastFM"), mock.patch("lastfm_pipeline.validate_knowledge"), mock.patch("lastfm_pipeline.collect_tags",return_value={'records':[]}), mock.patch("lastfm_pipeline.discover",side_effect=candidates), mock.patch("relationship_sources.collect_relationships", return_value=empty_relations), mock.patch("platform_discovery.discover_platform_candidates", return_value=([], {})):
-                    exit_code = run_web_workflow(args)
+                    with self.assertRaisesRegex(ContractError, "公开资料记录必须与歌单行数一致"):
+                        run_web_workflow(args)
             finally:
                 writer.join()
 
-            self.assertEqual(exit_code, 0)
+            self.assertFalse(current_data.exists())
             snapshot = json.loads((runtime_dir / "snapshot.json").read_text(encoding="utf-8"))
             self.assertEqual(snapshot["track_count"], 2)
             self.assertEqual(snapshot["declared_track_count"], 2)
@@ -407,19 +460,7 @@ class WebWorkflowTrackLimitTests(unittest.TestCase):
             self.assertEqual(snapshot["reader"]["source_track_count"], FIXTURE_TRACK_COUNT)
             self.assertEqual(snapshot["reader"]["requested_track_limit"], 2)
             self.assertEqual(snapshot["reader"]["requested_track_percentile"], 0.5)
-            report = json.loads((runtime_dir / "web_job_report.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["requested_track_limit"], 2)
-            self.assertEqual(report["requested_track_percentile"], 0.5)
-            self.assertEqual(report["source_track_count"], FIXTURE_TRACK_COUNT)
-            payload = json.loads((runtime_dir / "web_payload.json").read_text(encoding="utf-8"))
-            self.assertEqual(payload["issue"]["title"], "测试网页")
-            self.assertEqual(payload["issue"]["lede"], "测试导语")
-            self.assertEqual(payload["atlas_group_count"], 3)
-            self.assertEqual(len(payload["atlas_groups"]), 3)
-            group_ids = [{item["id"] for item in group["recommendations"]} for group in payload["atlas_groups"]]
-            self.assertTrue(all(len(ids) == 10 for ids in group_ids))
-            self.assertEqual(len(set().union(*group_ids)), 30)
-            self.assertEqual(report["recommendation_groups"]["total_unique_recommendation_count"], 30)
+            self.assertFalse((runtime_dir / "web_job_report.json").exists())
 
 
 class WebWorkflowReviewTimingTests(unittest.TestCase):

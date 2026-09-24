@@ -145,12 +145,12 @@ class ManualPolicyTests(unittest.TestCase):
             path = Path(directory) / "policy.json"
             mix = [{"candidate_type": item["candidate_type"], "target_ratio": 0.25}
                    for item in DEFAULT_POLICY["recall_mix"]]
-            write_json(path, {"max_per_artist": 1, "ranking_weights": {"style_fit": 0.25, "axis_fit": 0.25},
+            write_json(path, {"max_per_artist": 1, "ranking_weights": {"style_fit": 0.30, "relation_fit": 0.25},
                               "sequence_policy": {"allow_familiar_anchor": False}, "recall_mix": mix})
             policy = load_recommendation_policy(path)
             self.assertEqual(policy["max_per_artist"], 1)
-            self.assertEqual(policy["ranking_weights"]["style_fit"], 0.25)
-            self.assertEqual(policy["ranking_weights"]["relation_fit"], 0.15)
+            self.assertEqual(policy["ranking_weights"]["style_fit"], 0.30)
+            self.assertEqual(policy["ranking_weights"]["relation_fit"], 0.25)
             self.assertFalse(policy["sequence_policy"]["allow_familiar_anchor"])
             self.assertEqual(policy["recall_mix"], mix)
             self.assertEqual(DEFAULT_POLICY, original)
@@ -192,7 +192,7 @@ class ManualPolicyTests(unittest.TestCase):
             self.assertEqual(summary["sha256"], stable_hash(custom["recommendation_policy"]))
             self.assertEqual(summary["mode"], "explicit")
             custom["recommendation_policy"]["ranking_weights"]["style_fit"] = 0
-            self.assertEqual(DEFAULT_POLICY["ranking_weights"]["style_fit"], 0.3)
+            self.assertEqual(DEFAULT_POLICY["ranking_weights"]["style_fit"], 0.35)
 
     def test_analyze_and_run_cli_accept_explicit_policy_file(self):
         with tempfile.TemporaryDirectory() as directory:

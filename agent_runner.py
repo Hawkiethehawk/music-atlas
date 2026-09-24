@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -60,6 +61,24 @@ def mock_bundle(packet: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_EXECUTOR_REQUEST_LINE = re.compile(
+    r"ATLAS_EXECUTOR_REQUEST role=(?:analysis|recommendation|taste) "
+    r"attempt=[1-9][0-9]{0,2} retry_count=[0-9]{1,3} "
+    r"phase=(?:start|end) elapsed_ms=[0-9]{1,9} "
+    r"status=(?:pending|network_error|[1-5][0-9]{2}) response_bytes=[0-9]{1,10}"
+)
+
+
+def _timeout_executor_diagnostics(stderr: bytes | str | None) -> str:
+    """Only allow the executor's bounded numeric telemetry into timeout reports."""
+
+    if not stderr:
+        return ""
+    text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else stderr
+    lines = [line for line in text[-4096:].splitlines() if _EXECUTOR_REQUEST_LINE.fullmatch(line)]
+    return " | ".join(lines[-8:])
+
+
 def run_external_agent(command: str, prompt: str, *, timeout: int) -> dict[str, Any]:
     # Windows CreateProcess consumes its native command line; shlex is POSIX-only.
     try:
@@ -86,9 +105,17 @@ def run_external_agent(command: str, prompt: str, *, timeout: int) -> dict[str, 
     except FileNotFoundError as exc:
         raise ContractError(f"找不到 Agent 命令：{command}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ContractError(f"Agent 执行超时：{timeout} 秒") from exc
+        diagnostics = _timeout_executor_diagnostics(exc.stderr)
+        detail = f"；执行器诊断：{diagnostics}" if diagnostics else ""
+        raise ContractError(f"Agent 执行超时：{timeout} 秒{detail}") from exc
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip().replace("\n", " ")[:500]
+        stderr = completed.stderr or completed.stdout
+        # Request telemetry precedes the final error; keep its HTTP classification visible.
+        final_lines = [line for line in stderr.splitlines() if not _EXECUTOR_REQUEST_LINE.fullmatch(line)]
+        detail = " ".join(final_lines[-2:]).strip()[:500]
+        diagnostics = _timeout_executor_diagnostics(stderr)
+        if diagnostics:
+            detail += f"；执行器诊断：{diagnostics}"
         raise ContractError(f"Agent 返回码为 {completed.returncode}：{detail}")
     return parse_agent_json(completed.stdout)
 

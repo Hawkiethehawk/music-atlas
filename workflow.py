@@ -311,7 +311,8 @@ def command_evaluate(args: argparse.Namespace) -> int:
         "artist_diversity": report["diversity"]["artist_diversity"],
         "expected_calibration_error": report["calibration"]["expected_calibration_error"],
         "max_artist_share": report["repetition"]["max_artist_share"],
-        "arc_conformance": report["sequence_quality"]["arc_conformance"],
+        "supported_transition_share": report["sequence_quality"]["supported_transition_share"],
+        "mean_supported_tag_distance": report["sequence_quality"]["mean_supported_tag_distance"],
     }
     _print_summary(output)
     return 0

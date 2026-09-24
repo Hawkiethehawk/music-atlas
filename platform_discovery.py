@@ -8,31 +8,78 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
 
-from contracts import STYLE_AXIS_IDS, normalized_name, normalized_text, track_key, utc_now
+from contracts import normalized_name, normalized_text, track_key, utc_now
 from metadata_verify import SOURCE_PRIORITY, SOURCES, cover_url_status, name_similarity, netease_song_cover, verify_many
 
 
-def collect_track_facts(snapshot: dict[str, Any], *, concurrency: int = 8) -> dict[str, Any]:
-    """核验快照中的每首曲目并返回可审计的事实包。
+def _snapshot_song_source(track: dict[str, Any], platform: str) -> str | None:
+    """只接受与快照歌曲 ID 对应的平台歌曲链接，不把歌单/专辑链接当歌曲来源。"""
+    links = track.get("links")
+    if not isinstance(links, dict):
+        return None
+    url = links.get(platform)
+    if not isinstance(url, str) or not url.strip():
+        return None
+    url = url.strip()
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return None
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    song_id = str(track.get("platform_track_id") or "").strip()
+    if not song_id:
+        return None
+    query = parse_qs(parsed.query)
+    path = parsed.path.rstrip("/")
+    if platform == "apple_music" and host == "music.apple.com":
+        linked_id = query.get("i", [""])[0] if "/album/" in path else path.rsplit("/", 1)[-1] if "/song/" in path else ""
+    elif platform == "netease" and host == "music.163.com" and path == "/song":
+        linked_id = query.get("id", [""])[0]
+    elif platform == "qq" and host in {"y.qq.com", "i.y.qq.com"}:
+        linked_id = (path.rsplit("/", 1)[-1] if "/songDetail/" in path
+                     else query.get("songmid", [""])[0] if path.endswith("/playsong.html") else "")
+    else:
+        return None
+    return url if linked_id == song_id else None
 
-    歌单读取器本身已给出公开链接；再次按曲名和艺人检索用于确认展示的
-    曲名、艺人、专辑与版本没有在后续处理里漂移。失败项明确记录，不补写。
+
+def collect_track_facts(snapshot: dict[str, Any], *, concurrency: int = 8) -> dict[str, Any]:
+    """记录 Step 1 已取得的歌曲来源，仅对缺来源项独立检索。
+
+    快照歌曲链接是来源记录，绝不冒充再次查询成功的 verified；失败项
+    保留 unverified，不能从曲名、艺人推断公开来源。
     """
     tracks = list(snapshot.get("tracks") or [])
-    requested = [(str(item.get("title") or ""), str(item.get("artist") or "")) for item in tracks]
-    verified = verify_many(requested, concurrency=concurrency)
+    platform = str(snapshot.get("platform") or "")
+    source_urls = [_snapshot_song_source(track, platform) for track in tracks]
+    # Apple Music playlist links are only source references. Do not resolve a
+    # missing Apple link through another platform and claim it as Apple evidence.
+    missing = ([index for index, url in enumerate(source_urls) if url is None]
+               if platform != 'apple_music' else [])
+    requested = [(str(tracks[index].get("title") or ""), str(tracks[index].get("artist") or ""))
+                 for index in missing]
+    searched = verify_many(requested, concurrency=concurrency) if requested else []
+    verified = dict(zip(missing, searched))
     records = []
-    for position, (track, fact) in enumerate(zip(tracks, verified), 1):
-        source_url = next(iter((track.get("links") or {}).values()), None)
+    for position, (track, source_url) in enumerate(zip(tracks, source_urls), 1):
+        fact = verified.get(position - 1)
+        independent_match = bool(
+            fact and fact.get("source") != "skipped" and fact.get("url")
+            and fact.get("title") and fact.get("artist") and fact.get("platform_track_id")
+            and normalized_name(fact["title"]) == normalized_name(track.get("title"))
+            and normalized_name(fact["artist"]) == normalized_name(track.get("artist"))
+            and (fact.get("source") != platform or
+                 str(fact["platform_track_id"]) == str(track.get("platform_track_id"))))
         record: dict[str, Any] = {
             "position": position,
             "track_key": track_key(track.get("title"), track.get("artist")),
             "requested": {"title": track.get("title"), "artist": track.get("artist"), "album": track.get("album", "")},
             "retrieved_at": utc_now(),
-            "status": "verified" if fact and fact.get("source") != "skipped" else "source_recorded" if source_url else "unverified",
-            "platform_fact": fact,
-            "source_url": (fact or {}).get("url") or source_url,
+            "status": "verified" if independent_match else "source_recorded" if source_url else "unverified",
+            "platform_fact": fact if independent_match else None,
+            "source_url": fact["url"] if independent_match else source_url,
+            "source_origin": "independent_search" if independent_match else "snapshot_song_url" if source_url else None,
         }
         records.append(record)
     return {
@@ -78,7 +125,6 @@ def _candidate_from_hit(hit: dict[str, Any], *, source: str, anchor: dict[str, A
         "analysis_refs": [entity_ref],
         "style_status": "unclassified",
         "style_refs": [], "style_mix": [],
-        "style_axes": {axis: None for axis in STYLE_AXIS_IDS},
         "style_confidence": "low",
         "relation_path": ["当前歌单", anchor["artist"], "平台公开歌曲记录"],
         "evidence_grade": "C", "evidence_items": [evidence],
@@ -134,7 +180,7 @@ def discover_platform_candidates(packet: dict[str, Any], *, max_candidates: int 
     if tags_client is not None and candidates:
         # 平台记录只有歌曲身份，没有风格资料；沿用与相似艺人候选相同的 Last.fm
         # 标签机制补全，否则候选会因“缺少风格证据”被文案 Agent 全部排除。
-        from lastfm_pipeline import collect_tags
+        from lastfm_pipeline import attach_style_evidence, collect_tags
         records = collect_tags(
             {**packet, "favorite_tracks": [
                 {"title": item.get("title"), "artist": item.get("artist"),
@@ -142,14 +188,7 @@ def discover_platform_candidates(packet: dict[str, Any], *, max_candidates: int 
                 for item in candidates]},
             tags_client, concurrency=concurrency)["records"]
         for candidate, record in zip(candidates, records):
-            candidate["style_evidence"] = {key: record[key] for key in ("scope", "tags", "url", "retrieved_at", "status")}
-            if record["tags"]:
-                candidate.setdefault("evidence_items", []).append({
-                    "claim_type": "style",
-                    "claim": {"track": "曲目风格标签", "album": "所属专辑风格标签", "artist": "艺人风格标签"}.get(record["scope"], "风格标签"),
-                    "url": record["url"], "retrieved_at": record["retrieved_at"]})
-                # 证据 URL 必须同时列入 sources，否则候选契约会拒绝整包。
-                candidate["sources"] = list(dict.fromkeys([*candidate.get("sources", []), record["url"]]))
+            attach_style_evidence(candidate, record)
     candidates.sort(key=lambda item: (normalized_name(item["artist"]), normalized_name(item["title"])))
     return candidates, {
         "schema_version": "2.0", "artifact_type": "platform_discovery_report", "analysis_id": packet["analysis_id"],

@@ -3,9 +3,9 @@
  *
  * 通过覆盖 window.EventSource 注入可编程的事件流，配合 page.route 拦截 API，
  * 在不依赖真实服务器行为的情况下验证前端渲染逻辑：
- * - 正常序列：四阶段推进、Step 2/3 各四个真实环节、日志可查看；
+ * - 正常序列：四阶段推进、Step 2/3 各四个真实环节、日志入口不可见；
  * - 乱序事件：任务状态与计数按最大 seq 收敛，不随数组顺序回退；
- * - 重复事件：相同 seq 只记录一次（日志幂等）；
+ * - 重复事件：相同 seq 不重复渲染任务行；
  * - 丢帧事件：seq 跳号时渲染正常并收敛到最新状态；
  * - SSE 中断：回退轮询、轮询去重、SSE 恢复后继续渲染；
  * - 轮询失败：提示错误并按 1.5s 退避重试；
@@ -102,13 +102,7 @@ function addLimitAppliedStage(job, { limit = 100, sourceTrackCount = 120 } = {})
 
 function addAnalysisStage(job, { completedBatches = 2, trackCount = 4 } = {}) {
   nextEvent(job, { event: "started", status: "running", stage: "analysis", parallelism: 5,
-    message: "Step 2：采集公开资料，由 Agent 总结整体风格并归纳三大兴趣岛" });
-  nextEvent(job, { event: "task_started", status: "running", stage: "analysis", task_kind: "track_fact_collect",
-    task_id: "track-facts", task_status: "running", message: "正在用公开平台记录复核曲目身份" });
-  nextEvent(job, { event: "task_completed", status: "running", stage: "analysis", task_kind: "track_fact_collect",
-    task_id: "track-facts", task_status: "validated", verified_count: trackCount, source_recorded_count: trackCount,
-    unverified_count: 0, track_completed: trackCount, track_total: trackCount, source_track_count: trackCount,
-    message: "曲目事实来源已写入审计包" });
+    track_count: trackCount, message: "Step 2：由 Agent 总结整体风格并归纳三大兴趣岛" });
   nextEvent(job, { event: "task_started", status: "running", stage: "analysis", task_kind: "agent_style_analysis",
     task_id: "agent-style-analysis", task_status: "running", message: "Agent 正在总结整体风格并归纳三个兴趣岛" });
   if (completedBatches >= 2) nextEvent(job, { event: "task_completed", status: "running", stage: "analysis",
@@ -138,16 +132,9 @@ function addRecommendationStage(job, { candidateCount = 47, groups = 3 } = {}) {
   nextEvent(job, { event: "task_completed", status: "running", stage: "recommendation", task_kind: "platform_discovery",
     task_id: "platform-discovery", task_status: "validated", candidate_count: candidateCount,
     message: `已取得 ${candidateCount} 首排除原歌单与一周缓存后的真实候选` });
-  nextEvent(job, { event: "task_started", status: "running", stage: "recommendation", task_kind: "agent_recommendation_curate",
-    task_id: "agent-recommendation-curate", task_status: "running", attempt: 1, message: "Agent 正在编排候选与推荐文案" });
-  nextEvent(job, { event: "task_completed", status: "running", stage: "recommendation", task_kind: "agent_recommendation_curate",
-    task_id: "agent-recommendation-curate", task_status: "validated", candidate_count: candidateCount,
-    message: "Agent 候选编排与推荐文案已返回" });
-  nextEvent(job, { event: "task_started", status: "running", stage: "recommendation", task_kind: "recommendation_review",
-    task_id: "recommendation-review", task_status: "running", message: "正在本地复核候选事实、来源、数量与去重" });
-  nextEvent(job, { event: "task_completed", status: "running", stage: "recommendation", task_kind: "recommendation_review",
-    task_id: "recommendation-review", task_status: "validated", candidate_count: candidateCount, atlas_group_count: groups,
-    message: "本地事实、来源、去重、数量与三组 Atlas 校验通过" });
+  nextEvent(job, { event: "tracks_locked", status: "running", stage: "recommendation",
+    candidate_count: candidateCount, atlas_group_count: groups, total_unique_recommendation_count: 30,
+    message: "三组曲目及身份、来源、排除、去重、配比硬约束已确定" });
   nextEvent(job, { event: "completed", status: "running", stage: "recommendation", recommendation_count: 10,
     recommendation_group_count: groups, total_unique_recommendation_count: 30 });
 }
@@ -163,15 +150,9 @@ function addRecommendationOnlyStage(job, { candidateCount = 47, groups = 3, targ
   if (!complete) return;
   nextEvent(job, { event: "task_completed", status: "running", stage: "recommendation", task_kind: "platform_discovery",
     task_id: "platform-discovery", task_status: "validated", candidate_count: candidateCount, message: "真实候选召回完成" });
-  nextEvent(job, { event: "task_started", status: "running", stage: "recommendation", task_kind: "agent_recommendation_curate",
-    task_id: "agent-recommendation-curate", task_status: "running", message: "Agent 正在编排候选与推荐文案" });
-  nextEvent(job, { event: "task_completed", status: "running", stage: "recommendation", task_kind: "agent_recommendation_curate",
-    task_id: "agent-recommendation-curate", task_status: "validated", candidate_count: candidateCount, message: "Agent 文案已返回" });
-  nextEvent(job, { event: "task_started", status: "running", stage: "recommendation", task_kind: "recommendation_review",
-    task_id: "recommendation-review", task_status: "running", message: "正在本地复核" });
-  nextEvent(job, { event: "task_completed", status: "running", stage: "recommendation", task_kind: "recommendation_review",
-    task_id: "recommendation-review", task_status: "validated", candidate_count: candidateCount, atlas_group_count: groups,
-    message: "本地复核通过" });
+  nextEvent(job, { event: "tracks_locked", status: "running", stage: "recommendation",
+    candidate_count: candidateCount, atlas_group_count: groups, total_unique_recommendation_count: target * groups,
+    message: "三组曲目及选曲硬约束已确定" });
   nextEvent(job, { event: "completed", status: "running", stage: "recommendation", recommendation_count: target,
     recommendation_group_count: groups, total_unique_recommendation_count: target * groups });
   nextEvent(job, { event: "completed", status: "completed", stage: "export",
@@ -205,6 +186,9 @@ const MINIMAL_ATLAS = {
 async function installRoutes(page, job, counters) {
   counters.limits = counters.limits || [];
   counters.cancels = counters.cancels || [];
+  if (counters.user) await page.route("**/api/auth/me", (route) => route.fulfill({ json: {
+    ok: true, auth_required: true, user: counters.user,
+  } }));
   await page.route("**/api/config", (route) => route.fulfill({
     json: { ok: true, active_job_id: counters.activeJobId || null, latest_job_id: counters.latestJobId || null, workflow: { analysis_executor_configured: true, recommendation_executor_configured: true,
       analysis_parallelism: 5, recommendation_parallelism: 4,
@@ -220,6 +204,10 @@ async function installRoutes(page, job, counters) {
     counters.newAtlas = (counters.newAtlas || 0) + 1;
     if (counters.newAtlasHtml) return route.fulfill({ status: 404, contentType: "text/html", body: "<!doctype html><p>404</p>" });
     return route.fulfill({ status: 202, json: { ok: true, job: counters.newAtlasJob || job } });
+  });
+  if (counters.selection) await page.route(/\/api\/jobs\/ui-test-job\/selection$/, (route) => {
+    counters.selectionRequests = (counters.selectionRequests || 0) + 1;
+    return route.fulfill({ json: { ok: true, selection: counters.selection } });
   });
   await page.route(/\/api\/jobs\/ui-test-job\/limit$/, (route) => {
     if (route.request().method() !== "POST") return route.fallback();
@@ -319,13 +307,13 @@ test("正常序列：四阶段推进、Step 2/3 真实环节与事件上限", as
     assert.deepEqual(stageStates, [
       "snapshot:done", "analysis:current", "recommendation:pending", "export:pending",
     ]);
-    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row').count(), 4, "分析面板固定显示四个真实环节");
+    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row').count(), 3, "分析面板只显示当前三个真实环节");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.waiting').count(), 2, "尚未执行的真实环节显示等待");
-    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 4, "推荐面板固定显示四个真实环节");
-    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 4);
+    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 2, "推荐面板只显示候选召回与硬约束选曲");
+    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 2);
     assert.equal(await page.locator('[data-wf-stage-panel-state="analysis"]').textContent(), "进行中");
-    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.done').count(), 1, "分析面板已完成 1 项");
-    assert.match(await page.locator('[data-wf-count]').textContent(), /^4\/4 首已处理$/);
+    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.done').count(), 0, "风格分析尚未结束");
+    assert.match(await page.locator('[data-wf-count]').textContent(), /^0\/4 首已处理$/);
     assert.doesNotMatch(await flow.textContent(), /0\/0 批|并行槽位空闲|等待下一个任务/);
     assert.equal(await flow.locator(".wf-events").count(), 0, "不应再显示下方最近事件列表");
     assert.equal(await flow.locator('[data-wf-stage-panel="analysis"]').getAttribute("open"), "", "当前阶段默认展开");
@@ -335,13 +323,15 @@ test("正常序列：四阶段推进、Step 2/3 真实环节与事件上限", as
     addAnalysisAggregate(job);
     addRecommendationStage(job);
     await pushJob(page, job);
-    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 1, "导出在推荐完成后等待执行");
+    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.waiting').count(), 0, "硬约束通过后推荐阶段结束");
     assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.waiting').count(), 0);
-    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.done').count(), 3, "推荐面板已完成 3 项（导出等待）");
+    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row.done').count(), 2, "推荐面板已完成召回和硬约束选曲");
+    assert.doesNotMatch(await flow.textContent(), /事实与去重复核|本地复核/, "首次运行不应显示独立审计或单列本地复核阶段");
+    assert.match(await flow.locator('[data-task-key="tracks_locked"]').textContent(), /硬约束/);
     assert.match(await page.locator('[data-wf-note="recommendation"]').textContent(), /寻找候选/);
 
-    await page.click("[data-wf-log-toggle]");
-    assert.match(await page.locator("[data-wf-log-text]").textContent(), /曲目事实来源已写入审计包/);
+    assert.equal(await flow.locator("[data-wf-log-toggle], [data-wf-log-copy], [data-wf-log-panel]").count(), 0,
+      "用户界面不应提供运行日志入口或日志内容");
     assert.deepEqual(consoleErrors, [], "不应有控制台错误或警告");
   } finally {
     await context.close();
@@ -362,18 +352,17 @@ test("乱序事件：每个真实环节按最大 seq 收敛，不随数组顺序
     job.events = [
       events[0], ...events.filter((event) => event.stage === "snapshot"),
       events.find((event) => event.stage === "analysis" && event.event === "started"),
-      task("track_fact_collect", "task_completed"), task("agent_style_analysis", "task_completed"),
-      task("track_fact_collect", "task_started"), task("agent_style_analysis", "task_started"),
+      task("agent_style_analysis", "task_completed"), task("agent_style_analysis", "task_started"),
       ...events.filter((event) => ["relationship_collect", "analysis_packet_validate"].includes(event.task_kind)),
       events.find((event) => event.stage === "analysis" && event.event === "completed"),
     ].filter(Boolean);
     await pushJob(page, job);
-    for (const key of ["track_fact_collect", "agent_style_analysis", "relationship_collect", "analysis_packet_validate"]) {
+    for (const key of ["agent_style_analysis", "relationship_collect", "analysis_packet_validate"]) {
       assert.match(await page.locator(`#flow [data-task-key="${key}"]`).textContent(), /已完成/,
         `${key} 应按最大 seq 的完成事件显示已完成`);
     }
     assert.equal(await page.locator('[data-wf-stage-panel-state="analysis"]').textContent(), "已完成");
-    assert.equal(await page.locator('[data-wf-tasks="analysis"] .wf-task-row.done').count(), 4, "四项环节全部完成");
+    assert.equal(await page.locator('[data-wf-tasks="analysis"] .wf-task-row.done').count(), 3, "三项环节全部完成");
   } finally {
     await context.close();
   }
@@ -394,11 +383,8 @@ test("重复事件：相同 seq 只渲染一次", async () => {
     await pushJob(page, job);
 
     const flow = page.locator("#flow");
-    await page.click("[data-wf-log-toggle]");
-    const logText = await page.locator("[data-wf-log-text]").textContent();
-    const message = "曲目事实来源已写入审计包";
-    assert.equal((logText.match(new RegExp(message, "g")) || []).length, 1, "相同 seq 的事件只应记录一次");
-    assert.equal(await flow.locator('[data-task-key="track_fact_collect"]').count(), 1, "任务行不因重复事件翻倍");
+    assert.equal(await flow.locator("[data-wf-log-toggle], [data-wf-log-copy], [data-wf-log-panel]").count(), 0);
+    assert.equal(await flow.locator('[data-task-key="agent_style_analysis"]').count(), 1, "任务行不因重复事件翻倍");
   } finally {
     await context.close();
   }
@@ -418,8 +404,8 @@ test("丢帧事件：seq 跳号时渲染正常并收敛到最新状态", async (
     job.events = job.events.filter((event) => event.seq % 2 === 0 && event.stage !== "export");
     await pushJob(page, job);
 
-    assert.equal(await page.locator('#flow [data-wf-tasks="recommendation"] .wf-task-row').count(), 4,
-      "丢帧后四个推荐环节仍保持可见");
+    assert.equal(await page.locator('#flow [data-wf-tasks="recommendation"] .wf-task-row').count(), 2,
+      "丢帧后两个推荐环节仍保持可见");
     assert.equal(await page.locator('#flow [data-task-key="platform_discovery"]').count(), 1,
       "丢帧后候选召回环节仍可定位");
   } finally {
@@ -436,9 +422,7 @@ test("SSE 中断：回退轮询、轮询去重、SSE 恢复后继续渲染", asy
     addSnapshotStage(job);
     addAnalysisStage(job, { completedBatches: 1 });
     await pushJob(page, job);
-    await page.click("[data-wf-log-toggle]");
-    const logBefore = await page.locator("#flow [data-wf-log-text]").textContent();
-    assert.match(logBefore, /正在读取歌单/);
+    const stageBefore = await page.locator("#flow [data-wf-stage-panel-state='analysis']").textContent();
 
     // 注入 SSE 断线：前端应在约 1s 后回退轮询。
     const sourceIndex = await activeSourceIndex(page);
@@ -446,9 +430,8 @@ test("SSE 中断：回退轮询、轮询去重、SSE 恢复后继续渲染", asy
     await page.waitForTimeout(1600);
     assert.ok(counters.poll >= 1, "断线后应发起轮询");
 
-    // 轮询返回相同事件（服务器快照）：DOM 不应出现重复事件节点。
-    const logAfterPoll = await page.locator("#flow [data-wf-log-text]").textContent();
-    assert.equal(logAfterPoll, logBefore, "轮询去重：日志内容不变");
+    // 轮询返回相同事件（服务器快照）：当前阶段应稳定。
+    assert.equal(await page.locator("#flow [data-wf-stage-panel-state='analysis']").textContent(), stageBefore);
 
     // 轮询路径发现任务仍在运行，会重建 SSE 流（新的 MockEventSource 实例）。
     await page.waitForFunction(() => window.__mockSources.length >= 2, undefined, { timeout: 3000 });
@@ -456,8 +439,8 @@ test("SSE 中断：回退轮询、轮询去重、SSE 恢复后继续渲染", asy
     addAnalysisStage(job);
     addAnalysisAggregate(job);
     await pushJob(page, job);
-    const logAfterResume = await page.locator("#flow [data-wf-log-text]").textContent();
-    assert.match(logAfterResume, /整体风格总结与三大兴趣岛已生成|开始分析歌单/, "SSE 恢复后日志继续更新");
+    assert.equal(await page.locator("#flow [data-wf-stage-panel-state='analysis']").textContent(), "已完成",
+      "SSE 恢复后进度继续更新");
   } finally {
     await context.close();
   }
@@ -536,16 +519,19 @@ test("刷新恢复：通过 latest_job_id 显示最近完成状态", async () =>
   const counters = { create: 0, poll: 0, atlas: 0, latestJobId: job.id };
   const { context, page } = await openWorkflowPage(browser, job, counters);
   try {
-    await page.waitForFunction(() => document.getElementById("flow").classList.contains("on")
-      && document.querySelector("#flow .fstep")?.textContent.includes("运行已完成"), undefined, { timeout: 3000 });
+    const restored = await page.waitForFunction(() => {
+      const flow = document.getElementById("flow");
+      const text = flow?.textContent || "";
+      return flow?.classList.contains("on") && text.includes("运行已完成") ? text : false;
+    }, undefined, { timeout: 3000 });
     assert.ok(counters.poll >= 1, "刷新时应读取最近完成任务");
-    assert.match(await page.locator("#flow").textContent(), /运行已完成/);
+    assert.match(await restored.jsonValue(), /运行已完成/);
   } finally {
     await context.close();
   }
 });
 
-test("失败终态：保留进度框、失败原因与可展开日志，刷新后仍可恢复", async () => {
+test("失败终态：保留进度框与失败原因，不显示原始日志，刷新后仍可恢复", async () => {
   const job = makeJob();
   const counters = { create: 0, poll: 0, atlas: 0 };
   const { context, page } = await openWorkflowPage(browser, job, counters);
@@ -565,12 +551,8 @@ test("失败终态：保留进度框、失败原因与可展开日志，刷新�
     assert.match(await page.locator("[data-wf-terminal-error]").textContent(), /分析研究总超时预算耗尽/);
     assert.match(await page.locator("#toast").textContent(), /分析研究总超时预算耗尽/);
     assert.match(await page.locator('[data-task-key="agent_style_analysis"]').textContent(), /失败/);
-    await page.click("[data-wf-log-toggle]");
-    assert.equal(await page.locator("[data-wf-log-panel]").evaluate((node) => node.classList.contains("hidden")), false);
-    const logText = await page.locator("[data-wf-log-text]").textContent();
-    assert.match(logText, /退出码: 1/);
-    assert.match(logText, /分析研究总超时预算耗尽/);
-    assert.match(logText, /Traceback: analysis timeout/);
+    assert.equal(await page.locator("[data-wf-log-toggle], [data-wf-log-copy], [data-wf-log-panel]").count(), 0);
+    assert.doesNotMatch(await page.locator("#flow").textContent(), /Traceback: analysis timeout/);
     assert.equal(counters.atlas, atlasBefore, "失败不应刷新 Atlas 数据");
 
     await page.reload();
@@ -696,8 +678,8 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     await expectFlowOn(page);
     assert.match(await flow.locator(".fstep").textContent(), /正在生成新 Atlas/);
     assert.equal(await flow.locator(".wf-stage.reused").count(), 2, "整理与分析阶段应明确标记为已复用");
-    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row').count(), 4, "复用流程保留四个 Step 2 环节并标记已复用");
-    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.reused').count(), 4);
+    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row').count(), 3, "复用流程保留三个 Step 2 环节并标记已复用");
+    assert.equal(await flow.locator('[data-wf-tasks="analysis"] .wf-task-row.reused').count(), 3);
     assert.equal(await flow.locator('[data-wf-stage-panel-state="analysis"]').textContent(), "已复用");
     assert.match(await flow.locator('[data-wf-note="analysis"]').textContent(), /本次不重新分析/);
     assert.equal(await flow.locator('[data-wf-count]').textContent(), "正在生成新候选");
@@ -705,10 +687,9 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
 
     addRecommendationOnlyStage(job);
     await pushJob(page, job);
-    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 4);
+    assert.equal(await flow.locator('[data-wf-tasks="recommendation"] .wf-task-row').count(), 2);
     assert.equal(await flow.locator('[data-wf-stage-panel-state="recommendation"]').textContent(), "进行中");
-    await page.click("[data-wf-log-toggle]");
-    assert.match(await flow.locator("[data-wf-log-text]").textContent(), /沿用已有分析，生成新 Atlas/);
+    assert.equal(await flow.locator("[data-wf-log-toggle], [data-wf-log-copy], [data-wf-log-panel]").count(), 0);
 
     addRecommendationOnlyStage(job, { complete: true, includeStart: false });
     await pushJob(page, job);
@@ -721,8 +702,7 @@ test("新 Atlas 复用流程：不伪造分析进度，完成后保留正确状�
     counters.latestJobId = job.id;
     await page.reload();
     await page.waitForFunction(() => document.querySelector("#flow .fstep")?.textContent.includes("新 Atlas 运行已完成"), undefined, { timeout: 3000 });
-    await page.waitForFunction(() => document.querySelectorAll('#flow [data-wf-tasks="analysis"] .wf-task-row.reused').length === 4, undefined, { timeout: 3000 });
-    assert.equal(await page.locator('#flow [data-wf-tasks="analysis"] .wf-task-row.reused').count(), 4, "刷新后仍应恢复复用视图");
+    assert.equal(await page.locator('#flow [data-wf-tasks="analysis"] .wf-task-row.reused').count(), 3, "刷新后仍应恢复复用视图");
     assert.equal(await page.locator('#flow [data-wf-count]').textContent(), "47 个候选已核验 · 3 组 Atlas");
     assert.doesNotMatch(await page.locator("#flow").textContent(), /0\/0 批|0\/0 首|并行槽位空闲/);
     assert.deepEqual(consoleErrors, [], "不应有控制台错误或警告");
@@ -744,6 +724,48 @@ test("新 Atlas 失败：使用对应失败文案并恢复操作按钮", async (
     await page.waitForFunction(() => document.getElementById("toast").textContent.includes("新 Atlas 生成未完成"), undefined, { timeout: 3000 });
     assert.match(await page.locator("#toast").textContent(), /候选暂时不足/);
     assert.equal(await page.locator("#workflow-form button[type=submit]").isDisabled(), false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("先显示真实风格分析，再显示三组锁定曲目；旧临时预览不会渲染", async () => {
+  const job = makeJob();
+  const groups = [1, 2, 3].map((number) => ({ id: `atlas-${number}`, label: `第 ${number} 组`,
+    recommendations: Array.from({ length: 10 }, (_, index) => ({
+      id: `track-${number}-${index}`, title: `Locked ${number}-${index}`, artist: `Artist ${index}`,
+    })) }));
+  const counters = { create: 0, poll: 0, atlas: 0, user: { id: 42, username: "Owner", role: "user" },
+    selection: { status: "tracks_locked", playlist_name: "实测歌单", style_analysis: "以另类摇滚和电子纹理为主。", atlas_groups: groups } };
+  const { context, page } = await openWorkflowPage(browser, job, counters);
+  try {
+    await submitForm(page);
+    nextEvent(job, { event: "preview_ready", status: "running", stage: "analysis" });
+    await pushJob(page, job);
+    assert.equal(await page.locator("[data-wf-selection]:visible").count(), 0,
+      "旧临时预览事件不得触发正式曲目展示");
+
+    nextEvent(job, { event: "style_analysis_ready", status: "running", stage: "analysis",
+      style_analysis: "以另类摇滚和电子纹理为主。" });
+    await pushJob(page, job);
+    await page.waitForSelector("[data-wf-style-analysis]", { state: "visible" });
+    assert.match(await page.locator("[data-wf-style-analysis]").textContent(), /音乐风格分析.*另类摇滚和电子纹理/);
+
+    nextEvent(job, { event: "tracks_locked", status: "running", stage: "recommendation",
+      recommendation_group_count: 3, total_unique_recommendation_count: 30 });
+    await pushJob(page, job);
+    await page.waitForSelector("[data-wf-selection]", { state: "visible" });
+    const selection = page.locator("[data-wf-selection]");
+    assert.equal(await selection.locator(".wf-selection-group").count(), 3);
+    assert.equal(await selection.locator("li").count(), 30);
+    assert.match(await selection.textContent(), /正式曲目已确定.*曲目和顺序不会改变/);
+    assert.doesNotMatch(await selection.textContent(), /初版推荐|曲目和顺序可能调整/);
+    assert.equal(counters.selectionRequests, 1);
+
+    nextEvent(job, { event: "completed", status: "completed", stage: "export", recommendation_count: 10 });
+    await pushJob(page, job);
+    await page.waitForFunction(() => document.querySelector("[data-wf-selection]")?.hidden === true);
+    assert.equal(await selection.isVisible(), false, "正式 Atlas 发布后应关闭任务内的过渡展示");
   } finally {
     await context.close();
   }
@@ -849,6 +871,54 @@ test("封面首选地址失败时从 /api/meta 回退到备用公开封面", asy
     assert.equal(await cover.locator("img.cover-img").count(), 1);
     assert.match(await cover.locator("img.cover-img").getAttribute("src"), /good-cover\.svg/);
     assert.ok(await cover.evaluate((node) => node.classList.contains("has-img")));
+  } finally {
+    await context.close();
+  }
+});
+
+test("推荐平台按钮优先使用同平台已核验直链，不接受异域伪链接", async () => {
+  const job = makeJob();
+  const counters = { create: 0, poll: 0, atlas: 0, limits: [], cancels: [] };
+  counters.atlasPayload = {
+    ok: true, payload_type: "music_atlas_web",
+    issue: { title: "歌曲直链测试", lede: "测试" }, status: { publication: "draft" },
+    source: { snapshotId: "verified-links-test" }, sources: [],
+    recommendations: [{
+      id: "verified-link", rank: 1, track: "Example", artist: "Example Artist", album: "Example Album",
+      metadataSource: "itunes", metadataUrl: "https://music.apple.com/us/album/example/1?i=2",
+      platformLinks: { apple: "https://evil.example/song" },
+      hue: 20, type: "style", typeLabel: "风格邻近", oneLiner: "测试", why: "测试",
+      route: [], evidence: [], year: "—",
+    }],
+  };
+  const { context, page } = await openWorkflowPage(browser, job, counters);
+  await page.route("**/api/meta**", (route) => route.fulfill({ json: {
+    ok: true, cover: null, links: { apple: "https://music.apple.com/us/album/wrong/3?i=4" },
+  } }));
+  try {
+    await page.goto(`${server.baseUrl}/#/atlas`);
+    const direct = page.locator(".trow .plink").first();
+    await direct.waitFor();
+    assert.equal(await direct.getAttribute("href"), "https://music.apple.com/us/album/example/1?i=2");
+    assert.equal(await direct.getAttribute("data-songlink"), null, "已核验直链不应被按名称重查覆盖");
+    assert.equal(await page.locator('.trow a[href="https://evil.example/song"]').count(), 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("首次运行进度不再显示单列曲目复核或独立审计", async () => {
+  const job = makeJob();
+  const counters = { create: 0, poll: 0, atlas: 0 };
+  const { context, page } = await openWorkflowPage(browser, job, counters);
+  try {
+    await submitForm(page);
+    addSnapshotStage(job);
+    addAnalysisStage(job);
+    await pushJob(page, job);
+    assert.equal(await page.locator('#flow [data-task-key="track_fact_collect"]').count(), 0);
+    assert.equal(await page.locator('#flow [data-task-key="recommendation_review"]').count(), 0);
+    assert.doesNotMatch(await page.locator("#flow").textContent(), /独立核验|本地复核|事实与去重复核/);
   } finally {
     await context.close();
   }

@@ -15,6 +15,7 @@ const crypto = require("crypto");
 const { spawn } = require("node:child_process");
 const { createAuthStore } = require("./auth_store");
 const { spawnWorkflowProcess, terminateProcessTree } = require("./workflow_job");
+const { validatePublishedQuality } = require("./publication_quality");
 const {
   parseSource,
   canonicalizePlaylistSourceSafe,
@@ -78,6 +79,7 @@ const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled", "supe
 const DEFAULT_WORKFLOW_SETTINGS = {
   analysis_parallelism: 5,
   recommendation_parallelism: 4,
+  workflow_time_budget_seconds: 120,
   analysis_timeout_seconds: 7200,
   recommendation_timeout_seconds: 3600,
   track_percentile_default: 1,
@@ -147,12 +149,13 @@ const SETTINGS_SCHEMA = [
   },
   {
     group: "workflow", title: "工作流与预算",
-    note: "并行数与超时按秒计；分位是歌单读取后的默认处理比例。",
+    note: "分析与公开候选查询的并发、首次完整运行预算及歌单读取后的默认分位；摘要仍是单次 Agent 分析。",
     fields: [
       { path: "workflow.track_percentile_default", label: "默认分析分位", type: "select", options: [["0.25", "25%"], ["0.5", "50%"], ["1", "100%（全部）"]] },
-      { path: "workflow.analysis_parallelism", label: "分析并行数", type: "number", min: 1, max: 16 },
-      { path: "workflow.recommendation_parallelism", label: "推荐并行数", type: "number", min: 1, max: 8 },
-      { path: "workflow.analysis_timeout_seconds", label: "分析阶段超时（秒）", type: "number", min: 1, max: 86400 },
+      { path: "workflow.analysis_parallelism", label: "分析阶段并发", type: "number", min: 1, max: 16, help: "逐曲分析与公开资料查询的并发；摘要模式是单次 Agent 请求，不会启动多个摘要 Agent。" },
+      { path: "workflow.recommendation_parallelism", label: "候选查询基础并发", type: "number", min: 1, max: 8, help: "公开候选召回至少使用 8 路并发；不代表多个推荐 Agent 并行。" },
+      { path: "workflow.workflow_time_budget_seconds", label: "确认范围后处理预算（秒）", type: "number", min: 1, max: 600, help: "确认处理数量后计时，包含音乐风格分析、公开平台选曲、身份来源与配比硬校验、正式发布；首次抓取耗时另计入首次完整运行验收。不执行单列本地复核或独立审计。" },
+      { path: "workflow.analysis_timeout_seconds", label: "分析阶段超时（秒）", type: "number", min: 1, max: 86400, help: "摘要 Agent 最多 78 秒；逐曲模式文案分析最多 70 秒，单次请求最多 30 秒并可在剩余预算内重试。首次抓取和其他步骤会收紧上限，并为选曲与正式发布预留 30 秒。此项可调低，不能放宽程序上限。" },
       { path: "workflow.recommendation_timeout_seconds", label: "推荐阶段超时（秒）", type: "number", min: 1, max: 86400 },
       { path: "workflow.await_limit_timeout_seconds", label: "等待选择超时（秒）", type: "number", min: 1, max: 86400 },
       { path: "workflow.max_research_rounds", label: "最大研究轮数", type: "number", min: 1, max: 3 },
@@ -360,6 +363,7 @@ function validateSettingsPatch(value) {
     output.workflow = {};
     const ints = {
       analysis_parallelism: [1, 16], recommendation_parallelism: [1, 8],
+      workflow_time_budget_seconds: [1, 600],
       analysis_timeout_seconds: [1, 86400], recommendation_timeout_seconds: [1, 86400],
       await_limit_timeout_seconds: [1, 86400],
       max_research_rounds: [1, 3], initial_candidate_limit: [1, 1200], hard_candidate_limit: [1, 1200],
@@ -409,6 +413,7 @@ function runtimeConfigSnapshot() {
   const python = resolveConfiguredExecutable(runtime.python);
   const analysisParallelism = settingInteger(Number(workflow.analysis_parallelism ?? 5), "workflow.analysis_parallelism", 1, 16);
   const recommendationParallelism = settingInteger(Number(workflow.recommendation_parallelism ?? 4), "workflow.recommendation_parallelism", 1, 8);
+  const workflowTimeBudgetSeconds = settingInteger(Number(workflow.workflow_time_budget_seconds ?? DEFAULT_WORKFLOW_SETTINGS.workflow_time_budget_seconds), "workflow.workflow_time_budget_seconds", 1, 600);
   const analysisTimeoutSeconds = settingInteger(Number(workflow.analysis_timeout_seconds ?? 600), "workflow.analysis_timeout_seconds", 1, 86400);
   const recommendationTimeoutSeconds = settingInteger(Number(workflow.recommendation_timeout_seconds ?? 600), "workflow.recommendation_timeout_seconds", 1, 86400);
   const trackPercentileDefault = Number(workflow.track_percentile_default ?? DEFAULT_WORKFLOW_SETTINGS.track_percentile_default);
@@ -428,6 +433,7 @@ function runtimeConfigSnapshot() {
     recommendationExecutor,
     analysisParallelism,
     recommendationParallelism,
+    workflowTimeBudgetSeconds,
     analysisTimeoutSeconds,
     recommendationTimeoutSeconds,
     trackPercentileOptions: [...TRACK_PERCENTILE_OPTIONS],
@@ -513,8 +519,10 @@ const HOST = typeof SERVER_CONFIG.host === "string" && SERVER_CONFIG.host.trim()
 const PORT = Number(process.env.ATLAS_WEB_PORT) || Number(SERVER_CONFIG.port) || 8420;
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("server.port 必须是 1 到 65535 的整数");
 const DATA_PATH = resolveProjectPath(PATH_CONFIG.published || "runtime/web/current.json", "paths.published");
+const USER_DATA_ROOT = path.join(path.dirname(DATA_PATH), "users");
 const JOB_ROOT = resolveProjectPath(PATH_CONFIG.jobs || "runtime/web-jobs", "paths.jobs");
 const HISTORY_ROOT = resolveProjectPath(PATH_CONFIG.recommendation_history || "runtime/recommendation-history", "paths.recommendation_history");
+const ACCOUNT_RESET_ROOT = path.join(path.dirname(JOB_ROOT), "backups", "account-reset");
 const INPUT_ROOT = resolveProjectPath(PATH_CONFIG.input || "input", "paths.input");
 const INITIAL_RUNTIME = runtimeConfigSnapshot();
 const PYTHON = INITIAL_RUNTIME.python;
@@ -561,7 +569,14 @@ const META_RATE_LIMIT = 60;
 const metaCache = new Map();     // LRU: key → { at, data }
 const metaInflight = new Map();
 const metaRateBuckets = new Map();
-let atlasPayloadCache = { mtimeMs: -1, payload: null, response: null };
+const atlasPayloadCaches = new Map();
+
+function atlasDataPathForUser(userId) {
+  if (!AUTH_REQUIRED) return DATA_PATH;
+  const numericId = Number(userId);
+  if (!Number.isSafeInteger(numericId) || numericId < 1) return null;
+  return path.join(USER_DATA_ROOT, String(numericId), path.basename(DATA_PATH));
+}
 
 function jfetch(url, opts = {}, timeout = 6000) {
   const ctrl = new AbortController();
@@ -574,27 +589,28 @@ function jfetch(url, opts = {}, timeout = 6000) {
     .finally(() => clearTimeout(timer));
 }
 
-async function loadAtlasPayload() {
-  const stat = await fs.promises.stat(DATA_PATH);
-  if (atlasPayloadCache.payload && atlasPayloadCache.mtimeMs === stat.mtimeMs) {
-    return atlasPayloadCache.payload;
+async function loadAtlasPayload(dataPath = DATA_PATH) {
+  const stat = await fs.promises.stat(dataPath);
+  const cached = atlasPayloadCaches.get(dataPath);
+  if (cached && cached.payload && cached.mtimeMs === stat.mtimeMs) {
+    return cached.payload;
   }
-  const raw = await fs.promises.readFile(DATA_PATH, "utf8");
+  const raw = await fs.promises.readFile(dataPath, "utf8");
   const payload = JSON.parse(raw);
   if (!payload || payload.payload_type !== "music_atlas_web") {
     throw new Error("invalid web payload");
   }
-  atlasPayloadCache = {
+  atlasPayloadCaches.set(dataPath, {
     mtimeMs: stat.mtimeMs,
     payload,
     response: JSON.stringify({ ok: true, ...payload }),
-  };
+  });
   return payload;
 }
 
-async function loadAtlasResponse() {
-  await loadAtlasPayload();
-  return atlasPayloadCache.response;
+async function loadAtlasResponse(dataPath = DATA_PATH) {
+  await loadAtlasPayload(dataPath);
+  return atlasPayloadCaches.get(dataPath).response;
 }
 
 function isLoopbackAddress(value) {
@@ -866,10 +882,76 @@ function publicJob(job) {
     created_at: job.created_at,
     updated_at: job.updated_at,
     events: job.events,
-    stderr_tail: job.stderr_tail || "",
     exit_code: job.exit_code === undefined ? null : job.exit_code,
     workflow_mode: workflowMode,
+    first_run: Boolean(job.first_run),
+    workflow_time_budget_seconds: job.workflow_time_budget_seconds ?? null,
+    processing_started_at: job.processing_started_at || null,
+    snapshot_elapsed_seconds: job.snapshot_elapsed_seconds ?? null,
+    processing_elapsed_seconds: job.processing_elapsed_seconds ?? null,
+    first_run_elapsed_seconds: job.first_run_elapsed_seconds ?? null,
+    first_run_within_budget: job.first_run_within_budget ?? null,
   };
+}
+
+// A missing final event is not proof of a published Atlas, even when Python exits 0.
+function lockedTrackSignature(groups, field) {
+  if (!Array.isArray(groups) || groups.length !== 3) return null;
+  const seen = new Set();
+  const ordered = [];
+  for (const group of groups) {
+    if (!Array.isArray(group.recommendations) || group.recommendations.length !== 10) return null;
+    const ids = [];
+    for (const track of group.recommendations) {
+      const id = String(track && track[field] || "").trim();
+      if (!id || seen.has(id)) return null;
+      seen.add(id);
+      ids.push(id);
+    }
+    ordered.push(ids);
+  }
+  return crypto.createHash("sha256").update(JSON.stringify(ordered)).digest("hex");
+}
+
+function completedWorkflowArtifacts(job, publishedDataPath) {
+  try {
+    const payloadPath = path.join(job.runtime_dir, "web_payload.json");
+    const report = JSON.parse(fs.readFileSync(path.join(job.runtime_dir, "web_job_report.json"), "utf8"));
+    const selection = JSON.parse(fs.readFileSync(path.join(job.runtime_dir, "web_selection.json"), "utf8"));
+    const payloadBytes = fs.readFileSync(payloadPath);
+    const publishedBytes = fs.readFileSync(publishedDataPath);
+    const payload = JSON.parse(payloadBytes.toString("utf8"));
+    const lockedSignature = lockedTrackSignature(selection.atlas_groups, "canonical_track_id");
+    if (report.status !== "completed" || selection.status !== "tracks_locked"
+      || !report.payload_path || path.resolve(report.payload_path) !== path.resolve(payloadPath)
+      || !report.current_data_path || path.resolve(report.current_data_path) !== path.resolve(publishedDataPath)
+      || !payloadBytes.equals(publishedBytes) || payload.payload_type !== "music_atlas_web"
+      || payload.status?.run !== "completed" || payload.status?.publication !== "published"
+      || payload.status?.evidence_audit !== "not_performed"
+      || payload.status?.review !== "not_performed"
+      || payload.audit?.status !== "not_performed" || payload.review?.status !== "not_performed"
+      || report.review !== undefined
+      || payload.atlas_group_count !== 3
+      || report.recommendation_groups?.count !== 3
+      || report.recommendation_groups?.total_unique_recommendation_count !== 30
+      || !lockedSignature || lockedSignature !== lockedTrackSignature(payload.atlas_groups, "id")
+      || !selection.snapshot_id || report.snapshot_id !== selection.snapshot_id
+      || payload.source?.snapshotId !== selection.snapshot_id
+      || !report.analysis_id || payload.analysis?.analysisId !== report.analysis_id) return false;
+    const packet = JSON.parse(fs.readFileSync(path.join(job.runtime_dir, "musician_analysis.json"), "utf8"));
+    if (!validatePublishedQuality(packet, payload)
+      || packet.analysis_id !== report.analysis_id
+      || report.source_track_count !== packet.source_playlist_track_count
+      || report.processed_track_count !== packet.source_track_count) {
+      job.publication_error = "公开来源风格资料未达到当前分析质量门槛，不得发布为 completed";
+      return false;
+    }
+    const firstGroupIds = selection.atlas_groups[0].recommendations.map((track) => track.canonical_track_id);
+    return Array.isArray(payload.recommendations)
+      && JSON.stringify(payload.recommendations.map((track) => track && track.id)) === JSON.stringify(firstGroupIds);
+  } catch {
+    return false;
+  }
 }
 
 function syncRunFromEvent(job, event) {
@@ -933,7 +1015,7 @@ function summarizeRunFromJob(job) {
 function persistJobState(job) {
   try {
     fs.mkdirSync(job.runtime_dir, { recursive: true });
-    fs.writeFileSync(path.join(job.runtime_dir, JOB_STATE_FILENAME), JSON.stringify({ ...publicJob(job), user_id: job.user_id || null }, null, 2) + "\n", "utf8");
+    fs.writeFileSync(path.join(job.runtime_dir, JOB_STATE_FILENAME), JSON.stringify({ ...publicJob(job), stderr_tail: job.stderr_tail || "", user_id: job.user_id || null }, null, 2) + "\n", "utf8");
   } catch (error) {
     console.error(`无法保存任务状态 ${job.id}：${error.message}`);
   }
@@ -990,6 +1072,7 @@ function readRecommendationHistoryFiles() {
       items.push({
         file: entry.name,
         user_id: String(payload.user_id || ""),
+        platform: historyPlatform(payload.playlist && payload.playlist.kind),
         playlist: payload.playlist && typeof payload.playlist === "object" ? payload.playlist : {},
         retention_days: retentionDays,
         total_entries: entries.length,
@@ -1002,11 +1085,25 @@ function readRecommendationHistoryFiles() {
         })),
       });
     } catch (error) {
-      items.push({ file: entry.name, broken: true, error: error.message });
+      items.push({ file: entry.name, user_id: "", platform: "unknown", broken: true, error: error.message });
     }
   }
   items.sort((left, right) => String(right.latest_at || "").localeCompare(String(left.latest_at || "")));
   return items;
+}
+
+function historyPlatform(kind) {
+  const value = String(kind || "").trim().toLowerCase();
+  if (["netease", "netease_public"].includes(value)) return "netease";
+  if (["qq", "qq_public"].includes(value)) return "qq";
+  if (["apple_music", "apple"].includes(value)) return "apple_music";
+  return value || "unknown";
+}
+
+function historyMatchesScope(item, scope, value) {
+  if (scope === "all") return true;
+  if (scope === "account") return (item.user_id || "__unassigned__") === value;
+  return item.platform === value;
 }
 
 function resolveHistoryFile(rawName) {
@@ -1015,6 +1112,106 @@ function resolveHistoryFile(rawName) {
   const target = path.join(HISTORY_ROOT, name);
   if (!target.startsWith(HISTORY_ROOT + path.sep)) return null;
   return { name, target };
+}
+
+function userResetPlan(userId) {
+  const snapshot = authStore.userResetSnapshot(userId);
+  const id = Number(snapshot.user.id);
+  const jobIds = new Set(snapshot.runs.map((run) => String(run.job_id)));
+  if (fs.existsSync(JOB_ROOT)) {
+    for (const entry of fs.readdirSync(JOB_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const statePath = path.join(JOB_ROOT, entry.name, JOB_STATE_FILENAME);
+      try {
+        const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        if (Number(state.user_id) === id) jobIds.add(entry.name);
+      } catch {}
+    }
+  }
+  const targets = [];
+  const addTarget = (root, name, category) => {
+    if (path.basename(name) !== name) throw new Error("任务或缓存文件名无效，初始化已停止");
+    const source = path.join(root, name);
+    if (!fs.existsSync(source)) return;
+    const stat = fs.lstatSync(source);
+    if (stat.isSymbolicLink()) throw new Error("发现符号链接，初始化已停止");
+    targets.push({ source, category, name, size: stat.size, mtime_ms: stat.mtimeMs });
+  };
+  addTarget(USER_DATA_ROOT, String(id), "atlas");
+  for (const item of readRecommendationHistoryFiles()) {
+    if (String(item.user_id || "") === String(id)) addTarget(HISTORY_ROOT, item.file, "history");
+  }
+  for (const jobId of jobIds) {
+    if (!/^[A-Za-z0-9_-]+$/.test(jobId)) throw new Error("运行记录包含不安全的任务 ID，初始化已停止");
+    const statePath = path.join(JOB_ROOT, jobId, JOB_STATE_FILENAME);
+    if (fs.existsSync(statePath)) {
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      if (state.user_id != null && Number(state.user_id) !== id) throw new Error("任务归属不一致，初始化已停止");
+    }
+    addTarget(JOB_ROOT, jobId, "jobs");
+    for (const suffix of ["web_config.snapshot.json", "recommendation_policy.snapshot.json", "editorial.snapshot.json"]) {
+      addTarget(JOB_ROOT, `${jobId}.${suffix}`, "jobs");
+    }
+  }
+  targets.sort((left, right) => `${left.category}/${left.name}`.localeCompare(`${right.category}/${right.name}`));
+  const summary = {
+    playlists: snapshot.playlists.length,
+    runs: snapshot.runs.length,
+    preferences: snapshot.preferences.length,
+    sessions: snapshot.session_count,
+    job_directories: targets.filter((item) => item.category === "jobs" && !item.name.includes(".snapshot.json")).length,
+    history_files: targets.filter((item) => item.category === "history").length,
+    atlas_present: targets.some((item) => item.category === "atlas"),
+    active_jobs: activeJobCountForUser(id),
+  };
+  const token = crypto.createHash("sha256").update(JSON.stringify({ snapshot, targets, summary })).digest("hex");
+  return { user: snapshot.user, snapshot, targets, summary, token };
+}
+
+function initializeUserAccount(userId, actorId, plan) {
+  const id = Number(userId);
+  const archiveId = `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-user-${id}-${crypto.randomBytes(4).toString("hex")}`;
+  const archiveDir = path.join(ACCOUNT_RESET_ROOT, archiveId);
+  fs.mkdirSync(ACCOUNT_RESET_ROOT, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(archiveDir, { mode: 0o700 });
+  const moved = [];
+  let databaseCommitted = false;
+  try {
+    fs.writeFileSync(path.join(archiveDir, "manifest.json"), JSON.stringify({
+      schema_version: "1.0", archived_at: new Date().toISOString(),
+      user: plan.user, summary: plan.summary,
+      database: { preferences: plan.snapshot.preferences, playlists: plan.snapshot.playlists, runs: plan.snapshot.runs },
+      files: plan.targets.map(({ category, name }) => ({ category, name })),
+    }, null, 2) + "\n", { mode: 0o600 });
+    for (const target of plan.targets) {
+      const destination = path.join(archiveDir, target.category, target.name);
+      fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+      fs.renameSync(target.source, destination);
+      moved.push({ source: target.source, destination });
+    }
+    const user = authStore.resetUserData(id, actorId, archiveId);
+    databaseCommitted = true;
+    for (const [jobId, job] of jobs) {
+      if (Number(job.user_id) !== id) continue;
+      for (const subscriber of jobSubscribers.get(jobId) || []) {
+        try { subscriber.end(); } catch {}
+      }
+      jobSubscribers.delete(jobId);
+      jobs.delete(jobId);
+    }
+    latestJobId = Array.from(jobs.values()).sort((a, b) => Date.parse(b.updated_at || "") - Date.parse(a.updated_at || ""))[0]?.id || null;
+    atlasPayloadCaches.delete(atlasDataPathForUser(id));
+    return { user, archive_id: archiveId, summary: plan.summary };
+  } catch (error) {
+    if (databaseCommitted) throw error;
+    const rollbackErrors = [];
+    for (const item of moved.reverse()) {
+      try { fs.renameSync(item.destination, item.source); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
+    }
+    if (rollbackErrors.length) throw new Error(`初始化失败，文件回滚未完成；恢复档案 ${archiveId}：${rollbackErrors.join("；")}`);
+    throw error;
+  }
 }
 
 function pruneHistoryEntries(payload) {
@@ -1052,6 +1249,21 @@ function listUserRuns(userId, limit = 50) {
   }
   runs.sort((left, right) => Date.parse(right.updated_at || "") - Date.parse(left.updated_at || ""));
   return runs.slice(0, Math.min(Math.max(Number(limit) || 50, 1), 200));
+}
+
+function withCompletedRunGroupSummary(run) {
+  if (run.status !== "completed" || !/^\d{14}-[a-f0-9]{8}$/.test(run.job_id)) return run;
+  try {
+    const report = JSON.parse(fs.readFileSync(path.join(JOB_ROOT, run.job_id, "web_job_report.json"), "utf8"));
+    const groupCount = report.recommendation_groups?.count;
+    const totalCount = report.recommendation_groups?.total_unique_recommendation_count;
+    if (report.status !== "completed" || !Number.isInteger(groupCount) || groupCount < 1
+      || !Number.isInteger(totalCount) || totalCount !== groupCount * run.recommendation_count
+      || report.web_export?.recommendation_count !== run.recommendation_count) return run;
+    return { ...run, recommendation_group_count: groupCount, total_unique_recommendation_count: totalCount };
+  } catch {
+    return run;
+  }
 }
 
 function restoreRecentJobs() {
@@ -1137,6 +1349,21 @@ function recordJobEvent(job, event) {
   job.events.push(safeEvent);
   if (job.events.length > 1000) job.events.shift();
   if (typeof safeEvent.stage === "string") job.stage = safeEvent.stage;
+  if (safeEvent.event === "awaiting_limit" && job.snapshot_elapsed_seconds == null) {
+    job.snapshot_elapsed_seconds = Math.max(0, (Date.now() - Date.parse(job.created_at)) / 1000);
+  }
+  if (TERMINAL_JOB_STATUSES.has(safeEvent.status)) {
+    const finishedAt = Date.now();
+    const processingStarted = Date.parse(job.processing_started_at || "");
+    if (Number.isFinite(processingStarted)) {
+      job.processing_elapsed_seconds = Math.max(0, (finishedAt - processingStarted) / 1000);
+    }
+    if (job.first_run && Number.isFinite(processingStarted)) {
+      job.first_run_elapsed_seconds = Number((Number(job.snapshot_elapsed_seconds || 0) + job.processing_elapsed_seconds).toFixed(3));
+      job.first_run_within_budget = safeEvent.status === "completed"
+        && job.first_run_elapsed_seconds <= job.workflow_time_budget_seconds;
+    }
+  }
   if (TERMINAL_JOB_STATUSES.has(safeEvent.status)) job.status = safeEvent.status;
   else if (safeEvent.status === "running") job.status = "running";
   else if (safeEvent.status === "awaiting_limit") job.status = "awaiting_limit";
@@ -1235,6 +1462,7 @@ async function allowedSource(body) {
 }
 
 async function startWorkflowJob(config, options = {}) {
+  const workflowStartedAt = Date.now();
   if (activeJobs.size >= MAX_CONCURRENT_JOBS) {
     throw new Error(`当前已有 ${activeJobs.size} 个任务在运行，请稍后再试`);
   }
@@ -1266,7 +1494,7 @@ async function startWorkflowJob(config, options = {}) {
     id,
     status: "queued",
     stage: "queued",
-    created_at: new Date().toISOString(),
+    created_at: new Date(workflowStartedAt).toISOString(),
     updated_at: new Date().toISOString(),
     runtime_dir: runtimeDir,
     user_id: options.user && options.user.id ? Number(options.user.id) : null,
@@ -1274,11 +1502,15 @@ async function startWorkflowJob(config, options = {}) {
     stderr_tail: "",
     event_seq: 0,
     workflow_mode: options.recommendationOnly ? "recommendation_only" : "full",
+    first_run: !options.recommendationOnly && !options.reuseRuntimeDir,
+    workflow_time_budget_seconds: runtime.workflowTimeBudgetSeconds,
     source_url: String(config.source_url || ""),
     platform: String(config.platform || ""),
     playlist_id: String(config.playlist_id || ""),
     source_runtime_dir: options.sourceRuntimeDir ? String(options.sourceRuntimeDir) : "",
   };
+  const publishedDataPath = atlasDataPathForUser(job.user_id);
+  if (!publishedDataPath) throw new Error("无法确定当前用户的 Atlas 发布目录");
   jobs.set(id, job);
   activeJobs.set(id, { userId: job.user_id, startedAt: job.created_at });
   latestJobId = id;
@@ -1300,10 +1532,11 @@ async function startWorkflowJob(config, options = {}) {
   const args = [
     WORKFLOW_SCRIPT,
     "--runtime-dir", runtimeDir,
-    "--current-data", DATA_PATH,
+    "--current-data", publishedDataPath,
     "--source-kind", config.kind,
     "--analysis-parallelism", String(runtime.analysisParallelism),
     "--recommendation-parallelism", String(runtime.recommendationParallelism),
+    "--workflow-time-budget", String(runtime.workflowTimeBudgetSeconds),
     "--analysis-timeout", String(runtime.analysisTimeoutSeconds),
     "--recommendation-timeout", String(runtime.recommendationTimeoutSeconds),
     "--max-research-rounds", String(runtime.maxResearchRounds),
@@ -1338,16 +1571,52 @@ async function startWorkflowJob(config, options = {}) {
     const apiKeyValue = await runSecretStore(["get"]).then((r) => r.stdout).catch(() => "");
     if (apiKeyValue) childEnvironment.MUSIC_ATLAS_API_KEY = apiKeyValue;
   } catch {} // 密钥库不可用时执行器会自动回退到环境变量或报错。
+  const remainingSnapshotMs = workflowStartedAt + runtime.workflowTimeBudgetSeconds * 1000 - Date.now();
+  if (remainingSnapshotMs <= 0) {
+    recordJobEvent(job, { event: "failed", status: "failed", stage: "queued",
+      error: `歌单读取超过 ${runtime.workflowTimeBudgetSeconds} 秒预算` });
+    activeJobs.delete(id);
+    return publicJob(job);
+  }
+  let workflowTimer = null;
+  let snapshotTimer = null;
+  const failBudget = (label) => {
+    if (TERMINAL_JOB_STATUSES.has(job.status)) return;
+    recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage,
+      error: `${label}超过 ${runtime.workflowTimeBudgetSeconds} 秒预算` });
+    terminateWorkflow(job);
+    if (!job.child) activeJobs.delete(id);
+  };
+  const armProcessingBudget = () => {
+    if (job.processing_started_at || TERMINAL_JOB_STATUSES.has(job.status)) return;
+    clearTimeout(snapshotTimer);
+    job.processing_started_at = new Date().toISOString();
+    workflowTimer = setTimeout(() => failBudget("确认范围后的完整处理"), runtime.workflowTimeBudgetSeconds * 1000);
+    persistJobState(job);
+  };
+  job.armProcessingBudget = armProcessingBudget;
+  if (!options.recommendationOnly && !options.reuseRuntimeDir) {
+    snapshotTimer = setTimeout(() => failBudget("歌单读取"), remainingSnapshotMs);
+  }
   // windowsHide：避免在 Windows 上为每个工作流子进程弹出 python.exe 控制台窗口。
   const child = spawnWorkflowProcess(runtime.python, args, {
     cwd: PROJECT_ROOT,
     env: childEnvironment,
   });
   job.child = child;
+  if (options.recommendationOnly || options.reuseRuntimeDir) armProcessingBudget();
+  if (TERMINAL_JOB_STATUSES.has(job.status)) terminateWorkflow(job);
   let stageTimer = null;
   let budgetStage = null;
   const acceptEvent = (event) => {
     if (TERMINAL_JOB_STATUSES.has(job.status)) return;
+    // A child may announce completion before its final artifacts are checked.
+    // Defer every success-status event until exit 0 and source-quality validation.
+    if (event.status === "completed") {
+      if (event.event === "completed") job.pending_completion_event = event;
+      return;
+    }
+    if (event.event === "awaiting_limit") clearTimeout(snapshotTimer);
     if (["analysis", "recommendation", "export"].includes(event.stage)) {
       const stage = event.stage === "export" ? "recommendation" : event.stage;
       if (stage !== budgetStage) {
@@ -1380,9 +1649,12 @@ async function startWorkflowJob(config, options = {}) {
     job.stderr_tail = (job.stderr_tail + chunk).slice(-2000);
   });
   const release = () => {
+    clearTimeout(workflowTimer);
+    clearTimeout(snapshotTimer);
     clearTimeout(stageTimer);
     activeJobs.delete(id);
     job.child = undefined;
+    job.armProcessingBudget = undefined;
   };
   child.on("error", (error) => {
     job.exit_code = null;
@@ -1395,8 +1667,15 @@ async function startWorkflowJob(config, options = {}) {
       try { acceptEvent(JSON.parse(stdoutBuffer)); } catch {}
     }
     if (!TERMINAL_JOB_STATUSES.has(job.status)) {
-      if (code === 0) recordJobEvent(job, { event: "completed", status: "completed", stage: "export" });
-      else recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error: job.stderr_tail.trim() || `工作流退出码 ${code}` });
+      if (code === 0 && completedWorkflowArtifacts(job, publishedDataPath)) {
+        recordJobEvent(job, { ...job.pending_completion_event,
+          event: "completed", status: "completed", stage: "export" });
+      } else {
+        const error = code === 0
+          ? job.publication_error || "进程已结束，但完整 Atlas 产物或发布校验未通过"
+          : `处理失败（退出码 ${code}），请稍后重试`;
+        recordJobEvent(job, { event: "failed", status: "failed", stage: job.stage, error });
+      }
     }
     release();
     persistJobState(job);
@@ -1674,7 +1953,8 @@ const server = http.createServer(async (req, res) => {
     if (!user && AUTH_REQUIRED) return;
     if (!user) { sendJson(res, 401, { ok: false, error: "请先登录" }); return; }
     const result = authStore.listRuns({ userId: user.id, status: query.get("status") || null, limit: query.get("limit") || 20, offset: query.get("offset") || 0 });
-    sendJson(res, 200, { ok: true, ...result, stats: authStore.runStats(user.id) });
+    sendJson(res, 200, { ok: true, ...result,
+      runs: result.runs.map(withCompletedRunGroupSummary), stats: authStore.runStats(user.id) });
     return;
   }
 
@@ -1773,9 +2053,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const user = await authStore.authenticateAsync(body.username, body.password, "admin");
-      const session = authStore.createSession(user.id, "admin");
+      const session = authStore.createSession(user.id, "admin", { remember: body.remember === true });
       authStore.writeAudit(user.id, "admin.login");
-      setSessionCookie(res, req, ADMIN_SESSION_COOKIE, session.token, 8 * 60 * 60);
+      setSessionCookie(res, req, ADMIN_SESSION_COOKIE, session.token, session.ttl_seconds);
       sendJson(res, 200, { ok: true, user: session.user, expires_at: session.expires_at });
     } catch (error) {
       sendJson(res, 401, { ok: false, error: error && error.message ? error.message : "管理员登录失败" });
@@ -1854,6 +2134,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const adminInitializeMatch = urlPath.match(/^\/api\/admin\/users\/(\d+)\/initialize$/);
+  if (adminInitializeMatch && (req.method === "GET" || req.method === "POST")) {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const targetId = Number(adminInitializeMatch[1]);
+      if (req.method === "GET") {
+        const plan = userResetPlan(targetId);
+        sendJson(res, 200, { ok: true, user: plan.user, summary: plan.summary, confirmation_token: plan.token });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const plan = userResetPlan(targetId);
+      if (plan.summary.active_jobs) { sendJson(res, 409, { ok: false, error: "该账号有运行中的任务，请先等待结束再初始化" }); return; }
+      if (body.confirm_username !== plan.user.username || body.confirmation_token !== plan.token) {
+        sendJson(res, 409, { ok: false, error: "账号或数据范围已变化，请重新预览并确认" }); return;
+      }
+      const result = initializeUserAccount(targetId, admin.id, plan);
+      sendJson(res, 200, { ok: true, user: result.user, summary: result.summary, archive_id: result.archive_id });
+    } catch (error) {
+      sendJson(res, /运行中的任务|已变化/.test(error.message || "") ? 409 : 400,
+        { ok: false, error: error.message || "账号初始化失败" });
+    }
+    return;
+  }
+
   const adminUserRunsMatch = urlPath.match(/^\/api\/admin\/users\/(\d+)\/runs$/);
   if (adminUserRunsMatch && req.method === "GET") {
     const admin = requireAdmin(req, res); if (!admin) return;
@@ -1876,6 +2181,35 @@ const server = http.createServer(async (req, res) => {
     const usernames = new Map(authStore.listUsers().map((user) => [String(user.id), user.username]));
     const items = readRecommendationHistoryFiles().map((item) => ({ ...item, username: item.user_id ? (usernames.get(item.user_id) || "") : "" }));
     sendJson(res, 200, { ok: true, items });
+    return;
+  }
+
+  if (urlPath === "/api/admin/recommendation-history/bulk" && req.method === "DELETE") {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    try {
+      const body = await readJsonBody(req);
+      const scope = body.scope;
+      const value = scope === "account" ? body.user_id : body.platform;
+      if (!["account", "platform", "all"].includes(scope)
+          || (scope !== "all" && (typeof value !== "string" || !value.trim()))
+          || (scope === "all" && (body.user_id || body.platform))
+          || !Array.isArray(body.expected_files)
+          || body.expected_files.some((name) => typeof name !== "string")
+          || !Number.isSafeInteger(body.expected_entries) || body.expected_entries < 0) {
+        sendJson(res, 400, { ok: false, error: "清空范围或确认清单无效" }); return;
+      }
+      const matches = readRecommendationHistoryFiles().filter((item) => historyMatchesScope(item, scope, value));
+      const files = matches.map((item) => item.file).sort();
+      const expected = [...body.expected_files].sort();
+      const entries = matches.reduce((sum, item) => sum + (item.total_entries || 0), 0);
+      if (!files.length || files.length !== expected.length || entries !== body.expected_entries
+          || files.some((name, index) => name !== expected[index])) {
+        sendJson(res, 409, { ok: false, error: "去重缓存已变化，请刷新并重新确认清空范围" }); return;
+      }
+      for (const name of files) fs.rmSync(path.join(HISTORY_ROOT, name));
+      authStore.writeAudit(admin.id, "admin.recommendation_history.clear_scope", { scope, value: scope === "all" ? "all" : value, files: files.length, entries });
+      sendJson(res, 200, { ok: true, removed_files: files.length, removed_entries: entries });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message || "清空失败" }); }
     return;
   }
 
@@ -2086,6 +2420,7 @@ const server = http.createServer(async (req, res) => {
             recommendation_executor_error: runtime.recommendationExecutor.error,
             analysis_parallelism: runtime.analysisParallelism,
             recommendation_parallelism: runtime.recommendationParallelism,
+            workflow_time_budget_seconds: runtime.workflowTimeBudgetSeconds,
             max_research_rounds: runtime.maxResearchRounds,
             initial_candidate_limit: runtime.initialCandidateLimit,
             hard_candidate_limit: runtime.hardCandidateLimit,
@@ -2219,6 +2554,7 @@ const server = http.createServer(async (req, res) => {
       const temporary = `${requestPath}.${process.pid}.tmp`;
       await fs.promises.writeFile(temporary, JSON.stringify({ limit, percentile }), "utf8");
       await fs.promises.rename(temporary, requestPath);
+      job.armProcessingBudget?.();
       sendJson(res, 202, { ok: true, job: publicJob(job), limit, percentile });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error && error.message ? error.message : "无法提交处理数量" });
@@ -2267,6 +2603,59 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 仅暴露已经锁定的三组曲目；旧的临时推荐绝不作为正式曲目返回。
+  const selectionMatch = urlPath.match(/^\/api\/jobs\/([^/]+)\/selection$/);
+  if (selectionMatch && req.method === "GET") {
+    const job = jobs.get(decodeURIComponent(selectionMatch[1]));
+    if (!job) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
+    const user = requireUser(req, res);
+    if (!user && AUTH_REQUIRED) return;
+    if (!canAccessJob(job, user)) { sendJson(res, 404, { ok: false, error: "找不到网页工作流任务" }); return; }
+    try {
+      const selectionPath = path.join(job.runtime_dir, "web_selection.json");
+      const selection = JSON.parse(await fs.promises.readFile(selectionPath, "utf8"));
+      const groups = selection.atlas_groups;
+      if (selection.status !== "tracks_locked" || !Array.isArray(groups) || groups.length !== 3) {
+        throw new Error("selection not locked");
+      }
+      const ids = new Set();
+      const trackKeys = new Set();
+      const safeGroups = groups.map((group, groupIndex) => {
+        if (!Array.isArray(group.recommendations) || group.recommendations.length !== 10) {
+          throw new Error("incomplete selection group");
+        }
+        return {
+          id: `atlas-${groupIndex + 1}`,
+          label: `第 ${groupIndex + 1} 组`,
+          recommendations: group.recommendations.map((item) => {
+            const id = String(item.canonical_track_id || item.id || "").trim();
+            const title = String(item.title || "").trim();
+            const artist = String(item.artist || "").trim();
+            const key = `${title.toLocaleLowerCase()}\0${artist.toLocaleLowerCase()}`;
+            if (!id || !title || !artist || ids.has(id) || trackKeys.has(key)) {
+              throw new Error("invalid or duplicate locked track");
+            }
+            ids.add(id);
+            trackKeys.add(key);
+            return {
+              id, title, artist,
+              url: String(item.url || item.metadata_verified?.url || ""),
+              platform: String(item.platform || item.metadata_verified?.source || ""),
+            };
+          }),
+        };
+      });
+      sendJson(res, 200, { ok: true, selection: {
+        status: "tracks_locked", playlist_name: String(selection.playlist_name || ""),
+        source_track_count: Number(selection.source_track_count) || 0,
+        style_analysis: String(selection.style_analysis || selection.overall_summary || ""),
+        atlas_groups: safeGroups, locked_at: String(selection.locked_at || ""),
+        details_status: "pending",
+      } }, { "Cache-Control": "no-store" });
+    } catch { sendJson(res, 404, { ok: false, error: "正式曲目尚未确定" }); }
+    return;
+  }
+
   const jobMatch = urlPath.match(/^\/api\/jobs\/([^/]+)(\/events)?$/);
   if (jobMatch && req.method === "GET") {
     const job = jobs.get(decodeURIComponent(jobMatch[1]));
@@ -2299,14 +2688,24 @@ const server = http.createServer(async (req, res) => {
 
   /* 当前 Atlas 数据：只读脱敏视图模型，不直接暴露 runtime */
   if (urlPath === "/api/atlas") {
+    const user = currentUser(req, "user");
+    const dataPath = atlasDataPathForUser(user && user.id);
+    if (!dataPath) {
+      sendJson(res, 200, { ok: true, empty: true, reason: "no_user_atlas" });
+      return;
+    }
     try {
-      const response = await loadAtlasResponse();
+      const response = await loadAtlasResponse(dataPath);
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
       res.end(response);
-    } catch {
+    } catch (error) {
+      if (error && error.code === "ENOENT") {
+        sendJson(res, 200, { ok: true, empty: true, reason: "no_user_atlas" });
+        return;
+      }
       res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ ok: false, error: "Atlas 数据暂不可用" }));
     }
@@ -2382,7 +2781,7 @@ const server = http.createServer(async (req, res) => {
   fs.stat(filePath, (err, st) => {
     if (err || !st.isFile()) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(`<!doctype html><meta charset="utf-8"><body style="background:#0f0d0a;color:#a39a88;font-family:'Cormorant Garamond','思源宋体 CN',serif;display:grid;place-items:center;height:100vh;margin:0"><div>404 · 本期内无此页<br><br><a href="/" style="color:#c8622f">← 回到本期</a></div>`);
+      res.end(`<!doctype html><meta charset="utf-8"><body style="background:#0f0d0a;color:#a39a88;font-family:'Cormorant Garamond','思源宋体 CN',serif;display:grid;place-items:center;height:100vh;margin:0"><div>404 · 页面不存在<br><br><a href="/" style="color:#c8622f">← 回到首页</a></div>`);
       return;
     }
     const ext = path.extname(filePath).toLowerCase();

@@ -18,6 +18,12 @@ COPY_POLICY = '''面向听众写文案，只谈音乐风格、品味连接与探
 COPY_POLICY += '''常见英文风格名可保留 Shoegaze、Dream Pop、Emo、djent 等原名，不生造中文译名。
 短推荐理由直接说明值得探索的风格对照，避免每条都写“标签叠加/契合该岛/作为锚点”，各曲换用自然句式；详情也不机械罗列所有标签。资料范围需要时用“所属专辑的风格取向”“艺人的风格线索”，不能据此断言单曲实际编曲。'''
 DETAIL_FIELDS = ('preference_basis', 'music_fit', 'novelty', 'listening_tip')
+# 整体摘要的展示长度是软建议，不应因略超 300 字阻断整次分析。
+# 80 字以下仍视为信息不足；420 字是保护上限，避免异常长文案撑坏页面布局。
+OVERALL_SUMMARY_MIN = 80
+OVERALL_SUMMARY_MAX = 420
+OVERALL_SUMMARY_RECOMMENDED_MIN = 180
+OVERALL_SUMMARY_RECOMMENDED_MAX = 320
 # 音乐人关系只能复述输入目录已给出的事实；乐队沿革类推断一律视为幻觉。
 RELATION_CLAIM_WORDS = ('前身', '前身乐队', '前乐队', '前主唱', '前吉他手', '前贝斯手', '前鼓手',
                         '更名', '改名', '解散后', '重组', '原班人马', '初创成员')
@@ -48,7 +54,7 @@ def validate_copy(text, minimum=1, maximum=300, reject_vague=True):
     return text
 
 def validate_overall_summary(text, tracks, *, allow_known_artists=False):
-    validate_copy(text, 80, 300)
+    validate_copy(text, OVERALL_SUMMARY_MIN, OVERALL_SUMMARY_MAX)
     normalized = unicodedata.normalize('NFKC', text).casefold()
     for track in tracks:
         for field in ('title', 'artist'):
@@ -201,6 +207,10 @@ def invoke_validated(role, payload, command, timeout, directory, validator, on_r
                 raise ContractError('Agent 重新生成的共用时间预算已耗尽')
             attempt = next_attempt
             attempt_cap = 150 if next_attempt == 1 else 120
+            # A bounded first-run style request leaves time for a fresh retry.
+            # Longer CLI/recommendation budgets retain their existing limits.
+            if role == 'analysis' and 60 <= budget <= 90:
+                attempt_cap = 30
             attempt_timeout = max(1, min(int(remaining), attempt_cap))
             try:
                 result = invoke(role, payload, command, attempt_timeout, directory)
@@ -238,7 +248,7 @@ def invoke_validated(role, payload, command, timeout, directory, validator, on_r
                 elif '推荐文案校验发现多个问题' in error_text or 'candidates[' in error_text:
                     required_change = '必须一次性检查并修复反馈列出的全部 candidates 文案问题；逐条核对每个 reason 和 details 四栏的长度、重复和禁用词，reason 至少 15 字，details 每栏至少 15 字。不要只修复第一条，返回完整 JSON。'
                 elif 'overall_summary：文案长度要求' in error_text:
-                    required_change = '必须重写并压缩 overall_summary 到 240–280 字；先删重复修饰和听众建议，不能只原样返回。'
+                    required_change = f'必须把 overall_summary 调整到 {OVERALL_SUMMARY_MIN}–{OVERALL_SUMMARY_MAX} 字；建议控制在 {OVERALL_SUMMARY_RECOMMENDED_MIN}–{OVERALL_SUMMARY_RECOMMENDED_MAX} 字。只有超过保护上限或低于最低长度才需要强制调整，略超建议范围无需强行压缩。'
                 elif '必须返回三个兴趣岛' in error_text:
                     required_change = '必须把多出的岛合并进最接近的三个岛之一，并保留反馈列出的所有 record_ids。'
                 elif '兴趣岛名称必须抽象' in error_text:
@@ -319,7 +329,7 @@ def validate_islands(result, records, *, require_full_coverage=True):
         raise ContractError('兴趣岛未覆盖全部输入曲目，缺失 record_ids：'+str(sorted(set(range(len(records)))-seen)))
     return islands
 
-def _normalize_islands(result: Any, total: int) -> None:
+def _normalize_islands(result: Any, total: int, records: list[dict[str, Any]] | None = None) -> None:
     """兴趣岛 record_ids 去重并裁掉越界项，避免一个笔误让整轮重新生成。
 
     id 的合法范围是 0..total-1；模型偶尔会重复列出或写出越界编号。
@@ -347,11 +357,41 @@ def _normalize_islands(result: Any, total: int) -> None:
         name = island.get("name")
         if isinstance(name, str) and _island_name_has_genre(name):
             island["name"] = ABSTRACT_ISLAND_NAMES[(index - 1) % len(ABSTRACT_ISLAND_NAMES)]
+        summary = island.get("summary")
+        if isinstance(summary, str) and len(summary.strip()) > 300:
+            island["summary"] = summary.strip()[:300].rstrip("，、； ")
+    if total > 300 or len(islands) != 3 or not all(isinstance(group, dict) and
+            isinstance(group.get("record_ids"), list) for group in islands):
+        return
+    # Interest assignment is a classification, not a source claim. Fill a few
+    # missed IDs from the provided tag records instead of calling the model again.
+    tag_sets = [set(str(tag.get("tag")) for tag in (row.get("tags") or [])
+                    if isinstance(tag, dict) and tag.get("tag"))
+                for row in (records or [])]
+    for rid in range(total):
+        if rid in seen:
+            continue
+        tags = tag_sets[rid] if rid < len(tag_sets) else set()
+        scores = []
+        for island in islands:
+            owned = island["record_ids"]
+            similarity = sum(len(tags & tag_sets[owned_id]) for owned_id in owned
+                             if owned_id < len(tag_sets))
+            scores.append((similarity, -len(owned)))
+        choice = max(range(3), key=lambda index: (scores[index], -index))
+        islands[choice]["record_ids"].append(rid)
 
 
 def validate_analysis_copy(result, packet):
     # 先规范化兴趣岛的 record_ids：去重与越界修正比重新生成更可靠。
-    _normalize_islands(result, len(packet.get('source_tags', {}).get('records') or []))
+    records = packet.get('source_tags', {}).get('records') or []
+    _normalize_islands(result, len(records), records)
+    summary = result.get('overall_summary')
+    if isinstance(summary, str) and len(summary.strip()) > OVERALL_SUMMARY_MAX:
+        fitted = summary.strip()[:OVERALL_SUMMARY_MAX]
+        boundary = max(fitted.rfind(mark) for mark in ('。', '；', '！', '？'))
+        result['overall_summary'] = (fitted[:boundary + 1] if boundary >= OVERALL_SUMMARY_MIN
+                                     else fitted[:OVERALL_SUMMARY_MAX - 1].rstrip('，、； ') + '。')
     try:
         validate_overall_summary(result.get('overall_summary'), packet['favorite_tracks'],
                                  allow_known_artists=len(packet['favorite_tracks']) > 300)
@@ -393,7 +433,7 @@ def analyze(packet, command, timeout, directory, on_regeneration=None):
         note='每首曲目只归入一岛。'
         coverage_rule='record_ids 必须覆盖全部输入且不重复。'
         shape={'overall_summary':'整体风格总结','islands':[{'name':'抽象风格意象名（2–8 字，以“岛”结尾，不含任何流派名）','summary':'该类风格归纳','record_ids':[0]}]}
-    result=invoke_validated('analysis',{'task':f'把全歌单归纳为三大类兴趣岛，每首曲目只归入一岛。{note}按风格语义合并，不按单个标签机械分组。恰好三岛；资料不足允许空岛并说明待补充。岛屿名称必须抽象成风格意象（情绪、场景、质地、亮度或时空隐喻，2–8 字，以“岛”结尾），不得出现任何音乐流派或类别名词（金属、摇滚、流行、电子、嘻哈、说唱、爵士、民谣、朋克、雷鬼、古典、R&B、陷阱、后摇、梦泡、独立、另类、融合、重型等及对应英文）；具体风格只写进 summary。'+coverage_rule+'另写 overall_summary：80–300 字、一个自然段，分析全歌单的风格底色、融合元素和整体审美，依据标签分布而非个别曲目。绝不提具体曲名、艺人名或兴趣岛分组流程；不要把未知资料补成事实。'+COPY_POLICY,'records':rows,'response_shape':shape},command,timeout,directory,lambda value:validate_analysis_copy(value,packet),on_regeneration)
+    result=invoke_validated('analysis',{'task':f'把全歌单归纳为三大类兴趣岛，每首曲目只归入一岛。{note}按风格语义合并，不按单个标签机械分组。恰好三岛；资料不足允许空岛并说明待补充。岛屿名称必须抽象成风格意象（情绪、场景、质地、亮度或时空隐喻，2–8 字，以“岛”结尾），不得出现任何音乐流派或类别名词（金属、摇滚、流行、电子、嘻哈、说唱、爵士、民谣、朋克、雷鬼、古典、R&B、陷阱、后摇、梦泡、独立、另类、融合、重型等及对应英文）；具体风格只写进 summary。'+coverage_rule+'另写 overall_summary：{OVERALL_SUMMARY_MIN}–{OVERALL_SUMMARY_MAX} 字，建议控制在 {OVERALL_SUMMARY_RECOMMENDED_MIN}–{OVERALL_SUMMARY_RECOMMENDED_MAX} 字，一个自然段，分析全歌单的风格底色、融合元素和整体审美，依据标签分布而非个别曲目。只有超过保护上限或低于最低长度才需要强制调整；略超建议范围无需强行压缩。绝不提具体曲名、艺人名或兴趣岛分组流程；不要把未知资料补成事实。'+COPY_POLICY,'records':rows,'response_shape':shape},command,timeout,directory,lambda value:validate_analysis_copy(value,packet),on_regeneration)
     islands=result['islands']
     # 大歌单由 agent 给出代表歌手：映射回曲目编号，供展示与关系种子使用。
     tracks=packet.get('favorite_tracks') or []
@@ -435,6 +475,12 @@ def _catalog_candidates(candidates, limit):
 def curate(packet, candidates, command, timeout, directory, on_regeneration=None):
     islands=packet['agent_islands']
     target=packet['recommendation_policy'].get('target_recommendations',10)
+    if packet.get('strict_recall_mix') is True:
+        from candidate_routes import resolve_candidate_route
+        for candidate in candidates:
+            resolved=resolve_candidate_route(candidate,packet).get('candidate_type')
+            if resolved and (resolved!='musician_relation' or (candidate.get('provider_relation') or {}).get('url')):
+                candidate['candidate_type']=resolved
     # 三组 Atlas 各 10 首且互不重复，需要 30 首；多要约 1/3 富余，
     # 这样个别候选被丢弃或某类型缺口时仍有回旋空间。
     count=min(len(candidates),max(40,target*4))
@@ -486,11 +532,27 @@ def _program_copy(candidate, island_id):
             'novelty': "关系路径带来不同角度的补充，避免整批推荐集中在单一发现方式。",
             'listening_tip': "建议对照同一位成员参与的其他作品，留意编曲与音色的延续。",
         }
+    elif candidate.get('candidate_type')=='artist_continuation':
+        reason=f"{artist} 已在本次歌单中出现，这首候选沿同一艺人的公开曲目记录延伸收藏。"
+        details={
+            'preference_basis': f"本次歌单已经收录 {artist} 的作品，这条线索沿已有艺人继续展开。",
+            'music_fit': f"{artist} 的另一首公开曲目，可与歌单里同艺人的作品直接对照。",
+            'novelty': "熟悉的艺人提供不同作品的比较角度，不额外推断这首歌的风格。",
+            'listening_tip': "建议对照歌单中同艺人的曲目，留意作品间实际听感的异同。",
+        }
+    elif candidate.get('candidate_type')=='style_neighbor':
+        reason=f"沿 {seed} 的公开相似艺人线索找到 {artist}，适合比较邻近方向的作品。"
+        details={
+            'preference_basis': f"这条线索接近本次歌单艺人 {seed} 的公开相似艺人方向。",
+            'music_fit': f"{artist} 与 {seed} 的公开相似路径提供比较依据，不推断单曲听感。",
+            'novelty': "在邻近艺人中换一个作品，比较熟悉方向里的不同表达。",
+            'listening_tip': "建议与歌单里熟悉的艺人并排聆听，再判断实际风格距离。",
+        }
     else:
         reason=f"{artist} 来自相似艺人 {seed} 方向的公开平台记录，作为探索方向的补充。"
         details={
             'preference_basis': f"这条线索沿 {seed} 的相似艺人方向向外一步，属于探索范围。",
-            'music_fit': f"{artist} 的公开标签与本次歌单的重型与另类方向有交集，可对照比较。",
+            'music_fit': f"{artist} 的公开相似路径提供比较依据，具体曲目风格仍需聆听判断。",
             'novelty': "位置更远的相似线索，用于拓宽这批推荐的边界。",
             'listening_tip': "建议与熟悉的作品并排聆听，留意节拍与音墙层次的差异。",
         }
@@ -569,6 +631,25 @@ def validate_curation_copy(result, packet, candidates):
     if program_filled:
         print(f'[curate] 按配比补齐 {len(program_filled)} 首：{", ".join(program_filled[:8])}',
               file=sys.stderr, flush=True)
+    if packet.get('strict_recall_mix') is True and island_ids:
+        # Agent can meet aggregate quotas with many songs from one favorite artist,
+        # leaving too few distinct artists for three groups under max_per_artist.
+        # Keep its copy first; expose one group's artist cap per other artist
+        # from the already verified pool as deterministic fallback candidates.
+        artist_counts={}
+        for item in out:
+            key=normalized_name(item.get('artist'))
+            artist_counts[key]=artist_counts.get(key,0)+1
+        artist_limit=int(packet.get('recommendation_policy',{}).get('max_per_artist',2))
+        for item in candidates:
+            if item.get('candidate_type')!='artist_continuation' or item.get('canonical_track_id') in used or item.get('canonical_track_id') in dropped_ids:
+                continue
+            key=normalized_name(item.get('artist'))
+            if not key or artist_counts.get(key,0)>=artist_limit:
+                continue
+            out.append(_program_copy(item,island_ids[len(out)%len(island_ids)]))
+            used.add(item['canonical_track_id'])
+            artist_counts[key]=artist_counts.get(key,0)+1
     # Agent 必须为硬配额候选生成归属和文案；最终进入前 target 的位置由
     # lastfm_pipeline.select 确定性保证，避免把事实配额交给模型排序。
     # 被丢弃的候选不再算作“目录里存在该类型”，否则文案问题会变成整批重新生成。

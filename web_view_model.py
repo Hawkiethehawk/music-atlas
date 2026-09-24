@@ -26,17 +26,6 @@ from recommender import rank_bundle
 
 WEB_SCHEMA_VERSION = "1.0"
 
-WEB_AXES = (
-    ("HEA", "重量感 Heaviness", "heaviness"),
-    ("AGG", "攻击性 Aggression", "aggression"),
-    ("ATM", "氛围 Atmosphere", "atmosphere"),
-    ("ELE", "电子存在感 Electronic", "electronic_presence"),
-    ("POP", "流行亲和度 Pop", "pop_accessibility"),
-    ("RHY", "节奏密度 Rhythmic", "rhythmic_density"),
-    ("VOC", "人声沙哑度 Vocal", "vocal_harshness"),
-    ("EMO", "情绪强度 Emotional", "emotional_intensity"),
-)
-
 _TYPE_UI = {
     "style_neighbor": ("style", "风格邻近"),
     "artist_continuation": ("ext", "艺人延伸"),
@@ -93,18 +82,6 @@ def _unique(items: list[str]) -> list[str]:
         if value and marker not in seen:
             seen.add(marker)
             result.append(value)
-    return result
-
-
-def _axes(value: Any) -> dict[str, float | None]:
-    source = value if isinstance(value, dict) else {}
-    result: dict[str, float | None] = {}
-    for code, _label, key in WEB_AXES:
-        raw = source.get(key)
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            result[code] = None
-        else:
-            result[code] = round(float(raw), 1)
     return result
 
 
@@ -228,7 +205,7 @@ def _interest_entries(
         summary = _text(
             custom.get("summary"),
             f"本兴趣组由本次歌单中 {int(profile.get('track_count', 0) or 0)} 首已分类曲目聚合而成；"
-            "八轴为描述性研究估计。",
+            "风格归纳仅依据可核对的公开资料。",
         )
         result.append(
             {
@@ -240,7 +217,6 @@ def _interest_entries(
                 "artists": custom.get("artists") if isinstance(custom.get("artists"), list) else artists,
                 "repTracks": custom.get("repTracks") if isinstance(custom.get("repTracks"), list) else rep_tracks,
                 "summary": summary,
-                "axes": _axes(profile.get("style_axes")),
                 "trackCount": int(profile.get("track_count", 0) or 0),
                 "share": profile.get("share"),
                 "styleMix": profile.get("style_mix", []),
@@ -398,7 +374,7 @@ def _recommendation_entries(
         interest_label = (
             f"Interest {interest['code']} · {interest['name']}"
             if interest
-            else "本期偏好画像"
+            else "当前偏好画像"
         )
         why = _public_copy(explanation.get("text")) or "本条推荐说明未提供。"
         title = _text(item.get("title"), "未命名曲目")
@@ -452,13 +428,11 @@ def _recommendation_entries(
                 audit_by_id.get(canonical_id.casefold()),
                 audit_status,
             ),
-            "axis": _axes(item.get("style_axes")) if "style_axes" in item else None,
             "platformLinks": _platform_links(item.get("platform_links")),
             "researchLinks": [
                 _text(url) for url in item.get("sources", []) if _text(url)
             ],
             "score": item.get("ranking_score"),
-            "sequenceEnergy": item.get("sequence_energy"),
         }
         result.append(recommendation)
     result.sort(key=lambda item: int(item["rank"]))
@@ -525,9 +499,8 @@ def _artist_entries(
             "origin": "",
             "years": "",
             "genres": _style_labels(profile.get("style_mix"), definitions),
-            "bio": _text(profile.get("summary"), "本期研究未提供艺人简介。"),
+            "bio": _text(profile.get("summary"), "当前资料未提供艺人简介。"),
             "relations": _relations(entity),
-            "axis": _axes(profile.get("style_axes")),
             "sources": [_text(url) for url in profile.get("sources", []) if _text(url)],
             "boundaries": [
                 _text(boundary) for boundary in profile.get("boundaries", []) if _text(boundary)
@@ -543,11 +516,10 @@ def _artist_entries(
             "origin": "",
             "years": "",
             "genres": [],
-            "bio": "本期候选仅提供曲目级研究画像，尚未建立完整艺人档案。",
+            "bio": "当前候选仅提供曲目级研究画像，尚未建立完整艺人档案。",
             "relations": [],
-            "axis": recommendation.get("axis", {}),
             "sources": recommendation.get("researchLinks", []),
-            "boundaries": ["本页仅代表本期候选研究，不代表艺人全部作品。"],
+            "boundaries": ["本页仅基于当前候选资料，不代表艺人全部作品。"],
             "primaryTrackCount": 0,
             "creditedTrackCount": 0,
         }
@@ -571,7 +543,7 @@ def _release_entries(
                 "artist": _text(artist),
                 "year": year if year not in (None, "") else "—",
                 "label": "—",
-                "blurb": "本期输入或推荐中出现的发行项目；当前契约未提供更完整的发行说明。",
+                "blurb": "当前输入或推荐中出现的发行项目；现有资料未提供更完整的发行说明。",
                 "tracks": [],
             },
         )
@@ -600,14 +572,40 @@ def _source_entries(
     analysis: dict[str, Any],
     bundle: dict[str, Any],
     evidence_audit: dict[str, Any] | None,
+    review_report: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     style_analysis = analysis.get("style_analysis", {})
     source_count = int(snapshot.get("track_count", 0) or 0)
     declared_count = int(snapshot.get("declared_track_count", source_count) or source_count)
     classified, _unclassified, coverage = _effective_analysis_coverage(analysis, source_count)
-    audit_status = _text((evidence_audit or {}).get("status"), "not_available")
-    audit_accepted = int((evidence_audit or {}).get("accepted_count", 0) or 0)
-    audit_pending = int((evidence_audit or {}).get("pending_count", 0) or 0)
+    source_coverage = style_analysis.get("source_coverage") or {}
+    if source_coverage.get("mode") == "artist_only":
+        source_coverage_label = (
+            f"{source_coverage.get('sourced_artist_count', 0)}/{source_coverage.get('artist_count', 0)} 位歌手；"
+            f"歌单权重 {source_coverage.get('weighted_artist_track_count', 0)}/{source_count}"
+        )
+    elif source_coverage.get("mode") == "track_with_context":
+        direct = int(source_coverage.get("track_evidence_count", 0) or 0)
+        album = int(source_coverage.get("album_background_count", 0) or 0)
+        artist = int(source_coverage.get("artist_background_count", 0) or 0)
+        source_coverage_label = f"{direct + album}/{source_count}（曲目 {direct}、专辑 {album}；艺人背景 {artist}）"
+    else:
+        source_coverage_label = f"{classified}/{source_count}"
+    island_assigned = _island_assigned_track_count(analysis, source_count)
+    reports = ((review_report or {}).get("atlas_groups") or {}).get("group_reports") or []
+    group_index = int(bundle.get("atlas_group_index", 0) or 0)
+    group_review = reports[group_index] if 0 <= group_index < len(reports) else {}
+    review_status = _text(group_review.get("status"), "not_available")
+    review_accepted = int(group_review.get("accepted_count", 0) or 0)
+    review_gaps = int(group_review.get("gap_count", 0) or 0)
+    review_rejected = int(group_review.get("rejected_count", 0) or 0)
+    review_details = [
+        {"track": _short_text(entry.get("title"), 100),
+         "artist": _short_text(entry.get("artist"), 80),
+         "reason": "缺少风格资料" if "style_unknown" in entry.get("gaps", []) else "资料待补充"}
+        for entry in group_review.get("entries", [])
+        if isinstance(entry, dict) and entry.get("gaps")
+    ]
     reader = snapshot.get("reader") if isinstance(snapshot.get("reader"), dict) else {}
     completeness_status = _text(reader.get("completeness_status"))
     return [
@@ -627,7 +625,8 @@ def _source_entries(
             "kind": "第二步",
             "via": _public_status(style_analysis.get("profile_catalog_mode"), "程序分析"),
             "tracks": source_count,
-            "coverage": f"{classified}/{source_count}",
+            "coverage": source_coverage_label,
+            "islandAssignment": f"{island_assigned}/{source_count}" if island_assigned is not None else None,
             "updated": _date(analysis.get("generated_at")),
             "status": "degraded" if coverage.get("degraded") else "complete",
         },
@@ -643,19 +642,21 @@ def _source_entries(
         },
         {
             "id": "evidence",
-            "name": "证据审计",
-            "kind": "证据核验",
-            "via": _public_status((evidence_audit or {}).get("verification_scope"), "本地核验"),
+            "name": "本地证据复核",
+            "kind": "来源与身份核验",
+            "via": "本地来源记录核对（非联网独立核验）",
             "tracks": len(bundle.get("recommendations", [])),
-            "coverage": f"已接受 {audit_accepted} / 待处理 {audit_pending}",
-            "updated": "—",
-            "status": audit_status,
+            "coverage": (f"通过 {review_accepted} / 资料缺口 {review_gaps} / 拒绝 {review_rejected}"
+                         if group_review else "未生成复核记录"),
+            "updated": _date(group_review.get("reviewed_at")) if group_review else "—",
+            "status": review_status,
+            "details": review_details,
         },
     ]
 
 
-def _effective_analysis_coverage(analysis: dict[str, Any], source_count: int) -> tuple[int, int, dict[str, Any]]:
-    """Use complete Agent island assignments as the active Step 2 coverage metric."""
+def _island_assigned_track_count(analysis: dict[str, Any], source_count: int) -> int | None:
+    """Interest-island membership is not source-supported style classification."""
     islands = analysis.get("agent_islands")
     if isinstance(islands, list):
         assigned = {
@@ -663,18 +664,26 @@ def _effective_analysis_coverage(analysis: dict[str, Any], source_count: int) ->
             for island in islands if isinstance(island, dict)
             for record_id in island.get("record_ids", []) if type(record_id) is int and 0 <= record_id < source_count
         }
-        classified = len(assigned)
-        unclassified = max(0, source_count - classified)
-        return classified, unclassified, {
-            "mode": "agent_islands",
-            "assigned_track_count": classified,
-            "source_track_count": source_count,
-            "degraded": classified != source_count,
-        }
+        return len(assigned)
+    return None
+
+
+def _effective_analysis_coverage(analysis: dict[str, Any], source_count: int) -> tuple[int, int, dict[str, Any]]:
+    """Keep source-backed artist coverage distinct from per-track classification."""
     style_analysis = analysis.get("style_analysis", {})
-    coverage = style_analysis.get("profile_coverage", {})
-    classified = int(style_analysis.get("classified_track_count", 0) or 0)
-    unclassified = int(style_analysis.get("unclassified_track_count", 0) or 0)
+    coverage = dict(style_analysis.get("profile_coverage") or {})
+    classified = max(0, min(source_count, int(style_analysis.get("classified_track_count", 0) or 0)))
+    unclassified = max(0, source_count - classified)
+    source_coverage = style_analysis.get("source_coverage") or {}
+    if source_coverage.get("mode") == "artist_only":
+        covered = int(source_coverage.get("weighted_artist_track_count", 0) or 0)
+        coverage["degraded"] = covered < source_count
+    elif source_coverage.get("mode") == "track_with_context":
+        covered = int(source_coverage.get("track_evidence_count", 0) or 0) + int(
+            source_coverage.get("album_background_count", 0) or 0)
+        coverage["degraded"] = covered < source_count
+    else:
+        coverage["degraded"] = bool(coverage.get("degraded") or unclassified)
     return classified, unclassified, coverage
 
 
@@ -688,22 +697,54 @@ def build_web_payload(
 ) -> dict[str, Any]:
     """Convert validated pipeline artifacts into the SPA's allow-listed model."""
 
+    return _build_web_payload_from_ranked(
+        snapshot, analysis, rank_bundle(bundle, analysis), evidence_audit, editorial, review_report
+    )
+
+
+def _build_web_payload_from_ranked(
+    snapshot: dict[str, Any],
+    analysis: dict[str, Any],
+    ranked_bundle: dict[str, Any],
+    evidence_audit: dict[str, Any] | None = None,
+    editorial: dict[str, Any] | None = None,
+    review_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project a ranked bundle after its caller has enforced the bundle contract."""
+
     editorial = editorial or {}
-    ranked_bundle = rank_bundle(bundle, analysis)
     interests = _interest_entries(analysis, editorial)
     if analysis.get("agent_islands"):
         records=analysis["source_tags"]["records"]
         tracks=analysis["favorite_tracks"]
+        artist_only = analysis.get("analysis_mode") == "artist_summary"
+        artist_records = {
+            _text(item.get("artist")).casefold(): item
+            for item in analysis.get("source_tags", {}).get("artist_records", [])
+            if isinstance(item, dict) and _text(item.get("artist"))
+        }
         interests=[]
         for index, group in enumerate(analysis["agent_islands"]):
             members=[tracks[rid] for rid in group["record_ids"]]
-            interests.append({"id":group["id"],"code":str(index+1).zfill(2),"name":group["name"],"summary":group["summary"],"hue":25+index*90,"axes":None,"genres":[],"artists":list(dict.fromkeys(t["artist"] for t in members)),"repTracks":[t["artist"]+" — "+t["title"] for t in members],"sourceRecords":[{**records[rid],"title":tracks[rid].get("title",""),"artist":tracks[rid].get("artist","")} for rid in group["record_ids"]]})
+            names=list(dict.fromkeys(t["artist"] for t in members))
+            entry={"id":group["id"],"code":str(index+1).zfill(2),"name":group["name"],
+                   "summary":group["summary"],"hue":25+index*90,"genres":[],"artists":names,
+                   "repTracks":[] if artist_only else [t["artist"]+" — "+t["title"] for t in members]}
+            if artist_only:
+                entry["sourceArtists"]=[artist_records[name.casefold()] for name in names
+                                        if name.casefold() in artist_records]
+            else:
+                entry["sourceRecords"]=[{**records[rid],"title":tracks[rid].get("title",""),
+                                         "artist":tracks[rid].get("artist","")}
+                                        for rid in group["record_ids"]]
+            interests.append(entry)
     recommendations = _recommendation_entries(ranked_bundle, interests, evidence_audit)
     style_analysis = analysis.get("style_analysis", {})
     audit_status = _text((evidence_audit or {}).get("status"), "not_available")
     review_status = _text((review_report or {}).get("status"), "not_available")
     source_count = int(snapshot.get("track_count", 0) or 0)
     classified_count, unclassified_count, coverage = _effective_analysis_coverage(analysis, source_count)
+    island_assigned_count = _island_assigned_track_count(analysis, source_count)
     declared_count = int(snapshot.get("declared_track_count", source_count) or source_count)
     custom_lede = _text(editorial.get("lede"))
     raw_reader = snapshot.get("reader") if isinstance(snapshot.get("reader"), dict) else {}
@@ -714,7 +755,7 @@ def build_web_payload(
     }
     reader = {key: value for key, value in reader.items() if value}
     lede = custom_lede or (
-        f"基于 {source_count} 首完整歌单快照，沿着风格、听感、关系与探索路径，"
+        f"基于 {source_count} 首完整歌单快照，沿着有来源的风格、艺人关系与探索路径，"
         f"整理 {len(recommendations)} 个推荐方向。"
     )
     snapshot_status = _text(raw_reader.get("completeness_status"), _text(snapshot.get("reader_status"), "unknown"))
@@ -725,7 +766,6 @@ def build_web_payload(
             ranked_bundle.get("generated_at"),
             _text(analysis.get("generated_at"), _text(snapshot.get("captured_at"))),
         ),
-        "axes": [] if analysis.get("selection_mode") == "lastfm_constraints_v1" else [[code, label] for code, label, _key in WEB_AXES],
         "sourceTags": analysis.get("source_tags", {}).get("records", []),
         "issue": {
             "title": _text(editorial.get("title"), ""),
@@ -734,7 +774,8 @@ def build_web_payload(
         "status": {
             "run": "completed",
             "snapshot": snapshot_status,
-            "analysis": "degraded" if coverage.get("degraded") else "complete",
+            "analysis": ("complete_with_gaps" if style_analysis.get("evidence_model") == "sourced_tags_v1"
+                         else "degraded") if coverage.get("degraded") else "complete",
             "recommendation": _text(ranked_bundle.get("status"), "unknown"),
             "publication": _text(ranked_bundle.get("publication_status"), "not_applicable"),
             "evidence_audit": audit_status,
@@ -758,9 +799,15 @@ def build_web_payload(
             "asOfDate": _text(analysis.get("as_of_date")),
             "generatedAt": _text(analysis.get("generated_at")),
             "sourceTrackCount": int(analysis.get("source_track_count", 0) or 0),
+            "sourcePlaylistTrackCount": int(analysis.get("source_playlist_track_count",
+                                                     analysis.get("source_track_count", 0)) or 0),
             "classifiedTrackCount": classified_count,
             "unclassifiedTrackCount": unclassified_count,
+            "islandAssignedTrackCount": island_assigned_count,
             "profileCoverage": coverage,
+            "evidenceModel": _text(style_analysis.get("evidence_model")),
+            "mode": _text(analysis.get("analysis_mode")),
+            "sourceCoverage": style_analysis.get("source_coverage") or {},
         },
         "audit": {
             "status": audit_status,
@@ -778,12 +825,10 @@ def build_web_payload(
         "recommendations": recommendations,
         "artists": _artist_entries(analysis, recommendations),
         "albums": _release_entries(snapshot, recommendations),
-        "sources": _source_entries(snapshot, analysis, ranked_bundle, evidence_audit),
+        "sources": _source_entries(snapshot, analysis, ranked_bundle, evidence_audit, review_report),
         "taste_review": _taste_review(analysis),
     }
     if analysis.get("selection_mode") == "lastfm_constraints_v1":
-        for artist in payload["artists"].values():
-            artist["axis"] = None
         payload["issue"]["lede"] = analysis.get("overall_summary") or custom_lede or "整体风格总结待生成，请重新分析歌单。"
         records = analysis.get("source_tags", {}).get("records", [])
         payload["taggedTrackCount"] = sum(bool(r.get("tags")) for r in records)
@@ -812,6 +857,7 @@ def export_web_payload(
     editorial_path: Path | None = None,
     review_report_path: Path | None = None,
     require_publishable: bool = False,
+    publish_web_result: bool = False,
 ) -> dict[str, Any]:
     """Validate one runtime and write an atomic web payload."""
 
@@ -839,29 +885,39 @@ def export_web_payload(
     snapshot = validate_playlist_snapshot(read_json(snapshot_path), require_complete=True)
     analysis = validate_analysis_packet(read_json(analysis_path))
     bundle = read_json(bundle_path)
-    bundle = rank_bundle(bundle, analysis)
-    validate_recommendation_bundle(bundle, analysis)
+    if (isinstance(bundle, dict) and bundle.get("status") == "ready"
+            and bundle.get("bundle_stage") == "ranked"
+            and analysis.get("selection_mode") != "lastfm_constraints_v1"):
+        # A ranked bundle's contract already recomputes its exact song selection,
+        # scores and order against the candidate pool. Re-ranking it would only
+        # repeat that expensive deterministic comparison on a fresh export.
+        bundle = validate_recommendation_bundle(bundle, analysis)
+    else:
+        bundle = rank_bundle(bundle, analysis)
+        validate_recommendation_bundle(bundle, analysis)
 
+    # Web publication follows deterministic selection gates. A stale audit or
+    # local review report must never be credited to this run.
+    publish_web_result = publish_web_result or require_publishable
     evidence_audit = None
-    if evidence_audit_path.is_file():
+    if not publish_web_result and evidence_audit_path.is_file():
         evidence_audit = read_json(evidence_audit_path)
         if not isinstance(evidence_audit, dict):
             raise ContractError("evidence_audit 必须是对象")
 
     review_report = None
-    if review_report_path is not None and review_report_path.is_file():
+    if not publish_web_result and review_report_path is not None and review_report_path.is_file():
         review_report = read_json(review_report_path)
         if not isinstance(review_report, dict):
             raise ContractError("review_report 必须是对象")
 
-    if require_publishable:
-        publication = _text(bundle.get("publication_status"))
-        audit_status = _text((evidence_audit or {}).get("status"))
-        if publication not in {"published", "approved", "accepted"} or audit_status != "accepted":
-            raise ContractError(
-                "当前运行不是可发布状态：需要 publication_status 为 published/approved/accepted，"
-                "且 evidence_audit.status=accepted"
-            )
+    if publish_web_result:
+        if (bundle.get("status") != "ready" or bundle.get("bundle_stage") != "ranked"
+                or bundle.get("atlas_group_count") != 3
+                or type(bundle.get("atlas_group_index")) is not int
+                or bundle["atlas_group_index"] not in (0, 1, 2)
+                or len(bundle.get("recommendations") or []) != 10):
+            raise ContractError("正式 Web 发布需要已验证的三组 Atlas，每组十首且曲目顺序已锁定")
 
     editorial = None
     if editorial_path is not None:
@@ -871,7 +927,25 @@ def export_web_payload(
         if not isinstance(editorial, dict):
             raise ContractError("网页 editorial 配置必须是对象")
 
-    payload = build_web_payload(snapshot, analysis, bundle, evidence_audit, editorial, review_report)
+    payload = _build_web_payload_from_ranked(snapshot, analysis, bundle, evidence_audit, editorial, review_report)
+    if publish_web_result:
+        payload["status"].update(publication="published", evidence_audit="not_performed",
+                                 review="not_performed", review_elapsed_ms=None)
+        payload["audit"] = {"status": "not_performed", "acceptedCount": 0,
+                            "pendingCount": 0, "rejectedCount": 0}
+        payload["review"] = {"status": "not_performed", "elapsedMs": None,
+                             "networkRequests": 0, "agentCalls": 0}
+        # Gaps remain visible on the recommendation source without inventing
+        # a second verification stage.
+        gaps = [{"track": _short_text(item.get("title"), 100),
+                 "artist": _short_text(item.get("artist"), 80), "reason": "缺少风格资料"}
+                for item in bundle["recommendations"]
+                if not (item.get("style_evidence") or {}).get("tags")]
+        payload["sources"] = [source for source in payload["sources"] if source.get("id") != "evidence"]
+        for source in payload["sources"]:
+            if source.get("id") == "recommendation":
+                source["status"] = "published"
+                source["details"] = gaps
     write_json(output_path, payload)
     return {
         "status": "web_payload_written",

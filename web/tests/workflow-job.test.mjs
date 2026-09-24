@@ -13,7 +13,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createIsolatedServer, readSseEvents } from "./helpers.mjs";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { createIsolatedServer, readSseEvents, waitFor, PROJECT_ROOT } from "./helpers.mjs";
 
 const INVALID_SHORT_URL = "https://163cn.tv/atlas-e2e-invalid";
 
@@ -82,11 +84,20 @@ test("真实任务生命周期：SSE 收到完整失败事件流，seq 单调递
     finalJob = (await poll.json()).job;
   }
 
-  // 终态任务详情：退出码与诊断保留；服务端不向浏览器暴露运行目录。
+  // 原始 stderr 仅保存在服务端任务状态，任务响应和 SSE 不向浏览器提供。
   assert.equal(finalJob.status, "failed");
   assert.equal(finalJob.exit_code, 2);
-  assert.ok(finalJob.stderr_tail.trim().length > 0, "失败任务应保留 stderr 诊断尾部");
+  assert.equal(Object.prototype.hasOwnProperty.call(finalJob, "stderr_tail"), false);
+  assert.ok(seen.every((frame) => !Object.prototype.hasOwnProperty.call(frame.job, "stderr_tail")));
   assert.equal(Object.prototype.hasOwnProperty.call(finalJob, "runtime_dir"), false);
+  const statePath = path.join(server.runtimeDir, "jobs", job.id, "web_job_state.json");
+  const saved = await waitFor(async () => {
+    try {
+      const value = JSON.parse(await readFile(statePath, "utf8"));
+      return value.exit_code === 2 ? value : null;
+    } catch { return null; }
+  });
+  assert.ok(saved.stderr_tail.trim().length > 0, "服务端仍需保留诊断尾部");
   // 失败后任务目录保留事件产物，不在本测试中清理（runtime/ 已被 Git 忽略）。
 });
 
@@ -149,3 +160,174 @@ async function waitForFailure(baseUrl, jobId) {
   }
   throw new Error("任务未在期限内结束");
 }
+
+async function createZeroExitServer(label, { prematureCompleted = false } = {}) {
+  return createIsolatedServer({ label, beforeStart: async ({ runtimeDir, config }) => {
+    const shim = path.join(runtimeDir, "zero-exit-python.sh");
+    const earlyEvent = prematureCompleted
+      ? "echo '{\"event\":\"completed\",\"status\":\"completed\",\"stage\":\"export\"}'\n"
+      : "";
+    await writeFile(shim, `#!/bin/sh\n${earlyEvent}sleep 2\nexit 0\n`);
+    await chmod(shim, 0o755);
+    config.runtime.python = path.relative(PROJECT_ROOT, shim);
+    await writeFile(path.join(runtimeDir, "web.config.json"), JSON.stringify(config, null, 2));
+  } });
+}
+
+async function writeCompletionArtifacts(server, id, { reorder = false, unpublished = false,
+  publication = "published", auditStatus = "not_performed", reviewStatus = "not_performed",
+  processedCount = 91, playlistCount = processedCount, sourcedCount = 46,
+  reportPlaylistCount = playlistCount, reportProcessedCount = processedCount,
+  payloadPlaylistCount = playlistCount, payloadProcessedCount = processedCount } = {}) {
+  const jobDir = path.join(server.runtimeDir, "jobs", id);
+  const payloadPath = path.join(jobDir, "web_payload.json");
+  const publishedPath = path.join(server.runtimeDir, "current.json");
+  const selected = Array.from({ length: 3 }, (_, groupIndex) => ({
+    id: `atlas-${groupIndex + 1}`,
+    recommendations: Array.from({ length: 10 }, (_, trackIndex) => ({
+      canonical_track_id: `netease:${groupIndex * 10 + trackIndex + 1}`,
+    })),
+  }));
+  const rendered = selected.map((group) => ({ id: group.id,
+    recommendations: group.recommendations.map((track) => ({ id: track.canonical_track_id })),
+  }));
+  if (reorder) [rendered[1].recommendations[0], rendered[1].recommendations[1]]
+    = [rendered[1].recommendations[1], rendered[1].recommendations[0]];
+  const selection = { status: "tracks_locked", snapshot_id: "snapshot-test", atlas_groups: selected };
+  const artistOnly = playlistCount >= 1000;
+  const mode = artistOnly ? "artist_summary" : "public_facts_only";
+  const sourceCoverage = { mode: artistOnly ? "artist_only" : "track_with_context",
+    track_evidence_count: artistOnly ? 0 : sourcedCount,
+    album_background_count: 0, artist_background_count: 0,
+    no_style_evidence_count: artistOnly ? processedCount : processedCount - sourcedCount,
+    weighted_artist_track_count: artistOnly ? sourcedCount : 0,
+    artist_count: 2, sourced_artist_count: sourcedCount ? 1 : 0 };
+  const packet = { analysis_id: "analysis-test", source_track_count: processedCount,
+    source_playlist_track_count: playlistCount,
+    analysis_mode: mode, style_analysis: { evidence_model: "sourced_tags_v1",
+      source_coverage: sourceCoverage },
+    favorite_tracks: Array.from({ length: processedCount }, () => ({})),
+    source_tags: { records: Array.from({ length: processedCount }, () => ({})) },
+    recommendation_policy: { analysis_quality: { [artistOnly ? "min_artist_weight_share"
+      : "min_track_or_album_share"]: artistOnly ? 0.3 : 0.5 } } };
+  const payload = { payload_type: "music_atlas_web",
+    status: { run: "completed", publication, evidence_audit: auditStatus, review: reviewStatus },
+    source: { snapshotId: "snapshot-test" }, analysis: { analysisId: "analysis-test",
+      sourceTrackCount: payloadProcessedCount, sourcePlaylistTrackCount: payloadPlaylistCount,
+      evidenceModel: "sourced_tags_v1", mode,
+      sourceCoverage },
+    audit: { status: auditStatus }, review: { status: reviewStatus },
+    atlas_group_count: 3, atlas_groups: rendered,
+    recommendations: rendered[0].recommendations };
+  const report = { status: "completed", payload_path: payloadPath, current_data_path: publishedPath,
+    snapshot_id: "snapshot-test", analysis_id: "analysis-test",
+    source_track_count: reportPlaylistCount, processed_track_count: reportProcessedCount,
+    recommendation_groups: { count: 3, total_unique_recommendation_count: 30 } };
+  const serialized = JSON.stringify(payload);
+  await writeFile(path.join(jobDir, "web_selection.json"), JSON.stringify(selection));
+  await writeFile(path.join(jobDir, "musician_analysis.json"), JSON.stringify(packet));
+  await writeFile(payloadPath, serialized);
+  await writeFile(publishedPath, unpublished ? JSON.stringify({ ...payload, generated_at: "other-job" }) : serialized);
+  await writeFile(path.join(jobDir, "web_job_report.json"), JSON.stringify(report));
+}
+
+test("exit 0 未发最终事件且缺少完整产物时不得标记 completed", {
+  concurrency: false, skip: process.platform === "win32",
+}, async (t) => {
+  const server = await createZeroExitServer("zero-without-artifacts");
+  t.after(() => server.stop());
+  const created = await submitJob(server.baseUrl);
+  assert.equal(created.status, 202);
+  const { job } = await created.json();
+  const terminal = await waitForFailure(server.baseUrl, job.id);
+  assert.equal(terminal.exit_code, 0);
+  assert.equal(terminal.status, "failed");
+  assert.match(terminal.events.at(-1).error, /发布校验未通过/);
+  assert.equal((await (await fetch(`${server.baseUrl}/api/atlas`)).json()).empty, true);
+});
+
+test("子进程提前声称 completed 仍须等待退出和来源覆盖校验", {
+  concurrency: false, skip: process.platform === "win32",
+}, async (t) => {
+  const server = await createZeroExitServer("early-false-success", { prematureCompleted: true });
+  t.after(() => server.stop());
+  const response = await submitJob(server.baseUrl);
+  assert.equal(response.status, 202);
+  const id = (await response.json()).job.id;
+  await writeCompletionArtifacts(server, id, { sourcedCount: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const pending = (await (await fetch(`${server.baseUrl}/api/jobs/${id}`)).json()).job;
+  assert.notEqual(pending.status, "completed", "子进程的成功事件不能跳过服务端发布校验");
+  const terminal = await waitForFailure(server.baseUrl, id);
+  assert.equal(terminal.status, "failed");
+  assert.match(terminal.events.at(-1).error, /覆盖|质量门槛/);
+});
+
+test("exit 0 完整正式产物可补终态，草稿或伪造审计不可补", {
+  concurrency: false, skip: process.platform === "win32",
+}, async (t) => {
+  const scenarios = [
+    { label: "formal-no-independent-audit", options: {}, expected: "completed" },
+    { label: "percentile-track-coverage", options: { playlistCount: 182 }, expected: "completed" },
+    { label: "percentile-artist-coverage", options: { playlistCount: 1917,
+      processedCount: 959, sourcedCount: 288 }, expected: "completed" },
+    { label: "wrong-report-playlist-count", options: { playlistCount: 182,
+      reportPlaylistCount: 91 }, expected: "failed" },
+    { label: "wrong-report-processed-count", options: { playlistCount: 182,
+      reportProcessedCount: 182 }, expected: "failed" },
+    { label: "wrong-payload-playlist-count", options: { playlistCount: 182,
+      payloadPlaylistCount: 91 }, expected: "failed" },
+    { label: "wrong-payload-processed-count", options: { playlistCount: 182,
+      payloadProcessedCount: 182 }, expected: "failed" },
+    { label: "still-draft", options: { publication: "draft" }, expected: "failed" },
+    { label: "false-audit-claim", options: { auditStatus: "accepted" }, expected: "failed" },
+    { label: "false-review-claim", options: { reviewStatus: "accepted" }, expected: "failed" },
+    { label: "zero-sourced-tags", options: { sourcedCount: 0 }, expected: "failed" },
+    { label: "below-sourced-threshold", options: { sourcedCount: 45 }, expected: "failed" },
+  ];
+  for (const { label, options, expected } of scenarios) {
+    const server = await createZeroExitServer(label);
+    t.after(() => server.stop());
+    const response = await submitJob(server.baseUrl);
+    assert.equal(response.status, 202);
+    const id = (await response.json()).job.id;
+    await writeCompletionArtifacts(server, id, options);
+    const terminal = await waitForFailure(server.baseUrl, id);
+    assert.equal(terminal.exit_code, 0);
+    assert.equal(terminal.status, expected, label);
+  }
+});
+
+test("exit 0 缺失事件的回退仅在已发布内容与锁定顺序一致时成功", {
+  concurrency: false, skip: process.platform === "win32",
+}, async (t) => {
+  const invalid = await createZeroExitServer("zero-wrong-order");
+  t.after(() => invalid.stop());
+  const invalidResponse = await submitJob(invalid.baseUrl);
+  assert.equal(invalidResponse.status, 202);
+  const invalidId = (await invalidResponse.json()).job.id;
+  await writeCompletionArtifacts(invalid, invalidId, { reorder: true });
+  const rejected = await waitForFailure(invalid.baseUrl, invalidId);
+  assert.equal(rejected.exit_code, 0);
+  assert.equal(rejected.status, "failed", "曲目顺序不一致不能伪装为完整发布");
+
+  const unpublished = await createZeroExitServer("zero-wrong-publication");
+  t.after(() => unpublished.stop());
+  const unpublishedResponse = await submitJob(unpublished.baseUrl);
+  assert.equal(unpublishedResponse.status, 202);
+  const unpublishedId = (await unpublishedResponse.json()).job.id;
+  await writeCompletionArtifacts(unpublished, unpublishedId, { unpublished: true });
+  const notPublished = await waitForFailure(unpublished.baseUrl, unpublishedId);
+  assert.equal(notPublished.exit_code, 0);
+  assert.equal(notPublished.status, "failed", "用户发布文件与任务 payload 不一致不能标记成功");
+
+  const valid = await createZeroExitServer("zero-complete-artifacts");
+  t.after(() => valid.stop());
+  const validResponse = await submitJob(valid.baseUrl);
+  assert.equal(validResponse.status, 202);
+  const validId = (await validResponse.json()).job.id;
+  await writeCompletionArtifacts(valid, validId);
+  const accepted = await waitForFailure(valid.baseUrl, validId);
+  assert.equal(accepted.exit_code, 0);
+  assert.equal(accepted.status, "completed", "完整报告、payload 和用户发布路径一致才允许补终态");
+});

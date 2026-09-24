@@ -1,14 +1,14 @@
 # Music Atlas
 
-Music Atlas 是一个可扩展的歌单推荐工作流：**随时手动触发，不绑定时间；对本次输入的整个歌单做全量解析**。它把歌单读取、音乐人关系分析和 Skill 推荐拆成三个独立步骤，并通过 JSON 契约连接每一步。默认推荐目标为 10 首；候选不足时按实际可用数量输出 1–10 首，候选充足时仍输出 10 首。当前输出仅为**研究草稿**，不代表外部事实已核验或正式推荐。所有产物都供网页端展示；仓库不含任何消息发送途径。
+Music Atlas 是手动触发的歌单推荐工作流。Step 1 读取本次歌单；网页可让用户选择处理比例，原始歌单数和本次处理数分别记录。Step 2 用可获取的公开资料构建分析包，Step 3 研究候选并由程序选曲。默认推荐目标为 10 首；候选不足时按实际可用数量收缩。结果保留来源层级和资料缺口；来源格式合规不等于事实已独立核验。仓库不发送消息。
 
 ## 设计边界
 
 1. Step 1 将 Apple Music、网易云或本地 JSON/CSV 歌单统一为 `PlaylistSnapshot`。
-2. Step 2 只以本次 `PlaylistSnapshot` 作为偏好输入，由分析 Skill 研究公开音乐资料，返回逐曲画像及主唱、前乐队和 side project 关系；程序独占校验、统计和多兴趣聚合。
+2. Step 2 只以本次 `PlaylistSnapshot` 作为偏好输入。网页采集公开曲目、专辑与艺人标签，程序核对身份、URL、检索时间及风格映射；艺人关系由受限 Skill 研究，不能替代风格来源。千首及以上（按原始歌单数）只做有来源的歌手层级分析，不逐曲评价。
 3. Step 3 只接收本次 `MusicianAnalysisPacket`，由推荐 Skill 分轮研究候选事实；程序最多选出 10 首（候选不足时按可用数量收缩）后，生成与当前偏好、关系路径和实际评分一致的说明。
 
-Step 3 使用混合音乐发现策略：Skill 只提交艺人延伸、音乐人关系、细分风格邻近和探索四类候选的结构化事实与逐项证据；固定代码计算风格、听感轴、关系、频率、新鲜度、证据质量和公开关联七项分数，按可用候选自适应召回配额，再执行去重、项目覆盖、MMR 多样性控制和能量弧线排序。当前不调用平台个性化接口；反馈契约与离线评估已就位，但行为反馈只用于评估与人工批准的调优建议，不参与候选发现或自动排序。
+Step 3 使用艺人延伸、音乐人关系、细分风格邻近和探索四类候选；音乐人关系只在当前分析包有可核对路径时使用。Skill 提交候选事实与逐项证据，程序按六项有据可查的维度评分，复核召回类型、去重与配额，并控制项目覆盖、多样性和相邻顺序。来源资料模式没有听感八轴；显式历史 catalog 模式仍兼容旧字段。反馈只用于评估和人工批准的调优建议，不参与候选发现或自动排序。
 
 Apple Music 只用于歌单快照和最终跳转链接。Apple Music 或网易云的个性化推荐、登录状态和历史运行结果不参与候选发现、排序或说明生成。
 
@@ -53,7 +53,7 @@ atlas start
 
 ## 快速开始
 
-仓库不包含任何个人歌单或运行产物。使用公开测试夹具可以完整运行本地链路：
+仓库不包含个人歌单或运行产物。以下使用显式 catalog 兼容模式做离线结构测试；它不代表默认公开来源模式的分析质量：
 
 ```bash
 python workflow.py run \
@@ -62,12 +62,12 @@ python workflow.py run \
   --platform apple_music \
   --playlist-id sample \
   --playlist-name '示例歌单' \
-  --analysis-command 'python tests/fixtures/fake_analysis_agent.py' \
-  --analysis-batch-size 2 \
+  --analysis-mode catalog \
+  --style-profiles styles/artist_style_profiles.example.json \
   --runtime-dir runtime/local-run
 ```
 
-该命令执行 Step 1、测试分析 Skill、程序聚合和 Step 3 上下文准备。两个 fake 执行器都只生成明确标识的合成夹具，不联网、不调用真实模型、不发送消息；不要用于真实歌单画像或质量评估。每次新测试使用新的 runtime 目录。
+该命令使用仓库示例画像准备 Step 3 上下文，仅供离线契约测试。`fake_agent.py` 也只生成合成候选，不联网、不发送消息；不要用于真实歌单画像或质量评估。默认 Skill 分析请求不附已采集的风格来源时保持 `unclassified`，不能靠 `fake_analysis_agent.py` 生成可信分类。每次新测试使用新的 runtime 目录。
 
 使用仓库内的测试执行器验证 Step 3 合同：
 
@@ -76,7 +76,7 @@ python workflow.py skill \
   --analysis runtime/local-run/musician_analysis.json \
   --prompt runtime/local-run/agent_prompt.md \
   --output runtime/local-run/recommendation_bundle.json \
-  --channel-output runtime/local-run/channel_text.txt \
+  --report-output runtime/local-run/report.txt \
   --command 'python tests/fixtures/fake_agent.py'
 ```
 
@@ -92,18 +92,17 @@ Skill 的 `ready` 输出只能是 `candidate_pool`，不能预填评分、选曲
 
 ## 分析 Skill 工作流
 
-`run/analyze` 默认 `--analysis-mode skill`，不再依赖预置的四位艺人示例。流程为：
+`run/analyze` 默认 `--analysis-mode skill`，不依赖预置艺人示例。当前来源模式的流程为：
 
 ```text
 PlaylistSnapshot
-  -> 按艺人聚集、按曲目数分批的研究请求
-  -> 分析 Skill 的 MusicianResearchResult
-  -> 全批次校验的 MusicianResearchBundle
-  -> 程序统计、画像聚合、多兴趣分组与覆盖率检查
+  -> 身份绑定的研究请求（未采集风格来源时逐曲未知）
+  -> 公开标签采集与单曲/专辑/艺人来源核对
+  -> 程序统计、分层风格分布与覆盖率检查
   -> MusicianAnalysisPacket -> 推荐 Skill -> 程序评分与 10 首草稿
 ```
 
-分析 Skill 负责公开资料研究、每首曲目的风格混合/八轴描述、艺人/发行/单曲作用范围、置信度、来源与关系事实。它不能提交统计数、兴趣分组、评分或策略；未知也必须返回，保留 null，不允许遗漏、重复或替换曲目。每条已分类画像需要 style 证据，每项关系需要 relation 证据；证据必须有事实描述、URL 和实际检索时间。未来时间、过期、已知不可用证据和个性化来源会被拒绝。画像八轴是描述性估计，不是音频实测。
+当前研究请求带 `style_fact_policy: precollected_only`：分析 Skill 必须逐曲返回未知身份记录，不填风格、八轴或自找 URL；关系事实仍需逐项 `relation` 证据。来源收集器取得标签后，程序单独核对曲目身份、URL、时间与词表映射。只有曲目级证据可将单曲标为已分类；专辑和艺人标签仅作背景并单独统计。无资料保持未知，不能把艺人风格推断到每首歌。历史无标记研究结果和显式 catalog 模式保留各自旧契约，不用于新来源包。
 
 没有配置 `--analysis-command` 时只准备研究任务，返回兼容状态 `analysis_agent_required`，不生成伪分析或推荐。以已有快照为例：
 
@@ -143,19 +142,19 @@ Skill 模式不读取本地画像、关系目录或 `preferred_artists.txt`，�
 
 ## 数量契约
 
-歌曲数量始终来自本次 Step 1 输出：
+本次处理曲目数来自 Step 1，快照内部保持：
 
 ```text
 declared_track_count == track_count == len(tracks)
 ```
 
-代码不固定某个歌曲总数。Step 2 不重新抓取歌单，但分析 Skill 可以研究公开音乐资料；Step 3 不读取原始快照、登录 profile 或历史推荐，只接收本次分析包及本次候选研究的补充请求。
+代码不固定歌曲总数。网页分位选择后，`source_playlist_track_count` 保留原始歌单规模，`source_track_count` 表示本次实际处理数；1000 首模式分界看前者，例如 1917 首选择 50% 后处理 959 首，仍只做歌手分析。旧包没有原始规模字段时按处理数兼容。Step 3 不读取原始快照、登录 profile 或历史推荐，只接收本次分析包及候选研究补充请求。
 
 CSV 的声明数量优先级为 `--declared-count` → `--declared-count-file` → CSV 数据行数，并在 `reader.declared_count_source` 中记录来源。指定的数量文件缺失、损坏或没有合法数量时必须报错，不回退到行数；数量不一致的快照标记为 `incomplete`，阻止 Step 2。
 
 ## 风格口径
 
-`style_analysis.style_distribution` 是每首歌只有一个主风格的互斥审计分布；`style_analysis.overlap_style_distribution` 是逐曲多标签覆盖分布。一首歌可以命中多个细分风格，因此后者的覆盖率不要求合计 100%。
+`sourced_tags_v1` 分开记录曲目级风格、专辑背景和艺人背景：`style_distribution` 只统计有曲目级来源的归类，`album_background_style_distribution` 与 `artist_background_style_distribution` 不充当单曲事实。原始歌单不少于 1000 首时 `artist_style_distribution` 仅按主艺人在歌单中的曲目数加权，逐曲分类数为 0。来源资料没有映射标签时如实保留缺口。显式历史 catalog 包沿用其互斥与重叠风格分布。
 
 ## 运行耗时
 
@@ -177,12 +176,12 @@ CSV 的声明数量优先级为 `--declared-count` → `--declared-count-file` �
 
 ## 偏好分析
 
-- **未知不是低分**：缺失的听感画像使用 JSON `null`，不会当成安静、轻柔或低能量偏好。所有分析研究批次完成后，默认至少 50% 的当前曲目有完整分类，才允许准备推荐 Skill 上下文或排序；低覆盖仍保留分析与补全清单。
-- **精确覆盖**：Skill 逐曲声明 `artist/release/track` 判断层级，程序保留逐曲证据与字段来源，再聚合艺人摘要。兼容目录模式的 `release_overrides` 仍支持 `match_titles`、`match_albums`，双条件同时命中，曲目覆盖优先于专辑覆盖；不把艺人级判断冒充逐曲听音。
-- **多个兴趣组**：从已分类曲目确定性构建最多 3 个 `interest_profiles`，同时保留代表曲目、风格混合和听感轴。置信度加权并按艺人曲目数的平方根降低重复艺人影响；同一候选的风格与听感评分匹配同一兴趣组，避免把相反偏好平均成未观察到的中间偏好。
+- **未知不是低分**：没有来源标签的曲目不推测声音或听感轴。少于 1000 首时，曲目级或专辑级来源覆盖至少 50% 才能通过分析质量门槛；专辑资料仍只作背景。原始歌单不少于 1000 首时只看有来源歌手所覆盖的主艺人曲目权重，门槛为 30%，不逐曲评价。低覆盖仍保留分析与补全清单。
+- **精确覆盖**：程序按曲目、专辑、艺人核对来源并保留 URL 与检索时间；艺人背景不能转成单曲标签。兼容目录模式的 `release_overrides` 保留 `match_titles` 与 `match_albums` 匹配规则，显式选择 catalog 时才使用。
+- **多个兴趣组**：程序在已取得的资料范围内构建最多 3 个兴趣组，保留来源层级和未归类缺口。来源模型不生成八轴、主观听感分数或未经证据支持的歌曲描述。
 - **关系不能靠引用加分**：`candidate_routes.py` 将候选艺人与本次分析包的艺人身份或关系项目端点匹配，关系可来自分析 Skill 或显式兼容目录。关系需要来源和中/高置信度；随意增加 `analysis_refs` 不增加关系或频率分。研究阶段纠正错误的召回类型并记录 `route_corrections`，直接导入的类型不一致候选包会被拒绝。
 
-这些是描述性画像与当前分析包内的关系匹配，不是音频实测、用户喜欢概率或独立事实核验。兴趣分组最多做三轮种子选择，不引入训练任务或新的 Python 依赖。
+标签和关系只在对应来源层级内使用，不是音频实测、用户喜欢概率或独立事实核验。
 
 ## 分阶段候选研究
 
@@ -202,18 +201,18 @@ CSV 的声明数量优先级为 `--declared-count` → `--declared-count-file` �
 ```bash
 python workflow.py skill --analysis runtime/local-run/musician_analysis.json \
   --prompt runtime/local-run/agent_prompt.md --output runtime/local-run/expanded.json \
-  --channel-output runtime/local-run/expanded.txt --candidate-target 40 \
+  --report-output runtime/local-run/expanded.txt --candidate-target 40 \
   --max-research-rounds 2 --max-candidates 80 --timeout 600 \
   --command 'python tests/fixtures/fake_agent.py'
 ```
 
-补充轮仍遵守准备时的字符硬预算，原始 prompt/manifest 保持不变。预算耗尽或 Skill 执行器失败时仅写诊断，不生成或覆盖推荐与内部报告。程序只给最终最多 10 首生成说明，包含代表收藏、目录路径、具体听感差异、相对本次输入的新鲜点及草稿限制。
+补充轮仍遵守准备时的字符硬预算，原始 prompt/manifest 保持不变。预算耗尽或 Skill 执行器失败时仅写诊断，不生成或覆盖推荐与内部报告。程序只给最终最多 10 首生成说明，来源模式仅描述有依据的标签、关系路径及其层级，不补写听感差异。
 
 输出旁的 `<bundle 名>.research.json` 记录轮次、各轮 prompt 摘要、输入/输出字符数、耗时、候选预算和说明数量；成功时绑定排序包的精确摘要。字符量不是计费 token 或真实费用，fake Skill 执行器耗时也不代表真实检索延迟。
 
 ## Skill 提示词插槽
 
-`prompts/` 下的 Markdown 文件是可编辑提示词空间，按固定顺序附加到 Skill 任务。策略占位符会由当前分析包渲染，其他空占位符会明确显示“无额外要求”。提示词不能改变 Step 1 数量、Step 2 统计、当前输入隔离、硬性召回配额、去重上限或证据契约。每次运行的提示词文件摘要会写入 Skill context manifest。
+`prompts/` 下的 Markdown 文件是可编辑提示词空间，按固定顺序附加到 Skill 任务。策略占位符由当前分析包渲染，其他空占位符显示“无额外要求”。来源模式插槽不要求八轴或无来源的听感描述；显式历史 catalog 包仍按旧契约处理。插槽不能改变 Step 1 数量、Step 2 来源归属、输入隔离、召回与去重上限或证据契约。每次运行的提示词文件摘要写入 Skill context manifest。
 
 ## 扩展点
 
@@ -353,17 +352,17 @@ python workflow.py benchmark --analysis-a runtime/local-run/musician_analysis.js
 ```json
 {
   "max_per_artist": 1,
-  "ranking_weights": {"style_fit": 0.25, "axis_fit": 0.25}
+  "ranking_weights": {"style_fit": 0.25, "relation_fit": 0.30}
 }
 ```
 
 ```bash
 python workflow.py run --input tests/fixtures/playlist_sample.json --reader local_json \
   --policy-file runtime/reviewed_policy.json --runtime-dir runtime/policy-run \
-  --analysis-command 'python tests/fixtures/fake_analysis_agent.py'
+  --analysis-mode catalog --style-profiles styles/artist_style_profiles.example.json
 ```
 
-对象字段递归覆盖，未提供的字段保留默认值；数组整体替换。可调整评分权重、四类召回比例、艺人/项目上限、最低项目覆盖、候选池最小数量、多样性、序列与显示策略。新增 `analysis_quality.min_classified_share`（默认 0.5，范围大于 0 且不超过 1）、`diversity_policy.new_interest_bonus`（默认 4）与 `min_interest_groups`（默认 1，实际约束不超过本次可用兴趣组数）。默认 `candidate_pool_min` 为 1：它只规定最低候选门槛，不再要求候选池先覆盖全部召回类型；候选不足时推荐数可低于 10，但不会超过 `target_recommendations`。这些值仅通过人工策略文件修改，不自动放宽证据门槛。各组权重和召回比例总和必须为 1；未知字段、非法数值及固定设计边界修改会被拒绝，正常目标仍为 10 首。
+对象字段递归覆盖，未提供的字段保留默认值；数组整体替换。可调整六项有据可查的评分权重、召回比例、艺人/项目上限、最低项目覆盖、候选池最小数量、多样性、序列与显示策略。来源模式的 `analysis_quality` 按层级分别使用 `min_track_or_album_share`（少于千首，默认 0.5）或 `min_artist_weight_share`（原歌单千首及以上，默认 0.3）；历史包沿用 `min_classified_share`。默认 `candidate_pool_min` 为 1：候选不足时推荐数可低于 10，但不会超过 `target_recommendations`。未知字段、非法数值及固定设计边界修改会被拒绝。
 
 未指定文件时只使用默认策略，不自动发现或应用调优建议。最终策略 SHA-256 纳入 `analysis_id`、分析 manifest 和管线 manifest，且不会修改共享的 `DEFAULT_POLICY`。应用策略后重新执行 Step 2/3，不能把旧候选包当作新分析的结果使用。
 
@@ -375,7 +374,7 @@ python workflow.py run --input tests/fixtures/playlist_sample.json --reader loca
 
 `prepare-skill --manifest <路径>` 与 `skill --manifest <同一路径>` 可指定 context manifest；省略时使用提示词文件同目录的 `agent_context_manifest.json`（文件名保持兼容）。自定义多个 prompt 时也应使用各自的 manifest，避免共用同一清单。
 
-`analyze`/`run` 在兼容目录回退到公共示例或研究后存在未分类艺人/曲目（`profile_coverage.degraded`）时，会额外写出 `coverage_report.json`。报告列出覆盖率、最低门槛、未分类艺人及按受影响曲目数排序的 `review_queue`，附曲目、专辑和待研究字段。默认 Skill 模式无需私有目录；研究仍有缺口时补充来源后重新聚合，不自动降低门槛。曲目分类门槛与艺人完整覆盖分别报告，只有署名、没有主艺人曲目的艺人仍可能显示画像缺口。
+`analyze`/`run` 为来源资料模式写出 `coverage_report.json`，列出曲目级、专辑背景、艺人背景与无来源数量，以及对应模式的门槛和补全队列；千首及以上报告有来源歌手覆盖的主艺人曲目权重。默认 Skill 模式无需私有画像目录；资料不足时补充来源后重新聚合，不自动降低门槛。显式 catalog 的旧报告沿用画像覆盖字段。
 
 ## 评分日期与产物重建
 
@@ -383,7 +382,7 @@ python workflow.py run --input tests/fixtures/playlist_sample.json --reader loca
 
 `as_of_date`、规范化曲目信息（含平台歌曲 ID）、歌单来源信息和最终策略均纳入 `analysis_id`。显式改变参考日期会生成新分析身份；证据是否过期仍按审计执行时的时间检查，不能用旧参考日期延长证据有效期。
 
-本次仍使用 Schema 2.0，但旧工件需要重建：默认改为分析 Skill 研究，旧目录结果不能冒充研究包；需从当前快照执行 `analyze`，完成全部研究批次，再重新 `prepare-skill` 与 Step 3。需要保留旧目录行为时显式使用 `--analysis-mode catalog`。旧排序包缺少草稿状态、来源路线或重算不一致时会被拒绝；试听清单必须基于新结果生成。QQ 历史单页摘要还需重新获取快照。不要手工补字段、改 `analysis_id`，或将旧候选池冒充新分析的结果；历史文件不会自动覆盖或迁移。
+本次仍使用 Schema 2.0；旧分析包和已准备的提示词不能直接套到新来源契约。默认 `--analysis-mode skill` 在无程序采集来源时保持未知；网页来源收集器回填后才能按覆盖率门槛进入 Step 3。显式 `--analysis-mode catalog` 保留旧目录契约与八轴字段。修改插槽或来源后重新准备 Step 3；不要手工补字段、改 `analysis_id` 或把旧候选池冒充新分析结果。
 
 ## 历史 Schema 1 产物归档
 
@@ -401,10 +400,10 @@ Schema 1.0 的历史分析包和直接推荐包不能复用；修改后需要重
 
 工作流此前只用本地夹具 Skill 执行器完成端到端验证。**2026-09-11 已完成一次实时试运行**：
 经网页面板提交真实网易云公开歌单（1925 首，档位选前 30 首），由项目内 OpenAI 兼容执行器
-（OpenAI 兼容执行器，当前生产模型为 `deepseek-v4.1-flash`）完成 Step 2 分析与 Step 3 候选研究，程序产出 29 个候选、10 首推荐；候选携带
+（当时记录的模型为 `deepseek-v4.1-flash`）完成 Step 2 分析与 Step 3 候选研究，程序产出 29 个候选、10 首推荐；候选携带
 84 条、推荐携带 30 条可核验公开来源（证据分级 A 级 1 首、B 级 9 首），结果已原子发布到网页面板。
 
-仍需注意：**可信在线事实核验适配器尚未补齐**（当前证据 URL 由模型凭既有知识给出，
+这条历史记录不代表本次来源模型重构已在线复验。**当时没有可信在线事实核验适配器**（该次证据 URL 由模型凭既有知识给出，
 `evidence_audit` 仍为 `not_available`），因此结果保持 `publication_status: draft` 与
 「画像覆盖不足」提示；不能把离线格式检查或 Skill 自报核验状态当成生产验收。
 消息发送途径已从仓库移除，不存在任何外发通道。
@@ -425,16 +424,16 @@ npm --prefix web test
 npm --prefix web run test:browser
 ```
 
-当前 385 项 Python 测试不依赖 `input/` 或私有风格画像。Apple 读取工具另有 15 项 Node 单元测试与 1 项 Chromium 文件写入测试；网页层另有 13 项 Node 测试与 20 项 Chromium 交互测试。线上可达性以 2026-09-18 对当前公开歌单完成的 Apple 官方两页、123 首读取为准。
+Python 测试不依赖 `input/` 或私有风格画像；具体项数和通过情况以当前测试命令为准。Apple 读取工具、网页层与 Chromium 测试需分别运行，旧版统计不能充当本次改动的验收。2026-09-18 的 Apple 官方两页、123 首读取仅是当时的线上观察。
 
 `web/tests/` 覆盖网页层回归：`server.test.mjs` 与 `workflow-job.test.mjs` 用隔离端口和临时配置启动独立 `server.js` 实例（`ATLAS_WEB_CONFIG`），验证静态服务、错误路径、真实任务生命周期、SSE 事件顺序与并发互斥；`workflow-ui.browser.mjs` 用 Playwright 注入可编程 `EventSource`，覆盖乱序、重复、丢帧事件、SSE 中断回退轮询与轮询去重，以及歌单读完后才解锁的档位选择（上限、快捷键、越界拦截、提交后继续与取消）；`atlas-fixture.browser.mjs` 用 `tests/fixtures/playlist_sample.json` 与夹具执行器真实运行 `web_workflow.py`，在隔离 runtime 发布后验证页面渲染 10 首推荐。测试不访问外部歌单内容，不依赖真实检索执行器。
 
-`tests/test_analysis_agent.py` 新增 31 项测试，覆盖无目录研究、精确逐批覆盖/身份、快照和词表绑定、未知值、证据与程序字段边界、预算与总超时、失败报告/断点续跑、结果导入、输入保护、两阶段 Skill 到 10 首草稿及严格审计。真实 115 首快照另已准备 6 批分析任务；尚未执行真实分析 Skill，不将任务准备或夹具耗时当作推荐质量验收。
+`tests/test_analysis_agent.py` 覆盖研究身份、批次、未知状态、程序字段边界、失败报告和导入；`tests/test_sourced_summary.py` 与 `tests/test_taste_summary.py` 覆盖来源层级及千首歌手模式。显式 catalog 的夹具链路只验证结构，不将夹具耗时或合成标签当作真实推荐质量验收。
 
 `tests/test_preference_quality.py`、`tests/test_staged_research.py`、`tests/test_listening_benchmark.py` 覆盖未知画像、精准覆盖、补全队列、虚假引用、多兴趣复现、研究补充/超时/预算、程序说明、试听标签和遥测摘要。独立 CLI 回归也验证 20/40 候选、1/2 轮研究、10 首输出、拒绝覆盖标签及缺标签时不下质量结论。
 
 `tests/test_priority_fixes.py` 覆盖草稿输出、不可用证据阻断、上下文复用与硬预算、导出参数与超时、QQ 分页摘要和跨日复现。`tests/test_hardening.py`、`tests/test_policy_feedback.py` 覆盖排序信任边界、回溯可行性、数量清单、证据状态、命令引号、反馈与人工策略；`tests/test_pipeline_cli.py` 在临时目录通过独立进程运行完整夹具链路，并校验失败退出码、输出隔离与新增 CLI 参数。
 
-回归覆盖包括：Step 1 数量契约、Step 2 确定性分析、风格画像覆盖、Schema 2 bundle 校验、确定性七维评分与能量弧排序、证据/说明契约、反馈输入契约（`tests/test_feedback.py`）、六类离线评估指标与调优建议（`tests/test_evaluation.py`）、证据出处与 A/B/C 等级规则（`tests/test_evidence.py`）、上下文预算截断与画像覆盖报告（`tests/test_robustness.py`）。
+回归覆盖包括 Step 1 数量契约、Step 2 来源层级隔离、Schema 2 bundle 校验、六项有据可查的评分与公开标签衔接、证据与说明边界、反馈契约、离线评估以及上下文预算和覆盖报告；显式 catalog 的旧契约另有兼容测试。
 
 `apple_music_weekly.py` 仅保留兼容转发入口，实际执行入口是 `workflow.py`。

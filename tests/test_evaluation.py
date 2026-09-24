@@ -164,7 +164,6 @@ class OfflineEvaluationTests(unittest.TestCase):
         self.assertEqual(proposal["artifact_type"], "policy_tuning_proposal")
         self.assertEqual(set(proposal["suggested_deltas"]["ranking_weights"]), {
             "style_fit",
-            "axis_fit",
             "relation_fit",
             "frequency_fit",
             "novelty",

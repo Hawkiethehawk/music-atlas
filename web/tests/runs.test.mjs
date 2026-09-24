@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { createAuthStore } from "../auth_store.js";
 import { createIsolatedServer } from "./helpers.mjs";
 
@@ -52,4 +54,28 @@ test("运行历史：写入、终态更新、用户自助与管理员查询", { 
 
   const anonymous = await fetch(`${server.baseUrl}/api/me/runs`);
   assert.equal(anonymous.status, 401, "未登录不能查看运行历史");
+});
+
+test("运行历史保留单组推荐数，同时从已完成报告标明三组总量", { concurrency: false }, async (t) => {
+  const server = await createIsolatedServer({ label: "runs-groups", authRequired: true });
+  t.after(() => server.stop());
+  const store = createAuthStore(server.authDbPath);
+  const user = store.createUser("RunGroups", "groups-password-2026", "user");
+  const jobId = "20260924000000-1234abcd";
+  const runtimeDir = path.join(server.runtimeDir, "jobs", jobId);
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(path.join(runtimeDir, "web_job_report.json"), JSON.stringify({
+    status: "completed", recommendation_groups: { count: 3, total_unique_recommendation_count: 30 },
+    web_export: { recommendation_count: 10 },
+  }), "utf8");
+  store.createRun({ jobId, userId: user.id, runtimeDir });
+  store.updateRun(jobId, { status: "completed", recommendationCount: 10 });
+  store.close();
+  const loginResponse = await login(server.baseUrl, "/api/auth/login", { username: "RunGroups", password: "groups-password-2026" });
+  const response = await fetch(`${server.baseUrl}/api/me/runs`, { headers: { cookie: loginResponse.cookie } });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.runs[0].recommendation_count, 10);
+  assert.equal(payload.runs[0].recommendation_group_count, 3);
+  assert.equal(payload.runs[0].total_unique_recommendation_count, 30);
 });

@@ -11,25 +11,26 @@
 
 `track_profiles` 必须覆盖输入中的全部位置，不能重复或增加位置。每项包含：
 
+当前请求若带 `style_fact_policy: "precollected_only"`，说明没有附带程序已采集的风格来源。此时每条曲目画像只能返回以下字段和值：
+
 ```json
 {
   "position": 1,
   "track_key": "title - artist",
-  "classification_status": "classified | unclassified",
-  "scope": "artist | release | track | unknown",
-  "confidence": "high | medium | low",
+  "classification_status": "unclassified",
+  "scope": "unknown",
+  "confidence": "low",
   "style_mix": [],
-  "style_axes": {},
-  "summary": "事实和限制",
+  "summary": "尚无已采集的曲目风格来源",
   "evidence_items": []
 }
 ```
 
-已分类结果必须使用 taxonomy 中的风格引用、恰好一个 `primary` 风格、八个 0～100 风格轴和至少一条可用 `style` 证据。
+当前请求不得填写 `style_axes`、自找来源 URL 或把关系研究当成曲目风格证据。公开风格标签由程序采集，再按单曲、专辑、艺人层级归并；专辑和艺人资料不提升为单曲已分类。所有歌曲都必须保留身份与位置，关系艺人仍按下述契约返回。
+
+旧的研究结果若来自不带 `style_fact_policy` 的历史请求，沿用其原有 `style_axes` 与分类校验，只用于读取和验证旧工件；新请求不能省略该标记来绕过当前契约。显式 `--analysis-mode catalog` 是另一条兼容路径，不会让来源模型重新产生八轴。
 
 证据 `claim_type` 只能是 `style`、`track_identity`、`relation` 或 `release`；不得增加自定义类型。
-
-未分类结果必须使用 `scope: "unknown"`、`confidence: "low"`、空风格数组、八轴 `null` 和空证据数组。
 
 每个关系艺人必须恰好出现一次。主唱和关联项目事实都必须携带 `relation` 证据；无法确认时使用 `unknown` 或空列表。
 

@@ -92,7 +92,9 @@ def _chat_payload(settings: dict[str, Any], role: str, task: str) -> dict[str, A
     return payload
 
 
-def _request_once(url: str, api_key: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+def _request_once(
+    url: str, api_key: str, payload: dict[str, Any], timeout: int, telemetry: dict[str, int | str],
+) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -100,7 +102,23 @@ def _request_once(url: str, api_key: str, payload: dict[str, Any], timeout: int)
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+        raw = response.read()
+        telemetry["response_bytes"] = len(raw)
+        status = getattr(response, "status", 200)
+        telemetry["status"] = status if isinstance(status, int) and 100 <= status <= 599 else 200
+        return json.loads(raw.decode("utf-8", errors="replace"))
+
+
+def _request_telemetry(role: str, attempt: int, phase: str, elapsed_ms: int, values: dict[str, int | str]) -> None:
+    """Fixed fields only: never write the request, URL, key, response body or model text."""
+
+    print(
+        f"ATLAS_EXECUTOR_REQUEST role={role} attempt={attempt} retry_count={attempt - 1} "
+        f"phase={phase} elapsed_ms={elapsed_ms} status={values['status']} "
+        f"response_bytes={values['response_bytes']}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _secret_store_get() -> tuple[str | None, str | None]:
@@ -163,20 +181,26 @@ def _request(settings: dict[str, Any], role: str, task: str, timeout: int) -> di
     last_error: RuntimeError | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         retry_headers = None
+        metrics: dict[str, int | str] = {"status": "pending", "response_bytes": 0}
+        started = time.perf_counter()
+        _request_telemetry(role, attempt, "start", 0, metrics)
         try:
-            return _request_once(url, api_key, payload, timeout)
+            return _request_once(url, api_key, payload, timeout, metrics)
         except urllib.error.HTTPError as exc:
-            detail = ""
+            metrics["status"] = exc.code if isinstance(exc.code, int) and 100 <= exc.code <= 599 else "network_error"
             try:
-                detail = exc.read().decode("utf-8", errors="replace")[:300]
+                metrics["response_bytes"] = len(exc.read())
             except Exception:  # noqa: BLE001 — 错误体读取失败不掩盖原始状态码
                 pass
-            last_error = RuntimeError(f"上游返回 HTTP {exc.code}：{detail}")
+            last_error = RuntimeError(f"上游返回 HTTP {exc.code}")
             if exc.code < 500 and exc.code != 429:
                 raise last_error  # 请求本身有问题（鉴权/参数），重试无意义
             retry_headers = getattr(exc, "headers", None)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            metrics["status"] = "network_error"
             last_error = RuntimeError(f"请求失败：{exc}")
+        finally:
+            _request_telemetry(role, attempt, "end", max(0, round((time.perf_counter() - started) * 1000)), metrics)
         if attempt < MAX_ATTEMPTS:
             time.sleep(_retry_delay(attempt, retry_headers))
     assert last_error is not None

@@ -4,8 +4,12 @@
  * 每次修改后运行：对固定的三个真实歌单跑完整流程，把每一步的状态、事件、
  * 耗时与三组 Atlas 类型分布保存到本地 regression/<时间戳>/ 下，便于对比。
  *
- * 用法：node scripts/regression.mjs [--no-wait]
+ * 用法：
+ *   ATLAS_USER=... ATLAS_PASS=... ATLAS_REGRESSION_PLAYLISTS_JSON='[...]' \
+ *     node scripts/regression.mjs [--no-wait]
  *   --no-wait   只提交任务不等待（用于并行观察）
+ *
+ * 认证信息和真实歌单只从环境变量读取，不提供默认账号、密码或歌单。
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -13,25 +17,35 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BASE = process.env.ATLAS_BASE || "https://atlas.hawkie.cloud";
-const LOGIN = { username: process.env.ATLAS_USER || "Hawkie", password: process.env.ATLAS_PASS || "Xiaoliyu123." };
 
-const PLAYLISTS = [
-  {
-    id: "netease-hawkie-favorites",
-    label: "网易云 · Hawk1e喜欢的音乐",
-    input: "分享歌单: Hawk1e喜欢的音乐 https://163cn.tv/bgOsrL6p (@网易云音乐)",
-  },
-  {
-    id: "netease-liminal",
-    label: "网易云 · Liminal",
-    input: "分享歌单: Liminal https://163cn.tv/bgSP16lq (@网易云音乐)",
-  },
-  {
-    id: "apple-favorites",
-    label: "Apple Music · 喜爱歌曲",
-    input: "https://music.apple.com/us/playlist/%E5%96%9C%E7%88%B1%E6%AD%8C%E6%9B%B2/pl.u-9DU1g31kdJ?l=zh",
-  },
-];
+function requiredEnv(name) {
+  const value = String(process.env[name] || "").trim();
+  if (!value) throw new Error(`缺少环境变量 ${name}；不会使用默认凭据或默认歌单`);
+  return value;
+}
+
+function loadPlaylists() {
+  let playlists;
+  try {
+    playlists = JSON.parse(requiredEnv("ATLAS_REGRESSION_PLAYLISTS_JSON"));
+  } catch (error) {
+    throw new Error(`ATLAS_REGRESSION_PLAYLISTS_JSON 必须是 JSON 数组：${error.message || error}`);
+  }
+  if (!Array.isArray(playlists) || playlists.length !== 3) {
+    throw new Error("ATLAS_REGRESSION_PLAYLISTS_JSON 必须包含恰好三个歌单对象");
+  }
+  return playlists.map((playlist, index) => {
+    if (!playlist || typeof playlist !== "object") throw new Error(`第 ${index + 1} 个歌单配置不是对象`);
+    const id = String(playlist.id || "").trim();
+    const label = String(playlist.label || "").trim();
+    const input = String(playlist.input || "").trim();
+    if (!id || !label || !input) throw new Error(`第 ${index + 1} 个歌单必须包含 id、label、input`);
+    return { id, label, input };
+  });
+}
+
+const LOGIN = { username: requiredEnv("ATLAS_USER"), password: requiredEnv("ATLAS_PASS") };
+const PLAYLISTS = loadPlaylists();
 
 const NO_WAIT = process.argv.includes("--no-wait");
 const POLL_MS = 5000;

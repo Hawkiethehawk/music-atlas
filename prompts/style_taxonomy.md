@@ -1,6 +1,6 @@
 # 细分风格提示词插槽
 
-使用分析包 known_style_refs 中的具体 style_ref。候选可以使用未出现在 active_style_refs 中的新风格；允许一首歌曲同时命中多个风格，style_mix 权重必须合计 100%。
+使用分析包 `known_style_refs` 中的具体 `style_ref`。候选可使用未出现在 `active_style_refs` 中的新风格，但每个标签要有可核对的公开来源；`style_mix` 的权重合计为 1，不能把艺人标签伪装成单曲标签。
 
 特别区分：
 

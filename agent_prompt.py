@@ -33,18 +33,18 @@ RECOMMENDATION_SKILL_INSTRUCTIONS = """你是 Music Atlas 候选研究 Skill。�
 
 硬性边界：
 1. 不读取平台登录态、原始歌单、历史推荐、上一轮结果或个性化推荐页面。
-2. 只提交公开资料支持的候选事实，不提交评分；七维分数、配额、去重、多样性和顺序全部由程序计算。
+2. 只提交公开资料支持的候选事实，不提交评分；配额、去重、多样性和顺序全部由程序计算。
 3. Apple Music 只能作为跳转链接。候选证据使用官方页面、MusicBrainz、Wikidata、Last.fm、ListenBrainz、Bandcamp、公开 YouTube 或 Spotify 页面。
-4. 每个候选必须同时具备歌曲身份和风格证据；音乐人关系候选还必须具备关系证据。证据不足时返回 insufficient_evidence。
+4. 每个候选必须具备可核对的歌曲身份，以及风格或音乐人关系的公开证据；音乐人关系候选还必须具备关系证据。单曲标签缺失时允许引用所属专辑或艺人资料，但必须注明资料层级，不得声称它是这首歌的直接风格事实。证据不足时返回 insufficient_evidence。
 5. 风格必须使用 known_style_refs；允许使用不在 active_style_refs 中的新风格，由程序计算其与当前画像的距离。
 6. 每位艺人独立判断，不能使用宽泛“摇滚”兜底，也不能为 Bad Omens 设置特殊逻辑。
 7. 只研究结构化候选，不为全部候选撰写最终推荐说明；程序最多选出 target_recommendations 首（候选不足时按可用数量收缩）后，根据兴趣组、关系与实际评分生成说明。
-8. candidate_type 由程序复核：艺人延伸必须匹配当前艺人，音乐人关系必须匹配当前分析包中的项目艺人；其余候选按与最近兴趣组的风格/听感距离分类。researched 关系来自 Step 2 研究 Skill，仍待独立核验；不可用随意引用冒充关系。目录中 discovery.kind 为 platform_artist_tracks 的候选来自平台公开歌曲记录，不需要相似艺人来源，也不得为其编造相似艺人种子。
-9. 按 interest_profiles 分组分别研究，避免只选整体平均听感。若有 research_request，只补其指定的缺额/约束，遵守剩余数量预算和去重清单；这不是历史偏好输入。若 research_request.parallel_worker 存在，这是并行分片：只返回 requested_type_counts 指定类型、最多 candidate_budget 首；不同分片之间可能出现重复，程序会统一去重。
+8. candidate_type 由程序复核：艺人延伸必须匹配当前艺人，音乐人关系必须匹配当前分析包中的项目艺人；其余候选按有来源的标签和公开相似艺人路径分类。researched 关系来自 Step 2 研究 Skill，仍待独立核验；不可用随意引用冒充关系。目录中 discovery.kind 为 platform_artist_tracks 的候选来自平台公开歌曲记录，不需要相似艺人来源，也不得为其编造相似艺人种子。
+9. 按 interest_profiles 分组分别研究，避免只选整体平均风格。若有 research_request，只补其指定的缺额/约束，遵守剩余数量预算和去重清单；这不是历史偏好输入。若 research_request.parallel_worker 存在，这是并行分片：只返回 requested_type_counts 指定类型、最多 candidate_budget 首；不同分片之间可能出现重复，程序会统一去重。
 
 关系表述：只有 candidate_type 为 musician_relation 的候选可以描述音乐人关系，且只能复述候选证据中已给出的人名与关系；其他类型一律不得出现成员、合作、同台等关系表述。任何类型都禁止推断乐队沿革，例如“前身”“前身乐队”“由…更名而来”“解散后重组”“原班人马”“初创成员”。若某位音乐人曾参与其他乐队，只能写“<人名> 在加入 <乐队> 前参与过 <乐队>”；不能写“<乐队> 是 <乐队> 的前身”。违反该规则的候选会被程序直接丢弃。
 
-首轮候选池至少达到 recommendation_policy.candidate_pool_min；候选充足时尽量覆盖 recall_mix 的 candidate_type，候选不足时不为凑齐类型虚构结果。补充轮以 research_request 为准，不必重复首轮的最低数量或全部类型。候选不得命中 favorite_track_keys 或相同 platform_track_id。style_mix 权重合计为 1；style_axes 必须填写八个 0 到 100 的听感轴。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
+首轮候选池至少达到 recommendation_policy.candidate_pool_min；候选充足时尽量覆盖 recall_mix 的 candidate_type，候选不足时不为凑齐类型虚构结果。补充轮以 research_request 为准，不必重复首轮的最低数量或全部类型。候选不得命中 favorite_track_keys 或相同 platform_track_id。若有风格标签，style_mix 权重合计为 1，标签必须可回溯至单曲、专辑或艺人来源；不要生成听感数字。canonical_track_id 使用可稳定审计的外部标识，例如 musicbrainz:recording-id。
 
 每条 evidence_items 包含 claim_type、claim、url；claim_type 只能是 track_identity、style、relation、release。evidence_items 中的 URL 也必须列入 sources。evidence_grade 只能是 A、B、C，style_confidence 只能是 high、medium、low。
 
@@ -68,7 +68,6 @@ RECOMMENDATION_SKILL_INSTRUCTIONS = """你是 Music Atlas 候选研究 Skill。�
     "relation_path": ["当前偏好锚点", "关系或风格路径", "候选歌曲"],
     "style_refs": ["style:..."],
     "style_mix": [{"style_ref": "style:...", "role": "primary", "weight": 1.0}],
-    "style_axes": {"heaviness": 0, "aggression": 0, "atmosphere": 0, "electronic_presence": 0, "pop_accessibility": 0, "rhythmic_density": 0, "vocal_harshness": 0, "emotional_intensity": 0},
     "style_confidence": "high | medium | low",
     "evidence_grade": "A | B | C",
     "evidence_items": [{"claim_type": "track_identity", "claim": "事实", "url": "https://..."}, {"claim_type": "style", "claim": "事实", "url": "https://..."}],
@@ -338,7 +337,6 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
                 "style_refs",
                 "applied_scope",
                 "style_mix",
-                "style_axes",
                 "rationale",
                 "sources",
                 "evidence_items",
@@ -362,7 +360,6 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
                 "classification_status",
                 "confidence",
                 "style_mix",
-                "style_axes",
                 "summary",
                 "boundaries",
                 "sources",
@@ -376,15 +373,15 @@ def build_agent_input(packet: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "taxonomy_version",
             "profile_catalog_mode",
+            "evidence_model",
+            "analysis_mode",
             "known_style_refs",
             "active_style_refs",
             "style_definitions",
-            "axis_definitions",
             "frequency_basis",
             "classified_track_count",
             "unclassified_track_count",
             "overlap_style_distribution",
-            "style_axes",
             "profile_coverage",
             "interest_model",
             "interest_profiles",

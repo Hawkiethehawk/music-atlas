@@ -226,6 +226,8 @@ def spawn_server(port: int) -> subprocess.Popen:
     if not node:
         raise ServiceError("找不到 node；网页面板由 Node 运行，请先安装 Node.js")
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ERR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     stdout_fd = os.open(LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
     stderr_fd = os.open(ERR_LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
     try:

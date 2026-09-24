@@ -13,6 +13,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 import web_service
 
@@ -33,19 +34,24 @@ def _write_state(port: int, pid: int) -> None:
         {"service": web_service.SERVICE_NAME, "port": port, "pid": pid}), encoding="utf-8")
 
 
+def _isolate_service_state(testcase: unittest.TestCase) -> None:
+    state_dir = tempfile.TemporaryDirectory(prefix="atlas-web-service-state-")
+    testcase.addCleanup(state_dir.cleanup)
+    state_patch = patch.object(web_service, "STATE_PATH", Path(state_dir.name) / "service-state.json")
+    state_patch.start()
+    testcase.addCleanup(state_patch.stop)
+
+
 class WebServiceLifecycleTest(unittest.TestCase):
     def setUp(self):
+        _isolate_service_state(self)
         self.port = _free_port()
-        if web_service.STATE_PATH.exists():
-            web_service.STATE_PATH.unlink()
 
     def tearDown(self):
         try:
             web_service.stop(self.port)
         except web_service.ServiceError:
             pass
-        if web_service.STATE_PATH.exists():
-            web_service.STATE_PATH.unlink()
 
     def test_start_status_reuse_stop(self):
         result = web_service.start(self.port, open_page=False)
@@ -101,6 +107,7 @@ class ForeignServiceGuardTest(unittest.TestCase):
     """端口被非本项目服务占用时的防护：默认拒绝，--force 才替换。"""
 
     def setUp(self):
+        _isolate_service_state(self)
         self.port = _free_port()
 
         class FakeHandler(BaseHTTPRequestHandler):
@@ -118,14 +125,10 @@ class ForeignServiceGuardTest(unittest.TestCase):
         self.server = HTTPServer(("127.0.0.1", self.port), FakeHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        if web_service.STATE_PATH.exists():
-            web_service.STATE_PATH.unlink()
 
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
-        if web_service.STATE_PATH.exists():
-            web_service.STATE_PATH.unlink()
 
     def test_start_rejected_without_force(self):
         with self.assertRaises(web_service.ServiceError):

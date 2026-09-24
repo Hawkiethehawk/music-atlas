@@ -122,6 +122,7 @@ def build_research_requests(snapshot: dict, taxonomy: dict, taxonomy_sha256: str
                     assigned_artists.add(normalized_name(artist))
         request = {
             "schema_version": SCHEMA_VERSION, "request_type": "musician_research_request",
+            "style_fact_policy": "precollected_only",
             "source_snapshot_id": snapshot["snapshot_id"], "snapshot_sha256": snapshot_sha256,
             "taxonomy_sha256": taxonomy_sha256, "source_track_count": snapshot["track_count"],
             "batch_number": len(requests) + 1,
@@ -165,6 +166,24 @@ def validate_research_result(value: Any, request: dict, taxonomy: dict) -> dict:
         raise ContractError("研究结果必须逐一覆盖本批每首曲目，未知也须明确返回")
     seen: set[int] = set()
     for index, profile in enumerate(profiles):
+        if request.get("style_fact_policy") == "precollected_only":
+            if isinstance(profile, dict) and "style_axes" in profile:
+                raise ContractError("来源限定研究画像不得提交八轴")
+            profile = _object(profile, {"position", "track_key", "classification_status", "scope", "confidence",
+                                        "style_mix", "summary", "evidence_items"}, "来源限定研究曲目画像",
+                              strip_extra=True)
+            profiles[index] = profile
+            position = profile["position"]
+            if isinstance(position, bool) or not isinstance(position, int) or position not in targets or position in seen:
+                raise ContractError("研究画像包含多余、重复或错误的曲目位置")
+            seen.add(position)
+            if profile["track_key"] != targets[position]["track_key"]:
+                raise ContractError("研究画像不能更改曲目身份")
+            _text(profile["summary"], "画像 summary")
+            if (profile["classification_status"] != "unclassified" or profile["scope"] != "unknown"
+                    or profile["confidence"] != "low" or profile["style_mix"] != [] or profile["evidence_items"] != []):
+                raise ContractError("未提供已采集来源的研究请求不得提交风格分类或自填来源 URL")
+            continue
         profile = _object(profile, {"position", "track_key", "classification_status", "scope", "confidence", "style_mix",
                                    "style_axes", "summary", "evidence_items"}, "研究曲目画像", strip_extra=True)
         profiles[index] = profile
@@ -409,15 +428,17 @@ def validate_taste_summary_result(value: Any, *, snapshot: dict, taxonomy: dict,
             _text(theme["note"], f"semantic_themes[{index}].note", 600)
 
     profile = _object(value["taste_profile"], {"dominant_styles", "secondary_styles",
-                                              "exploration_appetite", "mood_axes"}, "taste_profile")
+                                              "exploration_appetite"}, "taste_profile", optional={"mood_axes"})
     for field in ("dominant_styles", "secondary_styles"):
         styles = profile[field]
         if not isinstance(styles, list) or any(ref not in known_refs for ref in styles):
             raise ContractError(f"taste_profile.{field} 必须是风格本体引用数组")
     if profile["exploration_appetite"] not in ("high", "medium", "low"):
         raise ContractError("taste_profile.exploration_appetite 必须是 high、medium 或 low")
-    mood = _validate_style_axes(profile["mood_axes"], "taste_profile.mood_axes", allow_unknown=False)
-    profile["mood_axes"] = mood
+    # Legacy summaries remain readable; new prompts never request estimated
+    # audio axes. The new source-evidence packet discards any legacy axes.
+    if "mood_axes" in profile:
+        _validate_style_axes(profile["mood_axes"], "taste_profile.mood_axes", allow_unknown=False)
 
     review = _object(value["editorial_review"],
                      {"headline", "review", "inner_world", "humor_notes"}, "editorial_review")

@@ -49,6 +49,10 @@ deploy() {
   rsync -a --delete \
     --exclude '.git/' --exclude 'runtime/' --exclude 'input/' \
     --exclude 'web/node_modules/' \
+    --exclude '.playwright-cli/' --exclude '.playwright-auth/' \
+    --exclude '.env*' --exclude 'secrets/' --exclude 'state.json' \
+    --exclude '/web/data/' --exclude '/styles/artist_style_profiles.json' \
+    --exclude 'output/' --exclude '*.log' --exclude '*.orig' \
     --exclude '__pycache__/' --exclude '*.pyc' --exclude 'atlas-review-overlay*.tar' \
     "$SOURCE_ROOT/" "$temporary/"
   ln -s "$SHARED_RUNTIME" "$temporary/runtime"

@@ -46,6 +46,7 @@
   "workflow": {
     "analysis_parallelism": 5,
     "recommendation_parallelism": 4,
+    "workflow_time_budget_seconds": 120,
     "analysis_timeout_seconds": 7200,
     "recommendation_timeout_seconds": 3600,
     "track_percentile_default": 1,

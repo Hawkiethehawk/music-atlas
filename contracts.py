@@ -43,7 +43,6 @@ CANDIDATE_TYPES = {
 
 RANKING_FEATURE_KEYS = (
     "style_fit",
-    "axis_fit",
     "relation_fit",
     "frequency_fit",
     "novelty",
@@ -309,8 +308,205 @@ def _validate_score_map(value: Any, label: str) -> None:
         _require_score(raw_score, f"{label}.{key}")
 
 
+def _validate_sourced_style_analysis(packet: dict[str, Any], style: dict[str, Any], source_count: int) -> None:
+    """New source-led packet: evidence provenance, not synthetic listening axes."""
+    if "axis_definitions" in style or "style_axes" in style:
+        raise ContractError("来源资料分析不得携带八轴")
+    definitions = style.get("style_definitions")
+    if not isinstance(definitions, list) or not definitions:
+        raise ContractError("风格词表不能为空")
+    known = {item.get("style_ref") for item in definitions if isinstance(item, dict)}
+    if None in known or known != set(style.get("known_style_refs", [])):
+        raise ContractError("风格引用与词表不一致")
+    mode = packet.get("analysis_mode")
+    artist_only = mode == "artist_summary"
+    playlist_count = packet.get("source_playlist_track_count", source_count)
+    if (isinstance(playlist_count, bool) or not isinstance(playlist_count, int)
+            or playlist_count < 1 or playlist_count < source_count):
+        raise ContractError("原始歌单曲目数必须是正整数且不小于本次处理曲目数")
+    quality_field = "min_artist_weight_share" if artist_only else "min_track_or_album_share"
+    quality = _require_dict(packet["recommendation_policy"].get("analysis_quality"), "analysis_quality")
+    floor = quality.get(quality_field)
+    if set(quality) != {quality_field} or isinstance(floor, bool) or not isinstance(floor, (int, float)) or not 0 < floor <= 1:
+        raise ContractError("来源资料的质量门槛必须与当前分析层级一致，且大于零")
+    if (artist_only and playlist_count < 1000) or (not artist_only and playlist_count >= 1000):
+        raise ContractError("1000 首及以上只允许歌手层级分析")
+    source = _require_dict(packet.get("source_tags"), "source_tags")
+    records = source.get("records")
+    if not isinstance(records, list) or len(records) != source_count:
+        raise ContractError("公开来源记录未覆盖歌单")
+    tracks = packet["favorite_tracks"]
+    assignments = packet.get("track_style_assignments")
+    if not isinstance(assignments, list) or len(assignments) != source_count:
+        raise ContractError("逐曲身份状态记录未覆盖歌单")
+    allowed_by_artist: dict[str, set[tuple[str, str, str]]] = {}
+    counts: Counter[str] = Counter()
+    for index, (track, record, raw_assignment) in enumerate(zip(tracks, records, assignments)):
+        raw_record = _require_dict(record, f"source_tags.records[{index}]")
+        if raw_record.get("track_key") != track["track_key"]:
+            raise ContractError("来源记录与本次歌单身份或顺序不一致")
+        assignment = _require_dict(raw_assignment, f"track_style_assignments[{index}]")
+        if assignment.get("track_key") != track["track_key"] or assignment.get("artist") != track["artist"]:
+            raise ContractError("逐曲身份状态与歌单不一致")
+        if "style_axes" in assignment:
+            raise ContractError("来源资料的逐曲状态不得携带八轴")
+        raw_layers = raw_record.get("evidence")
+        if not isinstance(raw_layers, list):
+            raw_layers = [raw_record]
+        valid: dict[str, list[tuple[str, str, str]]] = {scope: [] for scope in ("track", "album", "artist")}
+        for raw_layer in raw_layers:
+            if not isinstance(raw_layer, dict) or raw_layer.get("scope") not in valid:
+                continue
+            if raw_layer.get("identity_status") == "mismatch" or raw_layer.get("status") not in (None, "supported"):
+                continue
+            subject = raw_layer.get("subject")
+            expected = {"artist": track["artist"]}
+            if raw_layer["scope"] == "track":
+                expected["track"] = track["title"]
+            elif raw_layer["scope"] == "album":
+                expected["album"] = track.get("album", "")
+            if not isinstance(subject, dict) or not all(
+                normalized_name(subject.get(key)) == normalized_name(value) and normalized_name(value)
+                for key, value in expected.items()
+            ):
+                continue
+            url, stamp = raw_layer.get("url"), raw_layer.get("retrieved_at")
+            try:
+                _validate_http_url(url, "公开来源 URL")
+                parse_timestamp(stamp, "公开来源时间")
+            except ContractError:
+                continue
+            tags = raw_layer.get("tags")
+            if not isinstance(tags, list):
+                continue
+            for tag in tags:
+                if isinstance(tag, dict) and tag.get("style_ref") in known and isinstance(tag.get("tag"), str) and tag["tag"].strip():
+                    token = (url, stamp, tag["style_ref"])
+                    valid[raw_layer["scope"]].append(token)
+                    if raw_layer["scope"] == "artist":
+                        allowed_by_artist.setdefault(normalized_name(track["artist"]), set()).add(token)
+        expected_scope = "unknown" if artist_only else next((scope for scope in ("track", "album", "artist") if valid[scope]), "unknown")
+        applied_scope = expected_scope + "_background" if expected_scope in ("album", "artist") else expected_scope
+        if assignment.get("applied_scope") != applied_scope:
+            raise ContractError("风格层级不符合真实来源优先级")
+        refs = list(dict.fromkeys(ref for _, _, ref in valid.get(expected_scope, [])))
+        direct_refs = refs if expected_scope == "track" else []
+        background_refs = refs if expected_scope in ("album", "artist") else []
+        if (assignment.get("style_refs") != direct_refs
+                or assignment.get("background_style_refs") != background_refs
+                or assignment.get("primary_style_ref") != (direct_refs[0] if direct_refs else "")):
+            raise ContractError("单曲风格与背景资料必须分开，且均由真实层级标签支持")
+        if assignment.get("classification_status") != ("classified" if direct_refs else "unclassified"):
+            raise ContractError("专辑/艺人背景不得冒充单曲已分类")
+        proof = assignment.get("evidence_items", [])
+        if (not isinstance(proof, list) or any(not isinstance(item, dict) or item.get("scope") != expected_scope
+                                               or not isinstance(item.get("tags"), list) for item in proof)
+                or {(item["url"], item["retrieved_at"], tag.get("style_ref"))
+                    for item in proof for tag in item["tags"] if isinstance(tag, dict)}
+                != set(valid.get(expected_scope, []))):
+            raise ContractError("逐曲证据与原始资料不一致")
+        if set(assignment.get("sources", [])) != {item["url"] for item in proof}:
+            raise ContractError("逐曲来源 URL 与归属证据不一致")
+        mix = assignment.get("style_mix", [])
+        if not isinstance(mix, list) or [item.get("style_ref") for item in mix if isinstance(item, dict)] != direct_refs:
+            raise ContractError("逐曲风格权重不能引用无来源标签")
+        counts[expected_scope] += 1
+    coverage = _require_dict(style.get("source_coverage"), "style_analysis.source_coverage")
+    if coverage.get("mode") != ("artist_only" if artist_only else "track_with_context"):
+        raise ContractError("资料覆盖统计使用了错误分析层级")
+    for field, scope in (("track_evidence_count", "track"), ("album_background_count", "album"),
+                         ("artist_background_count", "artist"), ("no_style_evidence_count", "unknown")):
+        if _require_int(coverage.get(field), field) != counts[scope]:
+            raise ContractError(f"{field} 与有来源的逐曲状态不一致")
+    if artist_only and any(counts[scope] for scope in ("track", "album", "artist")):
+        raise ContractError("歌手层级分析不得产生逐曲风格归类")
+    classified = counts["track"]
+    if _require_int(style.get("classified_track_count"), "classified_track_count") != classified:
+        raise ContractError("已分类歌曲数与原始资料不一致")
+    if _require_int(style.get("unclassified_track_count"), "unclassified_track_count") != source_count - classified:
+        raise ContractError("未分类歌曲数与原始资料不一致")
+    profiles = style.get("artist_profiles")
+    if not isinstance(profiles, list):
+        raise ContractError("歌手资料必须为数组")
+    if _require_int(coverage.get("artist_count"), "artist_count") != len(profiles):
+        raise ContractError("歌手资料计数不一致")
+    classified_artists = 0
+    primary_counts = {normalized_name(row["artist"]): row["count"] for row in packet["primary_distribution"]}
+    weighted = 0
+    for profile in profiles:
+        item = _require_dict(profile, "artist_profile")
+        if "style_axes" in item:
+            raise ContractError("来源资料的歌手资料不得携带八轴")
+        marker = normalized_name(item.get("artist"))
+        proof = allowed_by_artist.get(marker, set())
+        refs = list(dict.fromkeys(ref for _, _, ref in sorted(proof)))
+        actual = item.get("style_refs")
+        if not isinstance(actual, list) or set(actual) != set(refs):
+            raise ContractError("歌手风格不得超出已取得的艺人级证据")
+        artist_evidence = item.get("evidence_items", [])
+        if (not isinstance(artist_evidence, list)
+                or any(not isinstance(entry, dict) or entry.get("scope") != "artist"
+                       or not isinstance(entry.get("tags"), list) for entry in artist_evidence)
+                or {(entry["url"], entry["retrieved_at"], tag.get("style_ref"))
+                    for entry in artist_evidence for tag in entry["tags"] if isinstance(tag, dict)} != proof):
+            raise ContractError("歌手证据与原始艺人级资料不一致")
+        if set(item.get("sources", [])) != {entry["url"] for entry in artist_evidence}:
+            raise ContractError("歌手资料 URL 与艺人级证据不一致")
+        if item.get("classification_status") != ("classified" if refs else "unclassified"):
+            raise ContractError("歌手分类状态与公开证据不一致")
+        if refs:
+            classified_artists += 1
+            weighted += primary_counts.get(marker, 0)
+    if _require_int(coverage.get("sourced_artist_count"), "sourced_artist_count") != classified_artists:
+        raise ContractError("有来源的歌手数量不一致")
+    if _require_int(coverage.get("weighted_artist_track_count"), "weighted_artist_track_count") != weighted:
+        raise ContractError("歌手证据覆盖权重不一致")
+    profile_coverage = _require_dict(style.get("profile_coverage"), "profile_coverage")
+    if profile_coverage.get("classified_artist_count") != classified_artists:
+        raise ContractError("歌手画像分类数量不一致")
+    if profile_coverage.get("unclassified_artist_count") != len(profiles) - classified_artists:
+        raise ContractError("歌手画像缺口数量不一致")
+    if set(style.get("active_style_refs", [])) != {
+        ref for item in [*assignments, *profiles]
+        for ref in [*item.get("style_refs", []), *item.get("background_style_refs", [])]
+    }:
+        raise ContractError("活跃风格引用与来源资料不一致")
+    from preference_model import MODEL_CONFIG, build_interest_profiles
+    if style.get("interest_model") != MODEL_CONFIG or style.get("interest_profiles") != build_interest_profiles(assignments):
+        raise ContractError("兴趣分组必须从已检索风格证据确定性重算")
+    counts_by_ref: Counter[str] = Counter(item["primary_style_ref"] for item in assignments
+                                           if item["classification_status"] == "classified")
+    distribution = style.get("style_distribution")
+    if not isinstance(distribution, list) or {
+        item.get("style_ref"): item.get("count") for item in distribution if isinstance(item, dict)
+    } != dict(counts_by_ref):
+        raise ContractError("风格分布必须来自有来源的逐曲归属")
+    for scope in ("album", "artist"):
+        background_counts: Counter[str] = Counter(item["background_style_refs"][0] for item in assignments
+                                                   if item["applied_scope"] == scope + "_background" and item["background_style_refs"])
+        actual = style.get(scope + "_background_style_distribution")
+        if not isinstance(actual, list) or {
+            item.get("style_ref"): item.get("count") for item in actual if isinstance(item, dict)
+        } != dict(background_counts):
+            raise ContractError(f"{scope} 背景分布与来源记录不一致")
+    if artist_only:
+        weighted_by_ref: Counter[str] = Counter()
+        for profile in profiles:
+            if profile.get("classification_status") == "classified":
+                weighted_by_ref[profile["primary_style_ref"]] += primary_counts.get(normalized_name(profile["artist"]), 0)
+        actual = style.get("artist_style_distribution")
+        if not isinstance(actual, list) or {
+            item.get("style_ref"): item.get("artist_weighted_track_count")
+            for item in actual if isinstance(item, dict)
+        } != dict(weighted_by_ref):
+            raise ContractError("歌手风格权重分布与有来源的艺人资料不一致")
+
+
 def _validate_style_analysis(packet: dict[str, Any], source_count: int) -> None:
     style_analysis = _require_dict(packet.get("style_analysis"), "style_analysis")
+    if style_analysis.get("evidence_model") == "sourced_tags_v1":
+        _validate_sourced_style_analysis(packet, style_analysis, source_count)
+        return
     _require_text(style_analysis.get("taxonomy_version"), "style_analysis.taxonomy_version")
     for field in ("taxonomy_sha256", "profile_catalog_sha256"):
         _require_text(style_analysis.get(field), f"style_analysis.{field}")
@@ -817,6 +1013,21 @@ def validate_analysis_packet(value: Any) -> dict[str, Any]:
 
 def require_analysis_coverage(packet: dict[str, Any]) -> None:
     """Missing preference evidence is not a quiet/low-energy taste."""
+    analysis = packet.get("style_analysis", {})
+    if analysis.get("evidence_model") == "sourced_tags_v1":
+        total = packet["source_track_count"]
+        coverage = analysis["source_coverage"]
+        if packet.get("analysis_mode") == "artist_summary":
+            count = coverage["weighted_artist_track_count"]
+            minimum = packet["recommendation_policy"]["analysis_quality"]["min_artist_weight_share"]
+            label = "有来源歌手覆盖的曲目权重"
+        else:
+            count = coverage["track_evidence_count"] + coverage["album_background_count"]
+            minimum = packet["recommendation_policy"]["analysis_quality"]["min_track_or_album_share"]
+            label = "曲目或专辑级风格资料"
+        if total and count / total < minimum:
+            raise ContractError(f"{label}不足：{count}/{total}，要求至少 {minimum:.0%}；不得发布为 completed")
+        return
     total = int(packet["source_track_count"])
     classified = sum(item.get("classification_status") == "classified" for item in packet["track_style_assignments"])
     minimum = packet["recommendation_policy"].get("analysis_quality", {}).get("min_classified_share", 0.5)
@@ -829,11 +1040,16 @@ def require_analysis_coverage(packet: dict[str, Any]) -> None:
 def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = None) -> dict[str, Any]:
     policy = _require_dict(value, "recommendation_policy")
     quality = policy.get("analysis_quality", {"min_classified_share": 0.5})
-    if not isinstance(quality, dict) or set(quality) != {"min_classified_share"}:
-        raise ContractError("analysis_quality 仅允许 min_classified_share")
-    floor = quality["min_classified_share"]
+    allowed_qualities = ({"min_classified_share"}, {"min_track_or_album_share"}, {"min_artist_weight_share"})
+    if not isinstance(quality, dict) or set(quality) not in allowed_qualities:
+        raise ContractError("analysis_quality 必须提供一种与分析层级一致的覆盖下限")
+    if analysis_mode == "artist_summary" and "min_track_or_album_share" in quality:
+        raise ContractError("歌手模式不能使用曲目/专辑覆盖下限")
+    if analysis_mode != "artist_summary" and "min_artist_weight_share" in quality:
+        raise ContractError("非歌手模式不能使用歌手权重覆盖下限")
+    floor = next(iter(quality.values()))
     if isinstance(floor, bool) or not isinstance(floor, (int, float)) or not 0 <= floor <= 1:
-        raise ContractError("min_classified_share 必须是 0 到 1")
+        raise ContractError("分析覆盖下限必须是 0 到 1")
     minimum = _require_int(policy.get("min_recommendations"), "min_recommendations", 1)
     maximum = _require_int(policy.get("max_recommendations"), "max_recommendations", minimum)
     if maximum < minimum:
@@ -889,7 +1105,7 @@ def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = No
     if ranking_weights is not None:
         _validate_weight_map(ranking_weights, "recommendation_policy.ranking_weights")
         if set(ranking_weights) != set(RANKING_FEATURE_KEYS):
-            raise ContractError("recommendation_policy.ranking_weights 必须完整且仅包含七项评分维度")
+            raise ContractError("recommendation_policy.ranking_weights 必须完整且仅包含六项有据可查的评分维度")
     diversity = _require_dict(policy.get("diversity_policy"), "recommendation_policy.diversity_policy")
     _require_score(diversity.get("new_interest_bonus", 4.0), "diversity_policy.new_interest_bonus")
     if _require_int(diversity.get("min_interest_groups", 1), "diversity_policy.min_interest_groups", 1) > target:
@@ -898,13 +1114,13 @@ def validate_recommendation_policy(value: Any, *, analysis_mode: str | None = No
         _require_score(diversity.get(field), f"recommendation_policy.diversity_policy.{field}")
     similarity_weights = diversity.get("similarity_weights")
     _validate_weight_map(similarity_weights, "recommendation_policy.diversity_policy.similarity_weights")
-    if set(similarity_weights) != {"style", "axis", "artist", "project"}:
-        raise ContractError("diversity_policy.similarity_weights 必须包含 style、axis、artist、project")
+    if set(similarity_weights) != {"style", "artist", "project"}:
+        raise ContractError("diversity_policy.similarity_weights 必须包含 style、artist、project")
     sequence_policy = _require_dict(policy.get("sequence_policy"), "recommendation_policy.sequence_policy")
-    if sequence_policy.get("mode") != "energy_arc":
-        raise ContractError("recommendation_policy.sequence_policy.mode 必须是 energy_arc")
+    if sequence_policy.get("mode") != "public_tag_continuity":
+        raise ContractError("recommendation_policy.sequence_policy.mode 必须是 public_tag_continuity")
     _validate_weight_map(
-        {field: sequence_policy.get(field) for field in ("transition_weight", "arc_weight", "ranking_weight")},
+        {field: sequence_policy.get(field) for field in ("transition_weight", "ranking_weight")},
         "recommendation_policy.sequence_policy.weights",
     )
     for field in ("prefer_adjacent_transitions", "allow_familiar_anchor"):
@@ -943,12 +1159,12 @@ def _validate_optional_ranking_fields(value: dict[str, Any], label: str) -> None
     if score_breakdown is not None:
         _validate_score_map(score_breakdown, f"{label}.score_breakdown")
         if set(score_breakdown) != set(RANKING_FEATURE_KEYS):
-            raise ContractError(f"{label}.score_breakdown 必须完整包含七项评分维度")
+            raise ContractError(f"{label}.score_breakdown 必须完整包含六项有据可查的评分维度")
     score_features = value.get("score_features")
     if score_features is not None:
         _validate_score_map(score_features, f"{label}.score_features")
         if set(score_features) != set(RANKING_FEATURE_KEYS):
-            raise ContractError(f"{label}.score_features 必须完整包含七项评分维度")
+            raise ContractError(f"{label}.score_features 必须完整包含六项有据可查的评分维度")
 
 
 def _validate_explanation(value: Any, label: str) -> None:
@@ -1039,6 +1255,7 @@ def _validate_candidate_pool(
     label: str = "candidate_pool",
     require_all_types: bool = True,
     required_types: set[str] | None = None,
+    sourced_model: bool = False,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ContractError(f"{label} 必须是数组")
@@ -1088,7 +1305,11 @@ def _validate_candidate_pool(
             raise ContractError(f"{label}[{index}] 包含未知 style_refs：{unknown_style_refs}")
         if list(dict.fromkeys(style_refs)) != [entry["style_ref"] for entry in style_mix]:
             raise ContractError(f"{label}[{index}].style_refs 必须与 style_mix 顺序一致")
-        _validate_style_axes(candidate.get("style_axes"), f"{label}[{index}].style_axes", allow_unknown=style_status == "unclassified")
+        if sourced_model:
+            if "style_axes" in candidate:
+                raise ContractError(f"{label}[{index}] 来源资料候选不得生成听感轴")
+        else:
+            _validate_style_axes(candidate.get("style_axes"), f"{label}[{index}].style_axes", allow_unknown=style_status == "unclassified")
         style_confidence = _require_text(
             candidate.get("style_confidence"),
             f"{label}[{index}].style_confidence",
@@ -1096,8 +1317,8 @@ def _validate_candidate_pool(
         if style_confidence not in STYLE_CONFIDENCE_LEVELS:
             raise ContractError(f"{label}[{index}].style_confidence 必须是 high、medium 或 low")
         if style_status == "unclassified":
-            if style_mix or style_refs or any(value is not None for value in candidate.get("style_axes", {}).values()):
-                raise ContractError(f"{label}[{index}] 的 unknown 风格不得填写风格、八轴或评分资料")
+            if style_mix or style_refs or (not sourced_model and any(value is not None for value in candidate.get("style_axes", {}).values())):
+                raise ContractError(f"{label}[{index}] 的 unknown 风格不得填写风格或评分资料")
         elif not style_mix or not style_refs:
             raise ContractError(f"{label}[{index}] 已分类风格必须提供 style_mix 与 style_refs")
         relation_path = candidate.get("relation_path")
@@ -1190,6 +1411,7 @@ def validate_recommendation_bundle(value: Any, packet: dict[str, Any]) -> dict[s
         # 不再要求候选池先凑齐全部召回类型。
         require_all_types=False,
         required_types={candidate_type for candidate_type, _ in recall_mix_ratios(analysis)},
+        sourced_model=analysis.get("style_analysis", {}).get("evidence_model") == "sourced_tags_v1",
     )
     from candidate_routes import resolve_candidate_route
     for candidate in candidate_pool:

@@ -26,16 +26,12 @@ b) 品味画像与锐评：锐评要求专业、深刻且幽默风趣；内心�
 引用只能从下表逐字选择）】
 {STYLE_TABLE}
 
-【LISTEN AXES（mood_axes 只允许以下键；基于歌手分布给出 0-100 的群体倾向
-估计——这是描述性统计推断，不是音频实测，因此必须给出数值，不允许 null）】
-{AXES_TABLE}
-
 【硬性规则】
 1. 只输出一个 JSON 对象：无 Markdown 围栏、无解释、无第二个 JSON。
 2. artist_clusters 与 style_tags.matched_artists 中的歌手必须逐字来自清单；
    程序会逐条校验，任何越界引用都会导致整个结果被拒绝。
 3. style_refs/tag/dominant_styles/secondary_styles 只能使用 STYLE REFS 表中的
-   引用；weight/mood_axes 数值在 0-100 区间。
+   引用；weight 数值在 0-100 区间，不生成听感轴。
 4. knowledge_basis 必须如实声明三类依据的适用范围：model_internal（内置音乐
    知识）、web_verified（本次实际联网核实，未联网则如实说明为空）、inference
    （基于歌手分布的推演）。未联网核验的场景归属不得标 confidence: "high"。
@@ -44,7 +40,7 @@ b) 品味画像与锐评：锐评要求专业、深刻且幽默风趣；内心�
 6. 锐评与解析合计不超过 400 字；风格标签 5-8 个；无语义主题；
    艺人聚类总数控制在 12–15 位以内，按分层抽样覆盖：核心层取出现次数最多的一批，
    活跃层取次一批代表，长尾层只举几位典型即可；不要试图列出清单里每一位艺人。
-   为你确信场景归属的歌手附上 reference_url，不确信则留空字符串并把 confidence 设为 "low"。
+   没有程序提供的已获取来源时 reference_url 一律留空，不得靠模型记忆补网址。
 
 （歌手清单中的“仅合作”表示该歌手只在合作曲里出现，不代表你的偏好；主艺人数量才是署名曲目数。）
 7. overall_summary 与 islands 必须一并给出：恰好 3 个兴趣岛，每岛用 artists 列出代表歌手（逐字来自清单）；岛屿名称必须是抽象风格意象。
@@ -64,7 +60,7 @@ b) 品味画像与锐评：锐评要求专业、深刻且幽默风趣；内心�
   ],
   "artist_clusters": [
     {"artist": "<清单原名>", "scene": "<场景描述>", "confidence": "high|medium|low",
-     "style_refs": ["style:..."], "reference_url": "https://... 或 \"\"", "layer": "core|active|longtail"}
+     "style_refs": ["style:..."], "reference_url": "", "layer": "core|active|longtail"}
   ],
   "style_tags": [
     {"tag": "style:...", "weight": 0-100, "matched_artists": ["<清单原名>"]}
@@ -72,8 +68,7 @@ b) 品味画像与锐评：锐评要求专业、深刻且幽默风趣；内心�
   "taste_profile": {
     "dominant_styles": ["style:..."],
     "secondary_styles": ["style:..."],
-    "exploration_appetite": "high|medium|low",
-    "mood_axes": {"<轴 code>": 0-100, ...全部 8 轴}
+    "exploration_appetite": "high|medium|low"
   },
   "editorial_review": {
     "headline": "<一句话锐评>",

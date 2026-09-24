@@ -61,6 +61,19 @@ class RankingBoundaryTests(unittest.TestCase):
         self.pool, self.packet = pool_bundle()
         self.ranked = rank_bundle(self.pool, self.packet)
 
+    def test_taste_summary_keeps_a_source_bounded_listening_suggestion(self):
+        packet = deepcopy(self.packet)
+        packet["selection_mode"] = "taste_constraints_v1"
+        pool = deepcopy(self.pool)
+        for candidate in pool["candidate_pool"]:
+            candidate["agent_details"] = {"listening_tip": "该曲副歌的鼓点突然加快。"}
+        ranked = rank_bundle(pool, packet)
+        for candidate in ranked["recommendations"]:
+            tip = candidate["program_explanation"]["listening_tip"]
+            self.assertTrue(tip.startswith("建议"))
+            self.assertNotIn("副歌", tip, "不能沿用未经来源支持的听感断言")
+        self.assertEqual(ranked, rank_bundle(ranked, packet))
+
     def test_ranked_output_is_repeatable_without_mutating_input(self):
         original = deepcopy(self.pool)
         self.assertEqual(self.ranked, rank_bundle(self.pool, self.packet))
@@ -143,16 +156,13 @@ class RankingBoundaryTests(unittest.TestCase):
 class ConstrainedSelectionTests(unittest.TestCase):
     def test_disabling_transition_preference_matches_zero_transition_weight(self):
         pool, packet = pool_bundle()
-        for index, candidate in enumerate(pool["candidate_pool"]):
-            candidate["style_axes"] = dict.fromkeys(candidate["style_axes"], index * 13)
         packet["recommendation_policy"]["sequence_policy"]["prefer_adjacent_transitions"] = False
         packet["recommendation_policy"]["sequence_policy"]["allow_familiar_anchor"] = False
         selected, _ = rank_candidates(pool["candidate_pool"], packet, limit=4)
         packet["recommendation_policy"]["sequence_policy"]["prefer_adjacent_transitions"] = True
         policy = packet["recommendation_policy"]["sequence_policy"]
         policy["transition_weight"] = 0
-        policy["arc_weight"] = 7 / 9
-        policy["ranking_weight"] = 2 / 9
+        policy["ranking_weight"] = 1
         expected, _ = rank_candidates(pool["candidate_pool"], packet, limit=4)
         self.assertEqual([item["canonical_track_id"] for item in selected],
                          [item["canonical_track_id"] for item in expected])

@@ -2,16 +2,6 @@
   "schema_version": "1.0",
   "taxonomy_type": "music_style_taxonomy",
   "taxonomy_version": "1.0",
-  "axes": {
-    "heaviness": "失真、低频和整体冲击的重量",
-    "aggression": "riff、鼓组和演唱的攻击性",
-    "atmosphere": "空间、延音、梦幻或沉浸式层次",
-    "electronic_presence": "合成器、采样、电子鼓和制作纹理的比重",
-    "pop_accessibility": "旋律直达性、hook 和结构的易听程度",
-    "rhythmic_density": "切分、律动变化、说唱和复杂节奏的密度",
-    "vocal_harshness": "嘶吼、喊唱、失真和极端唱法的比重",
-    "emotional_intensity": "歌词、音色和动态带来的情绪张力"
-  },
   "styles": {
     "metalcore.traditional": {
       "label": "传统金属核",

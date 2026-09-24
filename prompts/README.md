@@ -12,5 +12,5 @@ Step 2 分析 Agent 使用 `analysis_agent.py` 中的独立研究协议，不加
 - 推荐去重、艺人/项目上限和证据契约
 - 覆盖率门槛、程序拥有的关系判定、评分与推荐说明
 
-研究时优先覆盖本次 `interest_profiles`，不要把多个兴趣压成总体均值。补充轮遵守 `research_request` 的缺额、剩余预算和排重标识，不重复要求首轮全量候选。修改插槽后需要重新 `prepare-agent`；已准备上下文不会自动刷新。
+研究时优先覆盖本次 `interest_profiles`，不要把多个兴趣压成总体均值。`sourced_tags_v1` 候选不填八轴，标签仅取可追溯来源；显式历史 catalog 包按旧契约兼容。补充轮遵守 `research_request` 的缺额、剩余预算和排重标识，不重复要求首轮全量候选。修改插槽后需要重新 `prepare-agent`；已准备上下文不会自动刷新。
 

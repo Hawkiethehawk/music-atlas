@@ -23,7 +23,12 @@ class FixtureLastFM:
         self.local.retrieved_at = "2026-09-16T00:00:00Z"
         self.events.append({"method": method, "status": "fixture", "retrieved_at": self.local.retrieved_at})
         if method.endswith("getTopTags"):
-            return {"toptags": {"tag": [{"name": "rock"}, {"name": "electronic"}]}}
+            # Echo the queried identity as a provider response would. A
+            # request-only URL is insufficient for the sourced-style gate.
+            identity = {name: params[name] for name in ("artist", "track", "album") if name in params}
+            if str(params.get("artist") or "").startswith("Fixture-") and str(params.get("artist")).endswith("-4"):
+                return {"toptags": {"@attr": identity, "tag": [{"name": "industrial metal"}, {"name": "alternative rock"}]}}
+            return {"toptags": {"@attr": identity, "tag": [{"name": "alternative rock"}, {"name": "industrial metal"}]}}
         if method == "artist.getSimilar":
             seed = str(params.get("artist") or "Anchor").replace(" ", "-")
             return {"similarartists": {"artist": [
@@ -31,7 +36,7 @@ class FixtureLastFM:
             ]}}
         if method == "artist.getTopTracks":
             artist = str(params.get("artist") or "Fixture Artist")
-            return {"toptracks": {"track": [{"name": f"Fixture Track {index}"} for index in range(1, 4)]}}
+            return {"toptracks": {"track": [{"name": f"Fixture Track {index}"} for index in range(1, 5)]}}
         return {}
 
 

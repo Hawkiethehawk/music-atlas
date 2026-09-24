@@ -185,47 +185,22 @@ def _repetition_metrics(recommendations: list[dict[str, Any]]) -> dict[str, floa
     }
 
 
-def _energy(item: dict[str, Any]) -> float:
-    axes = item.get("style_axes", {})
-    keys = ("heaviness", "aggression", "rhythmic_density", "vocal_harshness", "emotional_intensity")
-    values = [float(axes[key]) for key in keys if key in axes]
-    return _mean(values) if values else 0.0
-
-
 def _sequence_quality_metrics(
     recommendations: list[dict[str, Any]],
     ranking: dict[str, Any],
 ) -> dict[str, float]:
     total = len(recommendations)
     if total <= 1:
-        return {"mean_transition_distance": 0.0, "energy_variance": 0.0, "arc_conformance": 0.0}
+        return {"mean_supported_tag_distance": None, "supported_transition_share": 0.0}
+    positions = [entry for entry in ranking.get("sequence", {}).get("positions", [])
+                 if isinstance(entry, dict) and entry.get("position", 0) > 1]
     transitions = [
-        float(entry.get("transition_distance") or 0.0)
-        for entry in ranking.get("sequence", {}).get("positions", [])
-        if isinstance(entry, dict) and entry.get("position", 0) > 1
-    ]
-    energies = [_energy(item) for item in recommendations]
-    mean_energy = _mean(energies)
-    energy_variance = _mean([(value - mean_energy) ** 2 for value in energies])
-    low, high = min(energies), max(energies)
-    span = high - low if high > low else 1.0
-    normalized = [(value - low) / span for value in energies]
-    peak_index = max(1, round((total - 1) * 0.60))
-    tail = max(1, total - 1 - peak_index)
-
-    def target(position: int) -> float:
-        if position <= peak_index:
-            return position / peak_index
-        return 1.0 - (1.0 - 0.35) * (position - peak_index) / tail
-
-    arc_errors = [
-        abs(normalized[index] - target(index))
-        for index in range(total)
+        float(entry["transition_distance"]) for entry in positions
+        if isinstance(entry.get("transition_distance"), (int, float))
     ]
     return {
-        "mean_transition_distance": round(_mean(transitions), 4) if transitions else 0.0,
-        "energy_variance": round(energy_variance, 4),
-        "arc_conformance": round(1.0 - _mean(arc_errors), 4),
+        "mean_supported_tag_distance": round(_mean(transitions), 4) if transitions else None,
+        "supported_transition_share": round(len(transitions) / (total - 1), 4),
     }
 
 

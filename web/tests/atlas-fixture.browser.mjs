@@ -15,6 +15,7 @@ import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import quality from "../publication_quality.js";
 import { createIsolatedServer, runFixtureWorkflow } from "./helpers.mjs";
 
 let fixtureRun;
@@ -45,11 +46,16 @@ after(async () => {
 test("夹具工作流产物：四阶段、分析门槛、平台候选与 10 首输出", async () => {
   const { events } = fixtureRun;
   const stage = (name) => events.filter((event) => event.stage === name);
-  assert.ok(stage("analysis").some((event) => event.event === "task_started" && event.task_kind === "track_fact_collect"));
+  assert.ok(!stage("analysis").some((event) => event.task_kind === "track_fact_collect"),
+    "首次运行不再启动单列逐曲复核任务");
   assert.ok(stage("analysis").some((event) => event.event === "task_completed" && event.task_status === "validated"
     && event.task_kind === "analysis_aggregate"), "分析聚合应校验通过");
   assert.ok(stage("recommendation").some((event) => event.task_kind === "platform_discovery"),
     "推荐阶段应完成平台候选召回");
+  assert.ok(stage("recommendation").some((event) => event.event === "tracks_locked"),
+    "硬约束通过后应锁定三组正式曲目");
+  assert.ok(!stage("recommendation").some((event) => event.task_kind === "recommendation_review"),
+    "不应再启动单列本地复核阶段");
   const exportCompleted = events.at(-1);
   assert.equal(exportCompleted.status, "completed");
   assert.equal(exportCompleted.recommendation_count, 10, "推荐数量固定 10 首");
@@ -61,6 +67,25 @@ test("夹具工作流产物：四阶段、分析门槛、平台候选与 10 首�
   assert.equal(report.recommendation_groups.count, 3);
   assert.equal(report.recommendation_groups.total_unique_recommendation_count, 30);
   assert.equal(report.recommendation_history.retention_days, 7);
+  const payload = JSON.parse(await readFile(`${fixtureRun.jobDir}/web_payload.json`, "utf8"));
+  const packet = JSON.parse(await readFile(`${fixtureRun.jobDir}/musician_analysis.json`, "utf8"));
+  assert.equal(packet.source_playlist_track_count, 3, "关系事实重建后仍须保留原歌单数量");
+  assert.equal(payload.analysis.sourcePlaylistTrackCount, 3);
+  assert.equal(quality.validatePublishedQuality(packet, payload), true,
+    "CLI completed 产物必须通过网页正式发布门槛");
+  assert.equal(payload.status.publication, "published", "硬约束通过后直接正式发布");
+  assert.equal(payload.audit.status, "not_performed", "不伪称独立审计完成");
+  for (const group of payload.atlas_groups) {
+    const counts = Object.fromEntries(
+      ["style_neighbor", "artist_continuation", "musician_relation", "exploration"]
+        .map((type) => [type, group.recommendations.filter((item) => item.candidateType === type).length]),
+    );
+    assert.deepEqual(counts, {
+      style_neighbor: 4, artist_continuation: 3, musician_relation: 2, exploration: 1,
+    }, `${group.label} 必须符合 4/3/2/1`);
+    assert.equal(group.sources.some((source) => source.id === "evidence"), false,
+      `${group.label} 不伪造单列本地复核来源卡`);
+  }
 });
 
 test("隔离服务器发布夹具产物：health 与 /api/atlas 返回真实数据", async () => {
@@ -101,17 +126,18 @@ test("Atlas 页面渲染真实夹具产物，控制台无错误", async () => {
     assert.equal(recRows, 10, `发现页应渲染 10 个推荐条目，实际 ${recRows}`);
     assert.match(bodyText, /Fixture Track 1/, "应出现真实工作流产物的推荐曲目");
     assert.match(bodyText, /第 1\/3 组/, "应显示当前 Atlas 组序号");
-    const firstTrack = await page.locator(".trow .tt").first().textContent();
+    const firstLink = await page.locator(".trow .info").first().getAttribute("data-go");
     await page.click("[data-atlas-swap]");
     assert.match(await page.locator("body").textContent(), /第 2\/3 组/);
-    const secondTrack = await page.locator(".trow .tt").first().textContent();
-    assert.notEqual(secondTrack, firstTrack, "第一次换一批应切换推荐组");
+    const secondLink = await page.locator(".trow .info").first().getAttribute("data-go");
+    assert.notEqual(secondLink, firstLink, "第一次换一批应切换推荐曲目身份");
     await page.click("[data-atlas-swap]");
     assert.match(await page.locator("body").textContent(), /第 3\/3 组/);
     assert.equal(await page.locator("[data-atlas-swap]").count(), 0, "最后一批不再显示换一批");
     assert.equal(await page.locator("[data-atlas-prev]").isDisabled(), false, "最后一批应可返回上一批");
     assert.equal(await page.locator("[data-atlas-new]").count(), 1, "最后一批应显示新 Atlas");
     assert.doesNotMatch(bodyText, /研究草稿/, "页面不再显示研究草稿状态");
+    assert.doesNotMatch(bodyText, /本期/, "页面不应使用周期性文案");
     assert.doesNotMatch(await page.title(), /本期\s*Atlas/i, "标题页不应显示本期 Atlas");
     assert.deepEqual(consoleErrors, [], "控制台不应有错误");
 

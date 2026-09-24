@@ -5,6 +5,13 @@ from __future__ import annotations
 
 import json
 import sys
+from urllib.parse import quote
+
+
+LEGACY_AXIS_IDS = (
+    "heaviness", "aggression", "atmosphere", "electronic_presence",
+    "pop_accessibility", "rhythmic_density", "vocal_harshness", "emotional_intensity",
+)
 
 
 def main() -> int:
@@ -43,6 +50,7 @@ def main() -> int:
     policy = packet["recommendation_policy"]
     refs = packet["analysis_ref_ids"]
     style_refs = packet["style_analysis"]["active_style_refs"]
+    sourced_model = packet["style_analysis"].get("evidence_model") == "sourced_tags_v1"
     if not style_refs:
         raise SystemExit("active style refs missing")
     candidate_types = [
@@ -66,13 +74,11 @@ def main() -> int:
     for index in range(batch_size):
         number = index + 1 + (round_number - 1) * batch_size
         source_url = f"https://musicbrainz.org/recording/00000000-0000-4000-8000-{number:012d}"
+        similarity_url = f"https://www.last.fm/music/{quote(anchors[0], safe='')}/+similar"
         candidate_type = candidate_types[index % len(candidate_types)]
         artist = (anchors[(index // 4) % len(anchors)] if candidate_type == "artist_continuation"
                   else projects[(index // 4) % len(projects)] if candidate_type == "musician_relation"
                   else f"Candidate Artist {number}")
-        axes = packet["style_analysis"]["style_axes"]
-        if candidate_type == "exploration":
-            axes = dict.fromkeys(axes, 0 if sum(axes.values()) / len(axes) >= 50 else 100)
         evidence_items = [
             {"claim_type": "track_identity", "claim": "测试歌曲身份", "url": source_url},
             {"claim_type": "style", "claim": "测试细分风格", "url": source_url},
@@ -81,8 +87,7 @@ def main() -> int:
             evidence_items.append(
                 {"claim_type": "relation", "claim": "测试音乐人关系", "url": source_url}
             )
-        candidate_pool.append(
-            {
+        candidate = {
                 "canonical_track_id": f"musicbrainz:candidate-fixture-{number}",
                 "title": f"Candidate Fixture {number}",
                 "artist": artist,
@@ -92,16 +97,27 @@ def main() -> int:
                 "analysis_refs": [refs[0]],
                 "style_refs": [style_refs[0]],
                 "style_mix": [{"style_ref": style_refs[0], "role": "primary", "weight": 1.0}],
-                "style_axes": axes,
                 "style_confidence": "high",
                 "relation_path": ["当前偏好分布", "关系证据", f"Candidate Project {number}"],
                 "evidence_grade": "A",
                 "evidence_items": evidence_items,
                 "discovery_source": "MusicBrainz",
-                "sources": [source_url],
+                "sources": [source_url, similarity_url] if candidate_type == "exploration" else [source_url],
+                **({"provider_similarity": {"seed": anchors[0], "artist": artist,
+                                            "rank": 3, "url": similarity_url}}
+                   if candidate_type == "exploration" else {}),
                 "platform_links": {"youtube": f"https://www.youtube.com/watch?v=candidate{number}"},
             }
-        )
+        if not sourced_model:
+            # Historical catalog-mode fixtures still require axes in their
+            # saved bundle contract; the compact prompt no longer carries
+            # them, so use a test-only neutral value. Source-led packets
+            # never receive synthetic listening scores.
+            axes = packet["style_analysis"].get("style_axes") or dict.fromkeys(LEGACY_AXIS_IDS, 50)
+            if candidate_type == "exploration":
+                axes = dict.fromkeys(axes, 0 if sum(axes.values()) / len(axes) >= 50 else 100)
+            candidate["style_axes"] = axes
+        candidate_pool.append(candidate)
     print(
         json.dumps(
             {

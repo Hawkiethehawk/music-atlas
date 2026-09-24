@@ -88,12 +88,11 @@ DEFAULT_POLICY: dict[str, Any] = {
         {"candidate_type": "exploration", "target_ratio": 0.10},
     ],
     "ranking_weights": {
-        "style_fit": 0.30,
-        "axis_fit": 0.20,
-        "relation_fit": 0.15,
-        "frequency_fit": 0.10,
+        "style_fit": 0.35,
+        "relation_fit": 0.20,
+        "frequency_fit": 0.15,
         "novelty": 0.10,
-        "evidence_quality": 0.10,
+        "evidence_quality": 0.15,
         "public_association": 0.05,
     },
     "diversity_policy": {
@@ -103,19 +102,17 @@ DEFAULT_POLICY: dict[str, Any] = {
         "new_interest_bonus": 4.0,
         "min_interest_groups": 1,
         "similarity_weights": {
-            "style": 0.45,
-            "axis": 0.25,
-            "artist": 0.20,
-            "project": 0.10,
+            "style": 0.60,
+            "artist": 0.25,
+            "project": 0.15,
         },
     },
     "sequence_policy": {
-        "mode": "energy_arc",
+        "mode": "public_tag_continuity",
         "prefer_adjacent_transitions": True,
         "allow_familiar_anchor": True,
-        "transition_weight": 0.55,
-        "arc_weight": 0.35,
-        "ranking_weight": 0.10,
+        "transition_weight": 0.70,
+        "ranking_weight": 0.30,
     },
     "source_policy": {
         "candidate_discovery": [
@@ -180,17 +177,17 @@ def load_style_taxonomy(path: Path) -> dict[str, Any]:
     payload = _load_json_object(path)
     version = normalized_text(payload.get("taxonomy_version"))
     styles = payload.get("styles")
-    axis_definitions = payload.get("axes")
+    axis_definitions = payload.get("axes", STYLE_AXIS_GUIDE)
     if not version or not isinstance(styles, dict) or not styles:
         raise ContractError(f"风格本体必须包含 taxonomy_version 和 styles：{path}")
     if not isinstance(axis_definitions, dict):
-        raise ContractError(f"风格本体必须包含 axes 对象：{path}")
+        raise ContractError(f"历史听感轴定义必须是对象：{path}")
     cleaned_axes = {
         axis: normalized_text(axis_definitions.get(axis))
         for axis in STYLE_AXIS_IDS
     }
     if any(not description for description in cleaned_axes.values()):
-        raise ContractError(f"风格本体 axes 必须完整覆盖听感轴：{path}")
+        raise ContractError(f"历史听感轴定义必须完整覆盖听感轴：{path}")
     cleaned: dict[str, dict[str, Any]] = {}
     for style_id, raw_style in styles.items():
         if not isinstance(raw_style, dict):
@@ -743,6 +740,222 @@ def build_overlap_style_distribution(
     return result
 
 
+def apply_public_style_evidence(packet: dict[str, Any], source_tags: dict[str, Any], *,
+                                minimum_share: float | None = None) -> dict[str, Any]:
+    """Bind fetched public tags to a Step 2 packet without inventing listening axes.
+
+    `source_tags` is collect_tags' {provider, records} result. Each record
+    retains its track_key and every fetched `evidence` layer (track, album,
+    artist); a layer carries scope, source, url, retrieved_at, identity_status,
+    status and tags [{tag, style_ref}]. Only supported, timestamped, URL-backed
+    mapped refs are eligible. An artist layer is background, never direct song
+    evidence. For artist_summary (>=1000 tracks), *only* artist layers are used;
+    track assignments remain identity placeholders, not track analyses.
+    """
+    from urllib.parse import urlparse
+
+    result = deepcopy(packet)
+    mode = result.get("analysis_mode")
+    processed_count = result["source_track_count"]
+    playlist_count = result.get("source_playlist_track_count", processed_count)
+    if (isinstance(playlist_count, bool) or not isinstance(playlist_count, int)
+            or playlist_count < 1 or playlist_count < processed_count):
+        raise ContractError("原始歌单曲目数必须是正整数且不小于本次处理曲目数")
+    if mode == "artist_summary" and playlist_count < 1000:
+        raise ContractError("artist_summary 仅适用于至少 1000 首歌")
+    if mode != "artist_summary" and playlist_count >= 1000:
+        raise ContractError("1000 首及以上必须只做歌手层级分析")
+    records = source_tags.get("records") if isinstance(source_tags, dict) else None
+    tracks = result["favorite_tracks"]
+    if not isinstance(records, list) or len(records) != len(tracks):
+        raise ContractError("公开资料记录必须与歌单行数一致")
+    if [record.get("track_key") for record in records if isinstance(record, dict)] != [
+        track["track_key"] for track in tracks
+    ]:
+        raise ContractError("公开资料记录必须按顺序对应本次歌曲身份")
+    definitions = result["style_analysis"]["style_definitions"]
+    known = {definition["style_ref"] for definition in definitions}
+    by_ref = {definition["style_ref"]: definition for definition in definitions}
+    scope_order = ("track", "album", "artist")
+
+    def valid_layers(record: dict[str, Any], track: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_layers = record.get("evidence")
+        # Backward-compatible input for a previously fetched single-layer
+        # record. No timestamp or URL means no evidence, not a guessed style.
+        if not isinstance(raw_layers, list):
+            raw_layers = [record]
+        layers = []
+        for item in raw_layers:
+            if not isinstance(item, dict) or item.get("scope") not in scope_order:
+                continue
+            if item.get("identity_status") == "mismatch" or item.get("status") not in (None, "supported"):
+                continue
+            subject = item.get("subject")
+            expected = {"artist": track["artist"]}
+            if item["scope"] == "track":
+                expected["track"] = track["title"]
+            elif item["scope"] == "album":
+                expected["album"] = track.get("album", "")
+            if not isinstance(subject, dict) or not all(
+                normalized_name(subject.get(key)) == normalized_name(value) and normalized_name(value)
+                for key, value in expected.items()
+            ):
+                continue
+            url, stamp = item.get("url"), item.get("retrieved_at")
+            if not isinstance(url, str) or urlparse(url).scheme not in ("http", "https") or not urlparse(url).netloc:
+                continue
+            try:
+                parse_timestamp(stamp, "公开风格资料 retrieved_at")
+            except ContractError:
+                continue
+            tags = item.get("tags")
+            if not isinstance(tags, list):
+                continue
+            kept = [{"tag": tag["tag"], "style_ref": tag["style_ref"]} for tag in tags
+                    if isinstance(tag, dict) and isinstance(tag.get("tag"), str) and tag["tag"].strip()
+                    and tag.get("style_ref") in known]
+            if kept:
+                layers.append({"scope": item["scope"], "provider": item.get("source") or source_tags.get("provider"),
+                               "url": url, "retrieved_at": stamp, "identity_status": item.get("identity_status", "request_only"),
+                               "tags": kept})
+        return layers
+
+    layers_by_track = [valid_layers(record, track) for record, track in zip(records, tracks)]
+    artist_layers: dict[str, list[dict[str, Any]]] = {}
+    for track, layers in zip(tracks, layers_by_track):
+        marker = normalized_name(track["artist"])
+        existing = artist_layers.setdefault(marker, [])
+        for layer in layers:
+            if layer["scope"] == "artist" and layer not in existing:
+                existing.append(layer)
+
+    def refs_for(layers: list[dict[str, Any]]) -> list[str]:
+        return list(dict.fromkeys(tag["style_ref"] for layer in layers for tag in layer["tags"]))
+
+    def mix_for(refs: list[str]) -> list[dict[str, Any]]:
+        # The weights are deterministic tag shares, not sound intensity or
+        # a listener's probability of liking the style.
+        return [{"style_ref": ref, "role": "primary" if index == 0 else "secondary",
+                 "weight": round(1 / len(refs), 6)} for index, ref in enumerate(refs)]
+
+    assignments = []
+    counts = Counter()
+    for index, (track, layers) in enumerate(zip(tracks, layers_by_track), 1):
+        chosen_scope = next((scope for scope in scope_order
+                             if mode != "artist_summary" and any(layer["scope"] == scope for layer in layers)), "unknown")
+        selected = [layer for layer in layers if layer["scope"] == chosen_scope]
+        refs = refs_for(selected)
+        direct_refs = refs if chosen_scope == "track" else []
+        counts[chosen_scope] += 1
+        assignments.append({
+            "position": index, "track_key": track["track_key"], "title": track["title"],
+            "artist": track["artist"], "album": track.get("album", ""),
+            "classification_status": "classified" if direct_refs else "unclassified",
+            "confidence": "medium" if direct_refs else "low", "primary_style_ref": direct_refs[0] if direct_refs else "",
+            "style_refs": direct_refs, "style_mix": mix_for(direct_refs),
+            "background_style_refs": refs if chosen_scope in ("album", "artist") else [],
+            "applied_scope": (chosen_scope + "_background" if chosen_scope in ("album", "artist") else chosen_scope),
+            "rationale": ("公开曲目风格标签" if chosen_scope == "track" else
+                          "所属专辑的风格背景，不等同于单曲听感" if chosen_scope == "album" else
+                          "艺人的整体风格背景，不等同于单曲事实" if chosen_scope == "artist" else
+                          "未取得可归属的公开风格资料" if mode != "artist_summary" else
+                          "千首及以上仅分析歌手，不逐曲评价"),
+            "sources": [layer["url"] for layer in selected], "evidence_items": selected,
+        })
+
+    profiles = result["style_analysis"]["artist_profiles"]
+    for profile in profiles:
+        layers = artist_layers.get(normalized_name(profile["artist"]), [])
+        refs = refs_for(layers)
+        profile.update(classification_status="classified" if refs else "unclassified",
+                       confidence="medium" if refs else "low", primary_style_ref=refs[0] if refs else "",
+                       style_refs=refs, style_mix=mix_for(refs), sources=[layer["url"] for layer in layers],
+                       evidence_items=layers, summary="公开艺人风格背景" if refs else "暂无可核验的艺人风格标签")
+        profile.pop("style_axes", None)
+        profile.pop("style_weights", None)
+
+    profile_coverage = result["style_analysis"]["profile_coverage"]
+    artist_count = sum(bool(profile["style_refs"]) for profile in profiles)
+    primary_counts = {normalized_name(row["artist"]): row["count"] for row in result["primary_distribution"]}
+    weighted = sum(primary_counts.get(normalized_name(profile["artist"]), 0)
+                   for profile in profiles if profile["style_refs"])
+    total = result["source_track_count"]
+    direct = counts["track"]
+    profile_coverage.update(classified_artist_count=artist_count,
+                            unclassified_artist_count=len(profiles) - artist_count,
+                            degraded=(direct < total if mode != "artist_summary" else weighted < total),
+                            classified_track_share=round(direct / total, 6) if total and mode != "artist_summary" else 0.0,
+                            assignment_scopes=dict(counts))
+
+    style = result["style_analysis"]
+    classified = counts["track"]
+    style.update(evidence_model="sourced_tags_v1", analysis_mode=mode,
+                 artist_profiles=profiles, artist_profile_count=len(profiles),
+                 classified_track_count=classified, unclassified_track_count=total - classified,
+                 active_style_refs=list(dict.fromkeys(ref for item in [*assignments, *profiles]
+                                                     for ref in [*item["style_refs"], *item.get("background_style_refs", [])])),
+                 source_coverage={"mode": "artist_only" if mode == "artist_summary" else "track_with_context",
+                                  "track_evidence_count": counts["track"], "album_background_count": counts["album"],
+                                  "artist_background_count": counts["artist"], "no_style_evidence_count": counts["unknown"],
+                                  "artist_count": len(profiles), "sourced_artist_count": artist_count,
+                                  "weighted_artist_track_count": weighted})
+    style.pop("axis_definitions", None)
+    style.pop("style_axes", None)
+    taxonomy = {"styles": {d["style_ref"]: d for d in definitions}}
+    style["style_distribution"] = _style_distribution(assignments, taxonomy, source_count=total,
+                                                      classified_count=classified)
+    style["overlap_style_distribution"] = build_overlap_style_distribution(assignments, taxonomy,
+                    source_count=total, classified_count=classified,
+                    primary_distribution=style["style_distribution"])
+    style["interest_model"] = dict(MODEL_CONFIG)
+    style["interest_profiles"] = build_interest_profiles(assignments)
+    style["dominant_style_mix"] = [{**row, "weight": round(row["count"] / classified, 6) if classified else 0}
+                                    for row in style["style_distribution"]]
+    for scope in ("album", "artist"):
+        background_counts: Counter[str] = Counter(
+            item["background_style_refs"][0] for item in assignments
+            if item["applied_scope"] == scope + "_background" and item["background_style_refs"]
+        )
+        style[scope + "_background_style_distribution"] = [
+            {"style_ref": ref, "label": by_ref[ref]["label"], "count": count,
+             "share_of_playlist": round(count / total, 6) if total else 0}
+            for ref, count in sorted(background_counts.items(), key=lambda entry: (-entry[1], entry[0]))
+        ]
+    if mode == "artist_summary":
+        # This is a weighted *artist* rollup. It is not a claim that any
+        # individual song in the playlist has been analyzed or tagged.
+        artist_weighted: Counter[str] = Counter()
+        for profile in profiles:
+            if profile["style_refs"]:
+                artist_weighted[profile["primary_style_ref"]] += primary_counts.get(normalized_name(profile["artist"]), 0)
+        style["artist_style_distribution"] = [
+            {"style_ref": ref, "label": by_ref[ref]["label"], "artist_weighted_track_count": count,
+             "share_of_playlist": round(count / total, 6) if total else 0}
+            for ref, count in sorted(artist_weighted.items(), key=lambda entry: (-entry[1], entry[0]))
+        ]
+        style["frequency_basis"] = "primary_artist_style_weighted_by_playlist_song_count"
+    result["track_style_assignments"] = assignments
+    # A second reconciliation can replace a stale provider result. Remove
+    # every old style ref before adding only the currently supported ones.
+    relationship_refs = [ref for ref in result["analysis_ref_ids"] if not ref.startswith("style:")]
+    result["analysis_ref_ids"] = list(dict.fromkeys([*relationship_refs, *style["active_style_refs"]]))
+    quality = result["recommendation_policy"].setdefault("analysis_quality", {})
+    quality_key = "min_artist_weight_share" if mode == "artist_summary" else "min_track_or_album_share"
+    threshold = (quality.get(quality_key, 0.3 if mode == "artist_summary" else 0.5)
+                 if minimum_share is None else minimum_share)
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 < threshold <= 1:
+        raise ContractError("公开资料覆盖下限必须大于 0 且不超过 1")
+    result["recommendation_policy"]["analysis_quality"] = {quality_key: threshold}
+    try:
+        fingerprint = stable_hash({"basis": packet["analysis_id"], "tags": source_tags,
+                                   "model": "sourced_tags_v1"})
+    except (TypeError, ValueError) as exc:
+        raise ContractError("公开来源结果含非 JSON 字段，不能写入分析包") from exc
+    result["source_tags"] = deepcopy(source_tags)
+    result["analysis_id"] = f"analysis-{fingerprint[:20]}"
+    return validate_analysis_packet(result)
+
+
 def _aggregate_style_axes(assignments: list[dict[str, Any]]) -> dict[str, float | None]:
     classified = [
         assignment
@@ -802,7 +1015,7 @@ def _compile_research_inputs(bundle: dict[str, Any], snapshot: dict[str, Any]) -
             "album": track.get("album", ""), "classification_status": row["classification_status"], "confidence": row["confidence"],
             "primary_style_ref": next((item["style_ref"] for item in row["style_mix"] if item["role"] == "primary"), ""),
             "style_refs": [item["style_ref"] for item in row["style_mix"]], "style_mix": deepcopy(row["style_mix"]),
-            "style_axes": deepcopy(row["style_axes"]), "applied_scope": "agent_" + row["scope"],
+            "style_axes": deepcopy(row.get("style_axes", dict.fromkeys(STYLE_AXIS_IDS))), "applied_scope": "agent_" + row["scope"],
             "rationale": row["summary"], "sources": sources, "evidence_items": evidence,
             "field_provenance": {field: {"scope": row["scope"], "confidence": row["confidence"], "sources": sources,
                                          "origin": "agent_research", "verification_scope": "pending_independent_verification"}
@@ -845,6 +1058,23 @@ def _compile_research_inputs(bundle: dict[str, Any], snapshot: dict[str, Any]) -
     return assignments, catalog, relations
 
 
+def _research_relation_catalog(bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Read relation facts without constructing legacy style/axis estimates."""
+    relations = {}
+    for batch in bundle["batches"]:
+        for row in batch["artist_relations"]:
+            entry = {"canonical_name": row["artist"], "entity_type": row["entity_type"],
+                     "aliases": [], "research_origin": "agent"}
+            for field in ("lead_vocalists", "related_projects"):
+                entry[field] = []
+                for fact in row[field]:
+                    evidence = [{**item, "verification_result": "unverified"} for item in fact["evidence_items"]]
+                    entry[field].append({**fact, "evidence_items": evidence,
+                                         "sources": list(dict.fromkeys(item["url"] for item in evidence))})
+            relations[normalized_name(row["artist"])] = entry
+    return relations
+
+
 def analyze_snapshot(
     snapshot_path: Path,
     *,
@@ -866,11 +1096,16 @@ def analyze_snapshot(
         else parse_timestamp(snapshot["captured_at"], "captured_at").date().isoformat()
     )
     policy = load_recommendation_policy(policy_path)
+    if research_bundle_path is not None and analysis_mode is None:
+        # New research results cannot self-certify style URLs. Public source
+        # labels must be reconciled by the collector before recommendation.
+        analysis_mode = "public_facts_only"
     policy_summary = {
         "mode": "explicit" if policy_path is not None else "default",
         "file_name": policy_path.name if policy_path is not None else None,
         "sha256": stable_hash(policy),
     }
+    public_facts = analysis_mode == "public_facts_only"
     preferred_names = [] if research_bundle_path is not None else load_preferred_artists(preferred_path)
     taxonomy_path = style_taxonomy_path or DEFAULT_STYLE_TAXONOMY_PATH
     taxonomy = load_style_taxonomy(taxonomy_path)
@@ -878,16 +1113,25 @@ def analyze_snapshot(
     research_bundle = None
     if research_bundle_path is not None:
         research_bundle = validate_research_bundle(read_json(research_bundle_path), snapshot, taxonomy, sha256_path(taxonomy_path))
-        research_assignments, style_catalog, relation_catalog = _compile_research_inputs(research_bundle, snapshot)
+        if public_facts:
+            relation_catalog = _research_relation_catalog(research_bundle)
+        else:
+            research_assignments, style_catalog, relation_catalog = _compile_research_inputs(research_bundle, snapshot)
         profile_path, profile_catalog_mode = research_bundle_path, "agent_research"
         relation_hash = stable_hash(relation_catalog)
     else:
         relation_catalog = load_relationship_catalog(relation_path)
         relation_hash = sha256_path(relation_path) if relation_path.is_file() else ""
-        profile_path = resolve_style_profile_path(style_profile_path or DEFAULT_STYLE_PROFILE_PATH)
-        profile_catalog_mode = ("example_fallback" if profile_path.name == "artist_style_profiles.example.json"
-                                else "private" if profile_path == DEFAULT_STYLE_PROFILE_PATH else "explicit")
-        style_catalog = load_style_profile_catalog(profile_path, taxonomy)
+        if public_facts:
+            # An identity-only source packet must not load any estimated style
+            # catalog, including the legacy example fallback.
+            profile_path = style_profile_path or DEFAULT_STYLE_PROFILE_PATH
+            profile_catalog_mode = "research"
+        else:
+            profile_path = resolve_style_profile_path(style_profile_path or DEFAULT_STYLE_PROFILE_PATH)
+            profile_catalog_mode = ("example_fallback" if profile_path.name == "artist_style_profiles.example.json"
+                                    else "private" if profile_path == DEFAULT_STYLE_PROFILE_PATH else "explicit")
+            style_catalog = load_style_profile_catalog(profile_path, taxonomy)
 
     raw_tracks = snapshot["tracks"]
     resolved_tracks: list[dict[str, Any]] = []
@@ -973,31 +1217,50 @@ def analyze_snapshot(
         if _artist_ref(resolved) not in analysis_ref_ids:
             analysis_ref_ids.append(_artist_ref(resolved))
 
-    track_style_assignments: list[dict[str, Any]] = []
-    for track in resolved_tracks:
-        assignment = (research_assignments[track["position"]] if research_assignments is not None
-                      else _style_assignment(track, _style_profile_for(track["artist"], style_catalog)))
-        if research_assignments is not None:
-            if assignment["track_key"] != track["track_key"]:
-                assignment["source_track_key"] = assignment["track_key"]
-            assignment = {**assignment, "track_key": track["track_key"], "artist": track["artist"]}
-        track_style_assignments.append(assignment)
-        for style_ref in assignment["style_refs"]:
-            if style_ref not in analysis_ref_ids:
-                analysis_ref_ids.append(style_ref)
-
-    artist_style_profiles = [
-        _style_profile_output(
-            name,
-            _style_profile_for(name, style_catalog),
-            primary_count=primary_counter.get(name, 0),
-            credited_count=credited_counter.get(name, 0),
-        )
-        for name in sorted(
-            entity_names,
-            key=lambda value: (-primary_counter[value], -credited_counter[value], value.casefold()),
-        )
-    ]
+    if public_facts:
+        track_style_assignments = []
+        for position, track in enumerate(resolved_tracks, 1):
+            track_style_assignments.append({
+                "position": position, "track_key": track["track_key"],
+                "title": track["title"], "artist": track["artist"], "album": track.get("album", ""),
+                "classification_status": "unclassified", "confidence": "low",
+                "primary_style_ref": "", "style_refs": [], "style_mix": [],
+                "background_style_refs": [], "applied_scope": "unknown",
+                "rationale": "尚未取得可核验的公开风格资料", "sources": [], "evidence_items": [],
+            })
+        artist_style_profiles = [{
+            "artist": name, "entity_ref": _artist_ref(name),
+            "primary_track_count": primary_counter.get(name, 0),
+            "credited_track_count": credited_counter.get(name, 0),
+            "is_core_artist": primary_counter.get(name, 0) > 0,
+            "classification_status": "unclassified", "confidence": "low",
+            "primary_style_ref": "", "style_refs": [], "style_mix": [],
+            "summary": "暂无可核验的艺人风格标签", "boundaries": [],
+            "sources": [], "evidence_items": [],
+        } for name in sorted(entity_names, key=lambda value:
+                             (-primary_counter[value], -credited_counter[value], value.casefold()))]
+    else:
+        track_style_assignments = []
+        for track in resolved_tracks:
+            assignment = (research_assignments[track["position"]] if research_assignments is not None
+                          else _style_assignment(track, _style_profile_for(track["artist"], style_catalog)))
+            if research_assignments is not None:
+                if assignment["track_key"] != track["track_key"]:
+                    assignment["source_track_key"] = assignment["track_key"]
+                assignment = {**assignment, "track_key": track["track_key"], "artist": track["artist"]}
+            track_style_assignments.append(assignment)
+            for style_ref in assignment["style_refs"]:
+                if style_ref not in analysis_ref_ids:
+                    analysis_ref_ids.append(style_ref)
+        artist_style_profiles = [
+            _style_profile_output(
+                name, _style_profile_for(name, style_catalog),
+                primary_count=primary_counter.get(name, 0),
+                credited_count=credited_counter.get(name, 0),
+            )
+            for name in sorted(entity_names, key=lambda value:
+                               (-primary_counter[value], -credited_counter[value], value.casefold()))
+        ]
     for profile in artist_style_profiles:
         for style_item in profile["style_mix"]:
             if style_item["style_ref"] not in analysis_ref_ids:
@@ -1026,15 +1289,16 @@ def analyze_snapshot(
         for style_ref in assignment["style_refs"]:
             if style_ref not in active_style_refs:
                 active_style_refs.append(style_ref)
+    profile_sha = (stable_hash({"artists": {}}) if public_facts and research_bundle is None
+                   else sha256_path(profile_path))
     style_analysis = {
         "taxonomy_version": taxonomy["taxonomy_version"],
         "taxonomy_sha256": sha256_path(taxonomy_path),
-        "profile_catalog_sha256": sha256_path(profile_path),
+        "profile_catalog_sha256": profile_sha,
         "profile_catalog_mode": profile_catalog_mode,
         "known_style_refs": taxonomy["known_style_refs"],
         "active_style_refs": active_style_refs,
         "style_definitions": list(taxonomy["styles"].values()),
-        "axis_definitions": taxonomy["axis_definitions"],
         "frequency_basis": "primary_artist_track_count_from_current_snapshot",
         "artist_profile_count": len(artist_style_profiles),
         "core_artist_profile_count": sum(1 for item in artist_style_profiles if item["is_core_artist"]),
@@ -1049,7 +1313,6 @@ def analyze_snapshot(
             }
             for item in style_distribution
         ],
-        "style_axes": _aggregate_style_axes(track_style_assignments),
         "interest_model": dict(MODEL_CONFIG),
         "interest_profiles": build_interest_profiles(track_style_assignments),
         "artist_profiles": artist_style_profiles,
@@ -1068,6 +1331,9 @@ def analyze_snapshot(
             "assignment_scopes": dict(Counter(item["applied_scope"] for item in track_style_assignments)),
         },
     }
+    if not public_facts:
+        style_analysis["axis_definitions"] = taxonomy["axis_definitions"]
+        style_analysis["style_axes"] = _aggregate_style_axes(track_style_assignments)
 
     # Generation time is metadata; the explicit scoring date is a semantic input.
     identity_payload = {
@@ -1135,6 +1401,15 @@ def analyze_snapshot(
             "batch_count": len(research_bundle["batches"]), "track_count": source_track_count,
             "evidence_verification": "pending_independent_verification", "publication_status": "draft",
         }
+    if analysis_mode == "public_facts_only":
+        # The initial Web packet has identities and relations but no verified
+        # genre facts yet. In particular it must not expose a synthetic
+        # listening-axis estimate while Last.fm requests are pending.
+        pending_tags = {"provider": "lastfm", "axis_policy": "removed",
+                        "records": [{"track_key": item["track_key"], "evidence": []}
+                                    for item in resolved_tracks], "requests": []}
+        packet = apply_public_style_evidence(packet, pending_tags)
+        analysis_id = packet["analysis_id"]
     validate_analysis_packet(packet)
     write_json(output_path, packet)
     if markdown_path is not None:
@@ -1161,6 +1436,30 @@ def analyze_snapshot(
 
 
 def write_markdown(packet: dict[str, Any], path: Path) -> None:
+    if packet.get("style_analysis", {}).get("evidence_model") == "sourced_tags_v1":
+        analysis = packet["style_analysis"]
+        counts = analysis["source_coverage"]
+        artist_only = packet.get("analysis_mode") == "artist_summary"
+        lines = ["# 音乐资料分析", "", f"- 歌单歌曲数：{packet['source_track_count']}",
+                 f"- 分析层级：{'仅歌手' if artist_only else '曲目、专辑及艺人背景'}", ""]
+        if artist_only:
+            lines += [f"- 有来源的歌手：{counts['sourced_artist_count']}/{counts['artist_count']}",
+                      f"- 对应主艺人歌曲权重：{counts['weighted_artist_track_count']}/{packet['source_track_count']}",
+                      "- 千首及以上不逐曲评价，逐曲分类数不适用。", "", "## 歌手风格分布（按歌单歌曲数加权）", ""]
+            lines += [f"- {item['label']}：{item['artist_weighted_track_count']} 首主艺人权重"
+                      for item in analysis.get("artist_style_distribution", [])]
+        else:
+            lines += [f"- 曲目级风格来源：{counts['track_evidence_count']}",
+                      f"- 专辑背景资料：{counts['album_background_count']}",
+                      f"- 仅艺人背景：{counts['artist_background_count']}",
+                      f"- 无可映射风格资料：{counts['no_style_evidence_count']}", "",
+                      "## 曲目风格分布（艺人背景单独标注）", ""]
+            lines += [f"- {item['label']}：{item['count']} 首"
+                      for item in analysis.get("style_distribution", [])]
+        lines += ["", "来源 URL 与获取时间详见对应 track_style_assignments / artist_profiles 的 evidence_items。", ""]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return
     lines = [
         "# 音乐人分析",
         "",
@@ -1275,6 +1574,43 @@ def write_coverage_report(packet: dict[str, Any], path: Path) -> dict[str, Any]:
     """
 
     style_analysis = packet["style_analysis"]
+    if style_analysis.get("evidence_model") == "sourced_tags_v1":
+        counts = style_analysis["source_coverage"]
+        total = packet["source_track_count"]
+        artist_only = packet.get("analysis_mode") == "artist_summary"
+        numerator = (counts["weighted_artist_track_count"] if artist_only else
+                     counts["track_evidence_count"] + counts["album_background_count"])
+        quality = packet["recommendation_policy"]["analysis_quality"]
+        threshold_field = "min_artist_weight_share" if artist_only else "min_track_or_album_share"
+        threshold = quality[threshold_field]
+        missing_profiles = [profile for profile in style_analysis["artist_profiles"]
+                            if profile["classification_status"] == "unclassified"]
+        missing_assignments = [item for item in packet["track_style_assignments"]
+                               if item["applied_scope"] == "unknown"] if not artist_only else []
+        report = {
+            "schema_version": SCHEMA_VERSION, "artifact_type": "coverage_report",
+            "analysis_id": packet["analysis_id"], "source_snapshot_id": packet["source_snapshot_id"],
+            "evidence_model": "sourced_tags_v1", "analysis_mode": packet.get("analysis_mode"),
+            "source_coverage": deepcopy(counts), "quality_metric": threshold_field,
+            "quality_numerator": numerator, "quality_denominator": total,
+            "quality_minimum_share": threshold, "quality_gate_passed": bool(total and numerator / total >= threshold),
+            "degraded": bool(total and numerator < total),
+            "degraded_reasons": (["artist_sources_missing"] if artist_only else ["track_or_album_sources_missing"])
+                                if numerator < total else [],
+            "review_queue": ([{"artist": profile["artist"], "status": "needs_public_artist_source",
+                               "affected_track_count": profile["primary_track_count"],
+                               "required_fields": ["artist_source_url", "retrieved_at", "mapped_style_tags"]}
+                              for profile in missing_profiles] if artist_only else
+                             [{"track_key": item["track_key"], "title": item["title"], "artist": item["artist"],
+                               "status": "needs_public_track_or_album_source",
+                               "required_fields": ["source_url", "retrieved_at", "mapped_style_tags"]}
+                              for item in missing_assignments]),
+            "next_action": ("歌手资料权重不足，不得发布；补充有来源的艺人标签"
+                            if artist_only else "曲目/专辑资料不足，不得发布；补充有来源的标签")
+                           if total and numerator / total < threshold else "质量门槛已满足；保留来源层级和缺口标注",
+        }
+        write_json(path, report)
+        return report
     coverage = style_analysis["profile_coverage"]
     unclassified = [
         profile["artist"]

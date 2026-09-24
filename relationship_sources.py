@@ -10,14 +10,22 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tempfile
+import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from contracts import normalized_name, utc_now
+
+try:
+    import fcntl  # Linux: coordinate MusicBrainz calls across isolated Web jobs.
+except ImportError:  # pragma: no cover - Windows development fallback.
+    fcntl = None
 
 USER_AGENT = "MusicAtlas/1.0 (https://github.com/Hawkiethehawk/music-atlas)"
 DISCOGS_ID = re.compile(r"discogs\.com/(?:[a-z]{2}/)?artist/(\d+)", re.I)
@@ -27,47 +35,90 @@ COLLABORATION_TYPES = {
     "instrumental supporting musician",
     "vocal supporting musician",
 }
+MUSICBRAINZ_INTERVAL = 1.05
+_FALLBACK_MB_LOCK = threading.Lock()
+_FALLBACK_MB_LAST_REQUEST = 0.0
 
 
 class RelationshipClient:
     """Small cached HTTP client with provider-specific limits and retries."""
 
-    def __init__(self, cache_dir: Path, *, seconds: float = 35, max_requests: int = 30):
+    def __init__(self, cache_dir: Path, *, seconds: float = 80, max_requests: int = 30,
+                 rate_lock_path: Path | None = None):
         self.cache_dir = Path(cache_dir)
+        self.rate_lock_path = Path(rate_lock_path or Path(tempfile.gettempdir()) / "music-atlas-musicbrainz-rate.lock")
         self.deadline = time.monotonic() + seconds
         self.max_requests = max_requests
         self.requests = 0
         self.events: list[dict] = []
         self.last_request: dict[str, float] = {}
+        self._lock = threading.RLock()
+
+    def _event(self, event: dict) -> None:
+        with self._lock:
+            self.events.append(event)
+
+    def _musicbrainz_delay(self) -> float | None:
+        """Reserve one host-wide request slot without holding a lock during HTTP I/O."""
+        if fcntl is None:
+            global _FALLBACK_MB_LAST_REQUEST
+            with _FALLBACK_MB_LOCK:
+                now = time.monotonic()
+                slot = max(now, _FALLBACK_MB_LAST_REQUEST + MUSICBRAINZ_INTERVAL)
+                if slot >= self.deadline:
+                    return None
+                _FALLBACK_MB_LAST_REQUEST = slot
+                return slot - now
+        self.rate_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.rate_lock_path.open("a+", encoding="ascii") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                handle.seek(0)
+                try:
+                    previous = float(handle.read().strip() or 0)
+                except ValueError:
+                    previous = 0.0
+                now = time.time()
+                slot = max(now, previous + MUSICBRAINZ_INTERVAL)
+                delay = slot - now
+                if time.monotonic() + delay >= self.deadline:
+                    return None
+                handle.seek(0)
+                handle.truncate()
+                handle.write(str(slot))
+                handle.flush()
+                return delay
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
     def get(self, url: str) -> dict | None:
         cache_path = self.cache_dir / (hashlib.sha256(url.encode("utf-8")).hexdigest() + ".json")
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             if cached.get("url") == url and 0 <= time.time() - float(cached["saved"]) < 7 * 86400:
-                self.events.append({"url": url, "status": "cache_hit", "retrieved_at": cached["retrieved_at"]})
+                self._event({"url": url, "status": "cache_hit", "retrieved_at": cached["retrieved_at"]})
                 return cached["data"]
         except (OSError, ValueError, KeyError, TypeError):
             pass
 
         host = (urlparse(url).hostname or "").casefold()
         for attempt in range(3):
-            if self.requests >= self.max_requests or time.monotonic() >= self.deadline:
-                self.events.append({"url": url, "status": "budget_exhausted"})
-                return None
-            delay = 0.0
-            if host == "musicbrainz.org":
-                delay = max(0.0, self.last_request.get(host, 0.0) + 1.05 - time.monotonic())
-            elif attempt:
-                delay = min(1.5, 0.4 * (2 ** (attempt - 1)))
-            if time.monotonic() + delay >= self.deadline:
-                self.events.append({"url": url, "status": "budget_exhausted"})
-                return None
+            with self._lock:
+                if self.requests >= self.max_requests or time.monotonic() >= self.deadline:
+                    self._event({"url": url, "status": "budget_exhausted"})
+                    return None
+                if host == "musicbrainz.org":
+                    delay = self._musicbrainz_delay()
+                else:
+                    delay = min(1.5, 0.4 * (2 ** (attempt - 1))) if attempt else 0.0
+                if delay is None or time.monotonic() + delay >= self.deadline:
+                    self._event({"url": url, "status": "budget_exhausted"})
+                    return None
+                self.requests += 1
+                self.last_request[host] = time.monotonic() + delay
             if delay:
                 time.sleep(delay)
             started = time.monotonic()
-            self.requests += 1
-            self.last_request[host] = time.monotonic()
             try:
                 request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
                 timeout = max(0.2, min(8.0, self.deadline - started))
@@ -81,17 +132,17 @@ class RelationshipClient:
                 cache_path.write_text(json.dumps({
                     "url": url, "saved": time.time(), "retrieved_at": stamp, "data": data,
                 }, ensure_ascii=False), encoding="utf-8")
-                self.events.append({"url": url, "status": "ok", "http_status": status,
-                                    "retrieved_at": stamp, "seconds": round(time.monotonic() - started, 3)})
+                self._event({"url": url, "status": "ok", "http_status": status,
+                             "retrieved_at": stamp, "seconds": round(time.monotonic() - started, 3)})
                 return data
             except HTTPError as exc:
-                self.events.append({"url": url, "status": "failed", "http_status": exc.code,
-                                    "attempt": attempt + 1, "error": str(exc)[:160]})
+                self._event({"url": url, "status": "failed", "http_status": exc.code,
+                             "attempt": attempt + 1, "error": str(exc)[:160]})
                 if exc.code not in {429, 500, 502, 503, 504}:
                     return None
             except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
-                self.events.append({"url": url, "status": "failed", "attempt": attempt + 1,
-                                    "error": str(exc)[:160]})
+                self._event({"url": url, "status": "failed", "attempt": attempt + 1,
+                             "error": str(exc)[:160]})
         return None
 
     def wikidata_identity(self, name: str) -> dict | None:
@@ -253,16 +304,17 @@ def select_island_seeds(packet: dict, limit: int = 9, per_island: int = 2) -> li
 
 
 def collect_relationships(seed_artists: list[str], client: RelationshipClient,
-                          *, member_expansions: int = 2, projects_per_member: int = 4) -> dict:
+                          *, member_expansions: int = 2, projects_per_member: int = 4,
+                          workers: int = 3) -> dict:
     """Collect auditable member, collaboration and shared-project paths."""
 
     artists: dict[str, dict] = {}
     unresolved: list[str] = []
-    for seed in seed_artists:
+
+    def collect_seed(seed: str) -> tuple[str, dict | None]:
         identity = client.resolve_artist(seed)
         if not identity:
-            unresolved.append(seed)
-            continue
+            return seed, None
         record = identity["record"]
         base_url = identity["url"]
         discogs_id = identity.get("discogs_id") or _discogs_id(record)
@@ -349,7 +401,7 @@ def collect_relationships(seed_artists: list[str], client: RelationshipClient,
         vocalists = [{key: value for key, value in member.items() if key != "external_ids"}
                      for member in members if "vocal" in str(member.get("role") or "").casefold()
                      and "background" not in str(member.get("role") or "").casefold()]
-        artists[seed] = {
+        return seed, {
             "canonical_name": record.get("name") or seed,
             "entity_type": "band" if record.get("type") == "Group" else "solo_artist" if record.get("type") == "Person" else "unknown",
             "external_ids": {"musicbrainz": identity["mbid"], **({"wikidata": identity["qid"]} if identity.get("qid") else {}),
@@ -362,6 +414,14 @@ def collect_relationships(seed_artists: list[str], client: RelationshipClient,
             "retrieved_at": utc_now(),
             "research_origin": "public_catalog",
         }
+    # Independent artists overlap their Wikidata/Discogs waits; the shared client
+    # still enforces its HTTP count/deadline and MusicBrainz's host-wide cadence.
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(seed_artists) or 1))) as pool:
+        for seed, artist in pool.map(collect_seed, seed_artists):
+            if artist is None:
+                unresolved.append(seed)
+            else:
+                artists[seed] = artist
     return {
         "schema_version": "2.0", "catalog_type": "live_public_relations",
         "generated_at": utc_now(), "seed_artists": seed_artists,

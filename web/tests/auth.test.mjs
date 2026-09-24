@@ -86,3 +86,35 @@ test("管理员会话不能替代普通用户会话运行任务", { concurrency:
   });
   assert.equal(response.status, 401);
 });
+
+test("管理员保持登录选项同步控制服务端会话和 Cookie 期限，退出立即失效", { concurrency: false }, async (t) => {
+  const server = await createIsolatedServer({ label: "admin-remember", authRequired: true });
+  t.after(() => server.stop());
+  const store = createAuthStore(server.authDbPath);
+  store.ensureBootstrapAdmin("remember-admin", "admin-password-2026");
+  store.close();
+
+  for (const [remember, ttl] of [[false, 8 * 60 * 60], [true, 30 * 24 * 60 * 60]]) {
+    const started = Date.now();
+    const response = await fetch(`${server.baseUrl}/api/admin/login`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "remember-admin", password: "admin-password-2026", remember }),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const header = response.headers.get("set-cookie") || "";
+    assert.match(header, new RegExp(`Max-Age=${ttl}(?:;|$)`));
+    assert.match(header, /HttpOnly/);
+    assert.match(header, /SameSite=Lax/);
+    const remaining = Date.parse(payload.expires_at) - started;
+    assert.ok(remaining >= ttl * 1000 && remaining <= ttl * 1000 + 10000);
+    const session = cookie(response, "atlas_admin_session");
+    const me = await fetch(`${server.baseUrl}/api/admin/me`, { headers: { cookie: session } });
+    assert.equal((await me.json()).user.username, "remember-admin");
+    const logout = await fetch(`${server.baseUrl}/api/admin/logout`, { method: "POST", headers: { cookie: session } });
+    assert.equal(logout.status, 200);
+    assert.match(logout.headers.get("set-cookie") || "", /Max-Age=0/);
+    const after = await fetch(`${server.baseUrl}/api/admin/me`, { headers: { cookie: session } });
+    assert.equal((await after.json()).user, null);
+  }
+});

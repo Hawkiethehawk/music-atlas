@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -224,6 +227,129 @@ class NeteaseDetailParsingTests(unittest.TestCase):
 
 
 class NeteasePublicReaderTests(unittest.TestCase):
+    @staticmethod
+    def _multi_batch_payload(count: int) -> bytes:
+        return json.dumps({
+            "code": 200,
+            "playlist": {
+                "name": "并行歌单", "trackCount": count,
+                "trackIds": [{"id": 100 + index} for index in range(1, count + 1)],
+                "tracks": [],
+            },
+        }).encode("utf-8")
+
+    @staticmethod
+    def _song_detail(track_id: int, *, missing: bool = False) -> bytes:
+        songs = [] if missing else [{
+            "id": track_id, "name": f"Song {track_id}",
+            "ar": [{"name": "Artist"}], "al": {"name": "Album"},
+        }]
+        return json.dumps({"code": 200, "songs": songs}).encode("utf-8")
+
+    def test_parallel_batches_preserve_order_hash_and_bound(self) -> None:
+        source = self._multi_batch_payload(4)
+        responses = {str(track_id): self._song_detail(track_id) for track_id in range(101, 105)}
+        barrier = threading.Barrier(3)
+        guard = threading.Lock()
+        active = 0
+        maximum_active = 0
+        finishes: list[str] = []
+
+        def fetch(ids: list[str]) -> bytes:
+            nonlocal active, maximum_active
+            with guard:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            if ids[0] in ("101", "102", "103"):
+                barrier.wait(timeout=2)
+                time.sleep((104 - int(ids[0])) * 0.015)
+            with guard:
+                active -= 1
+                finishes.append(ids[0])
+            return responses[ids[0]]
+
+        with mock.patch("source_adapters.crawler_settings", return_value={"netease_song_detail_batch_size": 1}), \
+             mock.patch("source_adapters._fetch_netease_playlist_detail", return_value=source), \
+             mock.patch("source_adapters._fetch_netease_song_details", side_effect=fetch):
+            snapshot = NeteasePublicPlaylistReader().read(
+                None, platform="netease", playlist_id="7786449876", playlist_name="忽略"
+            )
+        self.assertEqual([row["platform_track_id"] for row in snapshot["tracks"]], ["101", "102", "103", "104"])
+        self.assertEqual([row["position"] for row in snapshot["tracks"]], [1, 2, 3, 4])
+        self.assertEqual(snapshot["reader"]["song_detail_request_count"], 4)
+        self.assertEqual(maximum_active, 3)
+        self.assertNotEqual(finishes[:3], ["101", "102", "103"])
+        digest = hashlib.sha256()
+        for raw in [source, *[responses[str(track_id)] for track_id in range(101, 105)]]:
+            digest.update(len(raw).to_bytes(8, "big"))
+            digest.update(raw)
+        self.assertEqual(snapshot["input_sha256"], digest.hexdigest())
+        self.assertEqual(snapshot["snapshot_id"], f"netease-{digest.hexdigest()[:16]}")
+
+    def test_missing_song_remains_recorded_without_partial_fetch(self) -> None:
+        source = self._multi_batch_payload(4)
+
+        def fetch(ids: list[str]) -> bytes:
+            track_id = int(ids[0])
+            return self._song_detail(track_id, missing=track_id == 103)
+
+        with mock.patch("source_adapters.crawler_settings", return_value={"netease_song_detail_batch_size": 1}), \
+             mock.patch("source_adapters._fetch_netease_playlist_detail", return_value=source), \
+             mock.patch("source_adapters._fetch_netease_song_details", side_effect=fetch):
+            snapshot = NeteasePublicPlaylistReader().read(
+                None, platform="netease", playlist_id="7786449876", playlist_name="忽略"
+            )
+        self.assertEqual([row["platform_track_id"] for row in snapshot["tracks"]], ["101", "102", "104"])
+        self.assertEqual(snapshot["reader"]["unavailable_track_ids"], ["103"])
+        self.assertEqual(snapshot["reader"]["song_detail_request_count"], 4)
+
+    def test_http_429_stops_parallel_scheduling_and_retries_serially(self) -> None:
+        from urllib.error import HTTPError
+
+        source = self._multi_batch_payload(4)
+        guard = threading.Lock()
+        attempts: dict[str, int] = {}
+        barrier = threading.Barrier(3)
+        calls: list[str] = []
+
+        def fetch(ids: list[str]) -> bytes:
+            track_id = ids[0]
+            with guard:
+                attempts[track_id] = attempts.get(track_id, 0) + 1
+                calls.append(track_id)
+                attempt = attempts[track_id]
+            if track_id in ("101", "102", "103") and attempt == 1:
+                barrier.wait(timeout=2)
+            if track_id == "103" and attempt == 1:
+                try:
+                    raise HTTPError("https://music.163.com", 429, "rate limited", None, None)
+                except HTTPError as exc:
+                    raise ContractError("详情请求限流") from exc
+            if track_id in ("101", "102") and attempt == 1:
+                time.sleep(0.03)
+            return self._song_detail(int(track_id))
+
+        with mock.patch("source_adapters.crawler_settings", return_value={"netease_song_detail_batch_size": 1}), \
+             mock.patch("source_adapters._fetch_netease_playlist_detail", return_value=source), \
+             mock.patch("source_adapters._fetch_netease_song_details", side_effect=fetch):
+            snapshot = NeteasePublicPlaylistReader().read(
+                None, platform="netease", playlist_id="7786449876", playlist_name="忽略"
+            )
+        self.assertEqual([row["platform_track_id"] for row in snapshot["tracks"]], ["101", "102", "103", "104"])
+        self.assertEqual(attempts, {"101": 1, "102": 1, "103": 2, "104": 1})
+        self.assertEqual(calls[-2:], ["103", "104"])
+        self.assertEqual(snapshot["reader"]["song_detail_request_count"], 4)
+
+    def test_api_429_does_not_become_missing_song(self) -> None:
+        with mock.patch("source_adapters.crawler_settings", return_value={"netease_song_detail_batch_size": 1}), \
+             mock.patch("source_adapters._fetch_netease_playlist_detail", return_value=self._multi_batch_payload(2)), \
+             mock.patch("source_adapters._fetch_netease_song_details", return_value=b'{"code":429}'), \
+             mock.patch("source_adapters.time.sleep"):
+            with self.assertRaisesRegex(ContractError, "429"):
+                NeteasePublicPlaylistReader().read(
+                    None, platform="netease", playlist_id="7786449876", playlist_name="忽略"
+                )
+
     def test_read_builds_snapshot_with_declared_mismatch_incomplete(self) -> None:
         reader = NeteasePublicPlaylistReader()
         with mock.patch(
@@ -283,8 +409,83 @@ class NeteasePublicReaderTests(unittest.TestCase):
         self.assertEqual(snapshot["declared_track_count"], 3)
         self.assertEqual(snapshot["track_count"], 3)
         self.assertEqual([item["platform_track_id"] for item in snapshot["tracks"]], ["102", "101", "103"])
-        fetch_details.assert_called_once_with(["102", "101", "103"])
+        fetch_details.assert_called_once_with(["101", "103"])
         self.assertEqual(snapshot["reader"]["song_detail_request_count"], 1)
+        self.assertEqual(snapshot["reader"]["embedded_track_count"], 1)
+        self.assertEqual(snapshot["reader"]["requested_song_detail_id_count"], 2)
+
+    def test_large_playlist_reuses_embedded_tracks_but_keeps_full_snapshot_before_half_selection(self) -> None:
+        from contracts import validate_playlist_snapshot
+        from web_workflow import _apply_track_limit
+
+        raw_songs = [
+            {"id": 10_000 + index, "name": f"Song {index}",
+             "ar": [{"name": f"Artist {index}"}], "al": {"name": f"Album {index}"}}
+            for index in range(1917)
+        ]
+        playlist_raw = json.dumps({"code": 200, "playlist": {
+            "name": "large fixture", "trackIds": [{"id": item["id"]} for item in raw_songs],
+            "tracks": raw_songs[:1000],
+        }}).encode("utf-8")
+        requested: list[list[str]] = []
+
+        def fetch(ids: list[str]) -> bytes:
+            requested.append(ids)
+            return json.dumps({"code": 200, "songs": [raw_songs[int(track_id) - 10_000]
+                                                     for track_id in ids]}).encode("utf-8")
+
+        with mock.patch("source_adapters._fetch_netease_playlist_detail", return_value=playlist_raw), \
+             mock.patch("source_adapters._fetch_netease_song_details", side_effect=fetch):
+            snapshot = NeteasePublicPlaylistReader().read(
+                None, platform="netease", playlist_id="7786449876", playlist_name="ignored")
+        validate_playlist_snapshot(snapshot, require_complete=True)
+        self.assertEqual(snapshot["declared_track_count"], 1917)
+        self.assertEqual(snapshot["track_count"], 1917)
+        self.assertEqual([item["platform_track_id"] for item in snapshot["tracks"]],
+                         [str(item["id"]) for item in raw_songs])
+        self.assertEqual([item["position"] for item in snapshot["tracks"]], list(range(1, 1918)))
+        self.assertEqual(snapshot["reader"]["embedded_track_count"], 1000)
+        self.assertEqual(snapshot["reader"]["requested_song_detail_id_count"], 917)
+        self.assertEqual(snapshot["reader"]["song_detail_request_count"], 5)
+        self.assertEqual(sorted(track_id for batch in requested for track_id in batch),
+                         sorted(str(item["id"]) for item in raw_songs[1000:]))
+        self.assertEqual(snapshot["reader"]["song_detail_batch_attempt_counts"], [1] * 5)
+        self.assertEqual(len(snapshot["reader"]["song_detail_batch_elapsed_seconds"]), 5)
+        self.assertGreaterEqual(snapshot["reader"]["playlist_detail_elapsed_seconds"], 0)
+        full_snapshot_id = snapshot["snapshot_id"]
+        full_playlist_tracks = list(snapshot["tracks"])
+        limited = _apply_track_limit(snapshot, 959, percentile=0.5)
+        validate_playlist_snapshot(limited, require_complete=True)
+        self.assertEqual(limited["reader"]["source_track_count"], 1917)
+        self.assertEqual(limited["track_count"], 959)
+        self.assertEqual(limited["snapshot_id"], f"{full_snapshot_id}-limit959")
+        self.assertEqual(len(full_playlist_tracks), 1917)
+        self.assertEqual(full_playlist_tracks[-1]["platform_track_id"], "11916")
+        self.assertNotIn(full_playlist_tracks[-1]["platform_track_id"],
+                         {track["platform_track_id"] for track in limited["tracks"]})
+
+    def test_conflicting_embedded_identity_is_refetched_before_publication(self) -> None:
+        playlist = {"code": 200, "playlist": {
+            "name": "conflicting fixture", "trackIds": [{"id": 101}, {"id": 102}],
+            "tracks": [
+                {"id": 101, "name": "Wrong A", "ar": [{"name": "A"}]},
+                {"id": 101, "name": "Wrong B", "ar": [{"name": "B"}]},
+                {"id": 102, "name": "Safe", "ar": [{"name": "C"}]},
+            ],
+        }}
+        details = {"code": 200, "songs": [
+            {"id": 101, "name": "Confirmed", "ar": [{"name": "Actual"}]},
+        ]}
+        with mock.patch("source_adapters._fetch_netease_playlist_detail",
+                        return_value=json.dumps(playlist).encode()), \
+             mock.patch("source_adapters._fetch_netease_song_details",
+                        return_value=json.dumps(details).encode()) as fetch_details:
+            snapshot = NeteasePublicPlaylistReader().read(
+                None, platform="netease", playlist_id="7786449876", playlist_name="ignored")
+        fetch_details.assert_called_once_with(["101"])
+        self.assertEqual(snapshot["reader"]["embedded_track_count"], 1)
+        self.assertEqual([(track["title"], track["artist"]) for track in snapshot["tracks"]],
+                         [("Confirmed", "Actual"), ("Safe", "C")])
 
 
 QQ_SAMPLE_PAGE = {

@@ -46,7 +46,7 @@ class AgentLastFMTests(unittest.TestCase):
   regular={'canonical_track_id':'regular','title':'T1','artist':'A1','project':'P1','candidate_type':'style_neighbor','provider_similarity':{}}
   exploration={'canonical_track_id':'far','title':'T2','artist':'A2','project':'P2','candidate_type':'exploration','provider_similarity':{}}
   result={'candidates':[{'id':'regular','island_id':'a','reason':'从另类摇滚的边缘切入，适合比较相近审美的不同表达。','details':DETAILS},
-                        {'id':'far','island_id':'a','reason':'沿公开相似路径向外一步，适合作为本期的探索入口。','details':DETAILS}]}
+                        {'id':'far','island_id':'a','reason':'沿公开相似路径向外一步，适合作为进一步探索的入口。','details':DETAILS}]}
   with patch('agent_lastfm.invoke',return_value=result):
    out=curate(packet,[regular,exploration],None,10,self.directory.name)
   self.assertEqual([item['canonical_track_id'] for item in out],['regular','far'])
@@ -62,6 +62,15 @@ class AgentLastFMTests(unittest.TestCase):
    with self.subTest(text=text),self.assertRaises(ContractError):
     validate_overall_summary(text,[{'title':'Secret Song','artist':'Secret Artist'}])
   validate_overall_summary(SUMMARY,[{'title':'Core','artist':'A'}])
+ def test_summary_length_uses_protection_limit_not_recommended_limit(self):
+  long_summary=('电子、另类摇滚与 Dream Pop 交织出冷峻而开阔的听感，'*12)+'审美在细密纹理与流动推进之间展开。'
+  self.assertGreater(len(long_summary),300)
+  self.assertLessEqual(len(long_summary),420)
+  self.assertEqual(validate_overall_summary(long_summary,[]),long_summary)
+  with self.assertRaisesRegex(ContractError,'80–420'):
+   validate_overall_summary(long_summary+'延展与回响。'*10,[])
+  with self.assertRaisesRegex(ContractError,'80–420'):
+   validate_overall_summary('电子与摇滚交织。',[])
  def test_one_vague_word_with_music_context_is_allowed(self):
   self.assertEqual(validate_copy('以电子音墙铺开，氛围感只作为空间层次的补充。'), '以电子音墙铺开，氛围感只作为空间层次的补充。')
   with self.assertRaisesRegex(ContractError,'氛围感'):
@@ -69,14 +78,12 @@ class AgentLastFMTests(unittest.TestCase):
  def test_incomplete_or_repeated_agent_detail_rejected(self):
   for details in [None,{},dict.fromkeys(DETAILS,'候选艺人的另类摇滚标签与岛内已出现的风格有所交集。')]:
    with self.assertRaises(ContractError):validate_candidate_copy({'agent_reason':'source-based reason','agent_details':details})
- def test_missing_assignment_repaired_once_with_feedback(self):
+ def test_missing_assignment_repaired_locally_without_feedback(self):
   packet={'favorite_tracks':[{'title':'Secret Song','artist':'Secret Artist'} for _ in range(3)],'source_tags':{'records':[{'scope':'artist','tags':[]} for _ in range(3)]}}
   missing=deepcopy(self.groups);missing[2]['record_ids']=[]
-  with patch('agent_lastfm.invoke',side_effect=[{'overall_summary':SUMMARY,'islands':missing},{'overall_summary':SUMMARY,'islands':self.groups}]) as call:
+  with patch('agent_lastfm.invoke',return_value={'overall_summary':SUMMARY,'islands':missing}) as call:
    analyze(packet,None,10,self.directory.name)
-  self.assertEqual(call.call_count,2)
-  self.assertIn('[2]',call.call_args.args[1]['repair']['error'])
-  self.assertEqual(call.call_args.args[1]['repair']['attempt'],2)
+  self.assertEqual(call.call_count,1)
   self.assertEqual(len(packet['agent_islands']),3)
  def test_repair_cannot_relax_contract_or_start_recommendation(self):
   packet={'favorite_tracks':[{'title':'Secret Song','artist':'Secret Artist'} for _ in range(3)],'source_tags':{'records':[{'scope':'artist','tags':[]} for _ in range(3)]}}
@@ -118,7 +125,7 @@ class AgentLastFMTests(unittest.TestCase):
                      {'id':'two','island_id':'a','reason':'太短','details':short}]}
   good_details={key:value+'，用于说明具体风格连接和比较方向。' for key,value in DETAILS.items()}
   good={'candidates':[{'id':'one','island_id':'a','reason':'从另类摇滚的边缘切入，适合继续比较同一审美中的不同表达。','details':good_details},
-                      {'id':'two','island_id':'a','reason':'沿公开相似路径向外一步，适合作为本期的探索入口。','details':{key:value+'，用于说明具体风格连接和比较方向。' for key,value in DETAILS.items()}}]}
+                      {'id':'two','island_id':'a','reason':'沿公开相似路径向外一步，适合作为进一步探索的入口。','details':{key:value+'，用于说明具体风格连接和比较方向。' for key,value in DETAILS.items()}}]}
   events=[]
   with patch('agent_lastfm.invoke',side_effect=[bad,good]) as call:
    out=curate(packet,candidates,None,10,self.directory.name,lambda attempt,feedback: events.append((attempt,feedback)))
@@ -156,6 +163,15 @@ class AgentLastFMTests(unittest.TestCase):
   self.assertEqual([c.args[3] for c in call.call_args_list],[150,29])
   self.assertEqual(events,[(2,'Agent 执行超时：150 秒')])
   self.assertEqual(call.call_args.args[1]['retry']['attempt'],2)
+  self.assertEqual(len(packet['agent_islands']),3)
+ def test_small_first_run_timeout_leaves_room_for_real_retry(self):
+  packet={'favorite_tracks':[{'title':'Secret Song','artist':'Secret Artist'} for _ in range(3)],'source_tags':{'records':[{'scope':'artist','tags':[]} for _ in range(3)]}}
+  valid={'overall_summary':SUMMARY,'islands':self.groups}
+  events=[]
+  with patch('agent_lastfm.time.monotonic',side_effect=[0,0,31,32]), patch('agent_lastfm.invoke',side_effect=[ContractError('Agent 执行超时：30 秒'),valid]) as call:
+   analyze(packet,None,70,self.directory.name,lambda attempt,feedback: events.append((attempt,feedback)))
+  self.assertEqual([c.args[3] for c in call.call_args_list],[30,30])
+  self.assertEqual(events,[(2,'Agent 执行超时：30 秒')])
   self.assertEqual(len(packet['agent_islands']),3)
  def test_regeneration_uses_one_shared_time_budget(self):
   bad={'overall_summary':SUMMARY,'islands':self.groups[:2]}

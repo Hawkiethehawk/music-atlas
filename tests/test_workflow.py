@@ -25,7 +25,7 @@ from contracts import (
     validate_playlist_snapshot,
     validate_recommendation_bundle,
 )
-from musician_analyzer import DEFAULT_POLICY, analyze_snapshot, build_overlap_style_distribution
+from musician_analyzer import DEFAULT_POLICY, analyze_snapshot, apply_public_style_evidence, build_overlap_style_distribution
 from recommender import rank_bundle, rank_candidates, score_candidate
 from source_adapters import LocalJsonReader, build_snapshot
 
@@ -215,6 +215,7 @@ def candidate_fixture(packet: dict, index: int, candidate_type: str) -> dict:
         endpoint = 0 if sum(axes.values()) / len(axes) >= 50 else 100
         axes = dict.fromkeys(axes, endpoint)
     source_url = f"https://musicbrainz.org/recording/00000000-0000-4000-8000-{index:012d}"
+    similarity_url = "https://www.last.fm/music/Band/+similar"
     evidence_items = [
         {"claim_type": "track_identity", "claim": "测试歌曲身份", "url": source_url},
         {"claim_type": "style", "claim": "测试风格归属", "url": source_url},
@@ -247,7 +248,9 @@ def candidate_fixture(packet: dict, index: int, candidate_type: str) -> dict:
             "novelty": "候选不在本次喜欢歌曲清单中",
             "text": "这是一条用于验证确定性评分、召回配额与歌单顺序的完整测试推荐说明。",
         },
-        "sources": [source_url],
+        "sources": [source_url, similarity_url] if candidate_type == "exploration" else [source_url],
+        **({"provider_similarity": {"seed": "Band", "artist": name, "rank": 3,
+                                    "url": similarity_url}} if candidate_type == "exploration" else {}),
         "platform_links": {"youtube": f"https://www.youtube.com/watch?v=test{index}"},
     }
 
@@ -318,6 +321,71 @@ class WorkflowContractTests(unittest.TestCase):
             deftones = next(entity for entity in packet["entities"] if entity["name"] == "Deftones")
             self.assertEqual(deftones["relation_status"], "confirmed")
             self.assertIn("person:chinomoreno", packet["analysis_ref_ids"])
+
+    def test_public_evidence_replaces_axes_without_promoting_artist_background(self) -> None:
+        from contracts import require_analysis_coverage
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = build_snapshot(self.fixture, reader_name="local_json", platform="apple_music",
+                                      playlist_id="sample", playlist_name="sample")
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+            packet = analyze_snapshot(snapshot_path, preferred_path=self.preferred,
+                                      relation_path=self.relations, output_path=root / "analysis.json")
+            ref = packet["style_analysis"]["known_style_refs"][0]
+            records = []
+            for index, track in enumerate(packet["favorite_tracks"]):
+                scope = ("track", "album", "artist")[index % 3]
+                subject = {"artist": track["artist"]}
+                if scope == "track":
+                    subject["track"] = track["title"]
+                elif scope == "album":
+                    subject["album"] = track["album"]
+                evidence = {"scope": scope, "subject": subject, "source": "lastfm", "url": "https://www.last.fm/music/test",
+                            "retrieved_at": "2026-09-24T00:00:00Z", "identity_status": "request_only",
+                            "status": "supported", "tags": [{"tag": "test tag", "style_ref": ref}]}
+                records.append({"track_key": track["track_key"], "evidence": [evidence]})
+            result = apply_public_style_evidence(packet, {"provider": "lastfm", "axis_policy": "removed",
+                                                          "records": records})
+            validate_analysis_packet(result)
+            self.assertNotIn("axis_definitions", result["style_analysis"])
+            self.assertNotIn("style_axes", result["track_style_assignments"][0])
+            self.assertEqual(result["style_analysis"]["source_coverage"]["track_evidence_count"],
+                             sum(index % 3 == 0 for index in range(len(records))))
+            self.assertEqual(result["style_analysis"]["source_coverage"]["artist_background_count"],
+                             sum(index % 3 == 2 for index in range(len(records))))
+            self.assertEqual(result["style_analysis"]["classified_track_count"],
+                             result["style_analysis"]["source_coverage"]["track_evidence_count"])
+            background_row = next(item for item in result["track_style_assignments"]
+                                  if item["applied_scope"] == "album_background")
+            self.assertEqual(background_row["classification_status"], "unclassified")
+            self.assertEqual(background_row["style_refs"], [])
+            self.assertEqual(background_row["background_style_refs"], [ref])
+            if result["style_analysis"]["source_coverage"]["track_evidence_count"] + result["style_analysis"]["source_coverage"]["album_background_count"] >= len(records) / 2:
+                require_analysis_coverage(result)
+            from musician_analyzer import write_coverage_report
+            report = write_coverage_report(result, root / "coverage.json")
+            self.assertEqual(report["quality_metric"], "min_track_or_album_share")
+            self.assertNotIn("style_axes", str(report["review_queue"]))
+            tampered = json.loads(json.dumps(result))
+            tampered["track_style_assignments"][0]["style_refs"] = []
+            with self.assertRaises(ContractError):
+                validate_analysis_packet(tampered)
+            artist_only_records = []
+            for track in packet["favorite_tracks"]:
+                artist_only_records.append({"track_key": track["track_key"], "evidence": [{
+                    "scope": "artist", "subject": {"artist": track["artist"]},
+                    "source": "lastfm", "status": "supported", "identity_status": "request_only",
+                    "url": "https://www.last.fm/music/test", "retrieved_at": "2026-09-24T00:00:00Z",
+                    "tags": [{"tag": "test tag", "style_ref": ref}],
+                }]})
+            background = apply_public_style_evidence(packet, {"provider": "lastfm", "axis_policy": "removed",
+                                                               "records": artist_only_records})
+            self.assertEqual(background["style_analysis"]["source_coverage"]["artist_background_count"],
+                             len(artist_only_records))
+            with self.assertRaisesRegex(ContractError, "曲目或专辑级风格资料不足"):
+                require_analysis_coverage(background)
 
     def test_step_two_covers_every_current_artist_with_individual_style_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -477,7 +545,6 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("ranking_score", selected[0])
         self.assertEqual(set(selected[0]["score_breakdown"]), {
             "style_fit",
-            "axis_fit",
             "relation_fit",
             "frequency_fit",
             "novelty",

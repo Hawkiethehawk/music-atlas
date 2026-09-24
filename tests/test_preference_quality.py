@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -17,7 +18,7 @@ from musician_analyzer import (
     _aggregate_style_axes, _normalize_style_profile, _style_assignment,
     analyze_and_validate, load_style_taxonomy, write_coverage_report,
 )
-from recommender import _axis_fit
+from recommender import DEFAULT_WEIGHTS, _style_fit
 from recommender import score_candidate
 from source_adapters import build_snapshot
 
@@ -37,12 +38,12 @@ class ProfileQualityTests(unittest.TestCase):
             markdown_path=root / "analysis.md", style_profile_path=ROOT / "styles/artist_style_profiles.example.json",
         )
 
-    def test_unknown_is_null_and_never_a_perfect_quiet_match(self):
-        axes = _aggregate_style_axes([])
-        self.assertEqual(axes, dict.fromkeys(STYLE_AXIS_IDS))
-        for value in (0, 50, 100):
-            self.assertEqual(_axis_fit({"style_axes": dict.fromkeys(STYLE_AXIS_IDS, value), "style_confidence": "high"},
-                                       {"style_analysis": {"style_axes": axes}}), 0)
+    def test_unknown_never_becomes_a_perfect_style_match(self):
+        candidate = {"style_mix": [{"style_ref": "style:alternative_rock", "weight": 1}],
+                     "sources": ["https://www.last.fm/music/Example/+tags"],
+                     "evidence_items": [{"claim_type": "style", "url": "https://www.last.fm/music/Example/+tags"}]}
+        self.assertEqual(_style_fit(candidate, {"style_analysis": {"interest_profiles": [], "style_definitions": []},
+                                                "track_style_assignments": []}), 0)
 
     def test_unknown_analysis_writes_review_queue_but_cannot_call_agent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -93,6 +94,7 @@ class CandidateRouteTests(unittest.TestCase):
     def test_reference_claims_cannot_inflate_unrelated_candidate_score(self):
         from test_hardening import pool_bundle
         pool, packet = pool_bundle()
+        packet["recommendation_policy"]["ranking_weights"] = dict(DEFAULT_WEIGHTS)
         candidate = deepcopy(next(item for item in pool["candidate_pool"] if item["candidate_type"] == "style_neighbor"))
         candidate["analysis_refs"] = [packet["style_analysis"]["known_style_refs"][0]]
         before = score_candidate(candidate, packet)
@@ -113,18 +115,16 @@ class CandidateRouteTests(unittest.TestCase):
 class MultiInterestTests(unittest.TestCase):
     def assignments(self, values):
         return [{"track_key": f"track-{index:03d}", "title": f"Track {index}", "artist": f"Artist {value}",
-                 "classification_status": "classified", "confidence": "high", "style_axes": dict.fromkeys(STYLE_AXIS_IDS, value),
-                 "style_mix": [{"style_ref": "style:alternative_rock", "role": "primary", "weight": 1}]}
+                 "classification_status": "classified", "confidence": "high",
+                 "style_mix": [{"style_ref": "style:alternative_rock" if value < 50 else "style:progressive_rock",
+                                "role": "primary", "weight": 1}]}
                 for index, value in enumerate(values)]
 
-    def test_opposite_interests_do_not_reward_an_unobserved_middle(self):
-        from preference_model import build_interest_profiles
+    def test_unrelated_tags_stay_in_separate_interests(self):
+        from preference_model import build_interest_profiles, profile_distance
         assignments = self.assignments([0, 100])
-        packet = {"track_style_assignments": assignments, "style_analysis": {"style_axes": _aggregate_style_axes(assignments),
-                    "interest_profiles": build_interest_profiles(assignments)}}
-        scores = [_axis_fit({"style_axes": dict.fromkeys(STYLE_AXIS_IDS, value), "style_confidence": "high",
-                            "style_mix": assignments[0]["style_mix"]}, packet) for value in (0, 50, 100)]
-        self.assertEqual(scores, [100, 50, 100])
+        self.assertEqual(profile_distance(*assignments), 1)
+        self.assertEqual(len(build_interest_profiles(assignments)), 2)
 
     def test_grouping_is_bounded_deterministic_and_excludes_unknown(self):
         from preference_model import build_interest_profiles
@@ -134,7 +134,7 @@ class MultiInterestTests(unittest.TestCase):
         self.assertLessEqual(len(expected), 3)
         self.assertEqual(sum(item["track_count"] for item in expected), len(assignments))
         self.assertAlmostEqual(sum(item["share"] for item in expected), 1, places=5)
-        assignments.append({"classification_status": "unclassified", "style_axes": dict.fromkeys(STYLE_AXIS_IDS)})
+        assignments.append({"classification_status": "unclassified", "style_mix": []})
         self.assertEqual(expected, build_interest_profiles(assignments))
 
     def test_artist_bulk_does_not_dominate_linearly(self):
@@ -150,9 +150,36 @@ class MultiInterestTests(unittest.TestCase):
         packet["style_analysis"]["interest_model"] = dict(MODEL_CONFIG)
         packet["style_analysis"]["interest_profiles"] = build_interest_profiles(packet["track_style_assignments"])
         validate_analysis_packet(packet)
-        packet["style_analysis"]["interest_profiles"][0]["style_axes"]["heaviness"] += 1
+        packet["style_analysis"]["interest_profiles"][0]["style_mix"][0]["weight"] += 0.01
         with self.assertRaisesRegex(ContractError, "兴趣分组"):
             validate_analysis_packet(packet)
+
+    def test_fallback_interests_are_packet_scoped_bounded_and_not_persisted(self):
+        from preference_model import _INTEREST_CACHE_LIMIT, build_interest_profiles, interest_profiles
+
+        packet = {"track_style_assignments": self.assignments([0, 100]), "style_analysis": {}}
+        original = deepcopy(packet)
+        with patch("preference_model._interest_cache", OrderedDict()) as cache, \
+             patch("preference_model.build_interest_profiles", wraps=build_interest_profiles) as build:
+            first = interest_profiles(packet)
+            self.assertIs(interest_profiles(packet), first)
+            self.assertEqual(build.call_count, 1)
+            self.assertEqual(packet, original, "缓存不得写入任何 packet/JSON 字段")
+
+            other = deepcopy(packet)
+            self.assertEqual(interest_profiles(other), first)
+            self.assertIsNot(interest_profiles(other), first, "不同任务不得共享可变画像对象")
+            self.assertEqual(build.call_count, 2)
+
+            # Replacing assignments on one packet invalidates its fallback.
+            packet["track_style_assignments"] = self.assignments([30, 70])
+            self.assertIsNot(interest_profiles(packet), first)
+            self.assertEqual(build.call_count, 3)
+
+            for index in range(_INTEREST_CACHE_LIMIT + 2):
+                interest_profiles({"track_style_assignments": self.assignments([index]), "style_analysis": {}})
+            self.assertLessEqual(len(cache), _INTEREST_CACHE_LIMIT)
+            self.assertTrue(all(id(entry[0]) == key for key, entry in cache.items()))
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import unittest
 import urllib.error
 from contextlib import redirect_stdout, redirect_stderr
@@ -12,6 +13,8 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 import executors.openai_compat_executor as executor
+from agent_runner import run_external_agent
+from contracts import ContractError
 
 
 class _FakeResponse:
@@ -191,7 +194,65 @@ class MainContractTests(unittest.TestCase):
             code = executor.main("recommendation")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.getvalue()), {"ok": True})
-        self.assertEqual(err.getvalue(), "")
+        self.assertIn("ATLAS_EXECUTOR_REQUEST role=recommendation attempt=1 retry_count=0 phase=end", err.getvalue())
+        self.assertIn(f"response_bytes={len(body)}", err.getvalue())
+        self.assertNotIn("任务文本", err.getvalue())
+
+
+class TelemetryTests(unittest.TestCase):
+    def test_http_error_telemetry_has_status_retry_count_and_no_response_body(self) -> None:
+        calls: list[int] = []
+
+        def fake_urlopen(request, timeout):  # noqa: ANN001
+            calls.append(1)
+            if len(calls) == 1:
+                raise _http_error(503, "PRIVATE_UPSTREAM_BODY")
+            return _FakeResponse(_completion('{"ok":true}'))
+
+        err = StringIO()
+        with mock.patch.object(executor.urllib.request, "urlopen", side_effect=fake_urlopen), \
+             mock.patch.dict(os.environ, {"MUSIC_ATLAS_API_KEY": "PRIVATE_KEY"}), \
+             mock.patch.object(executor.time, "sleep"), redirect_stderr(err):
+            self.assertEqual(executor._request(dict(_SETTINGS), "analysis", "PRIVATE_PROMPT", 5)["choices"][0]["message"]["content"], '{"ok":true}')
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertIn("attempt=1 retry_count=0 phase=end", lines[1])
+        self.assertIn("status=503", lines[1])
+        self.assertIn(f"response_bytes={len('PRIVATE_UPSTREAM_BODY')}", lines[1])
+        self.assertIn("attempt=2 retry_count=1 phase=end", lines[3])
+        self.assertIn("status=200", lines[3])
+        for secret in ("PRIVATE_UPSTREAM_BODY", "PRIVATE_KEY", "PRIVATE_PROMPT"):
+            self.assertNotIn(secret, err.getvalue())
+
+    def test_timeout_error_retains_only_whitelisted_partial_stderr(self) -> None:
+        safe = "ATLAS_EXECUTOR_REQUEST role=taste attempt=1 retry_count=0 phase=start elapsed_ms=0 status=pending response_bytes=0"
+        partial = f"prompt=PRIVATE_PROMPT\n{safe}\nAuthorization: Bearer PRIVATE_KEY\n"
+        expired = subprocess.TimeoutExpired(cmd=["agent"], timeout=2, stderr=partial.encode("utf-8"))
+        with mock.patch("agent_runner.subprocess.run", side_effect=expired):
+            with self.assertRaises(ContractError) as ctx:
+                run_external_agent("agent", "PRIVATE_PROMPT", timeout=2)
+        self.assertIn("Agent 执行超时：2 秒", str(ctx.exception))
+        self.assertIn(safe, str(ctx.exception))
+        self.assertNotIn("PRIVATE_PROMPT", str(ctx.exception))
+        self.assertNotIn("PRIVATE_KEY", str(ctx.exception))
+
+    def test_timeout_without_telemetry_stays_bounded(self) -> None:
+        expired = subprocess.TimeoutExpired(cmd=["agent"], timeout=2, stderr=b"PRIVATE_BODY")
+        with mock.patch("agent_runner.subprocess.run", side_effect=expired):
+            with self.assertRaises(ContractError) as ctx:
+                run_external_agent("agent", "PRIVATE_PROMPT", timeout=2)
+        self.assertEqual(str(ctx.exception), "Agent 执行超时：2 秒")
+
+    def test_nonzero_exit_preserves_http_error_after_telemetry(self) -> None:
+        safe = "ATLAS_EXECUTOR_REQUEST role=taste attempt=1 retry_count=0 phase=end elapsed_ms=32 status=503 response_bytes=2"
+        completed = subprocess.CompletedProcess(
+            ["agent"], 2, stdout="", stderr=f"{safe}\nMusic Atlas 本机执行器未完成：上游返回 HTTP 503\n",
+        )
+        with mock.patch("agent_runner.subprocess.run", return_value=completed):
+            with self.assertRaises(ContractError) as ctx:
+                run_external_agent("agent", "prompt", timeout=2)
+        self.assertIn("上游返回 HTTP 503", str(ctx.exception))
+        self.assertIn(safe, str(ctx.exception))
 
     def test_main_reports_failure_without_stdout_noise(self) -> None:
         out, err = StringIO(), StringIO()

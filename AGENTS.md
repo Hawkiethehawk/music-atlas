@@ -3,7 +3,7 @@
 ## 1. 仓库边界
 
 - 本目录（`apps/music-atlas`）是**独立 Git 仓库**，默认远端为 `origin` = `https://github.com/Hawkiethehawk/music-atlas.git`，分支 `master`。
-- **默认推送目标是 GitHub `origin`**；原 Gitee 远端保留为 `gitee-archive`，仅作归档，除非用户明确要求不推送。
+- 获得明确推送授权后，目标为 GitHub `origin`；原 Gitee 远端 `gitee-archive` 仅作归档。部署授权不等于 Git 推送授权。
 - 外层 Codex 工作区仓库（`E:\LLM-Sandbox\Codex`）不管理本目录内容；在外层仓库执行 `git add`/`commit`/`push` 时不得纳入本目录。
 - 所有提交、推送、标签操作仅针对本仓库；跨仓库操作前必须重新确认仓库根（`git rev-parse --show-toplevel`）。
 
@@ -26,17 +26,17 @@
 
 ## 4. 设计边界（代码改动约束）
 
-- 以下边界来自 README「设计边界」，修改代码时不得破坏：
-1. Step 1/2/3 通过 JSON 契约连接；Step 2 只读本次 `PlaylistSnapshot`，Step 3 只读本次 `MusicianAnalysisPacket`。
-2. 七维评分、召回配额、去重、MMR 多样性与能量弧排序全部由 `recommender.py` 确定性计算；Agent 不得提交评分字段（契约层强制）。
-3. Apple Music 平台个性化推荐、登录态、历史运行结果不参与候选发现、排序或说明生成；个性化音乐页面不能作为证据来源（`_source_is_forbidden_personalization` 强制）。
-4. 反馈只用于只读离线评估与人工批准的调优建议（`approval_required: true`），绝不自动调整排序策略。
-5. 数量契约 `declared_track_count == track_count == len(tracks)` 由 `contracts.py` 强制。
-6. Schema 1.0 历史产物不可复用，只允许经 `archive-schema1` 归档。
+- 修改代码时保持以下边界：
+1. Step 1/2/3 使用 JSON 契约衔接。Step 2 以本次 `PlaylistSnapshot` 和实际取得的公开资料为依据；Step 3 只消费本次已验证的分析包与可核对的候选证据。
+2. 新结果使用 `sourced_tags_v1`：取得单曲标签才可归为单曲风格；专辑和艺人标签分别标为背景，不折算成单曲分类或听感。未取得可靠资料的内容保持未知，不凭 Agent 记忆、构造的 URL 或推测补齐。
+3. 原歌单达到 1000 首时，只做歌手层级分析，即使用户只选择处理其中一部分；以原歌单数量选模式，以本次处理数量计算覆盖率。未达到 1000 首才查询单曲资料，并允许附带专辑、艺人背景。新来源模式不得把歌手背景写成逐首评价，也不得使用八轴评分或能量弧。
+4. 候选来源、身份、排除规则与策略配比均须核对。`recommender.py` 按当前策略确定性选曲、去重和排序；Agent 不提交无来源的评分或试听结论。
+5. 平台个性化推荐、登录态和历史运行结果不参与候选发现、排序或说明生成；个性化音乐页面不能作为证据来源（`_source_is_forbidden_personalization` 强制）。反馈只用于只读离线评估与人工批准的调优建议（`approval_required: true`），不自动调整排序。
+6. 数量契约 `declared_track_count == track_count == len(tracks)` 由 `contracts.py` 强制。Schema 1.0 历史产物不可复用，只允许经 `archive-schema1` 归档。
 
 ## 5. 验证方式
 
-- 提交前必须实际执行并在 CHANGELOG 中如实记录结果：
+- 提交前实际执行以下检查；准备推送时，再按 `version-manager` 规则把真实验证结果写入 CHANGELOG：
 
 ```bash
 python -m unittest discover -s tests -v
@@ -50,10 +50,19 @@ python workflow.py run --input tests/fixtures/playlist_sample.json --reader loca
   --platform apple_music --playlist-id sample --playlist-name '示例歌单' --runtime-dir runtime/local-run
 python workflow.py agent --analysis runtime/local-run/musician_analysis.json \
   --prompt runtime/local-run/agent_prompt.md --output runtime/local-run/recommendation_bundle.json \
-  --channel-output runtime/local-run/channel_text.txt --command 'python tests/fixtures/fake_agent.py'
+  --report-output runtime/local-run/report.txt --command 'python tests/fixtures/fake_agent.py'
 ```
 
 - 不得把未运行的测试写成已通过。
+
+### 真实歌单并行验收
+
+- 每份歌单跨三轮保持同一个固定链接，三条并行算一轮，至少完整执行三轮（共至少 9 次首次完整运行）。每次从原始公开链接和全新隔离目录启动，不复用快照、分析包、候选池、推荐历史或上轮结果；这里的首次指本地业务冷启动，第三方响应缓存状态单独记录，无法识别时标为未知。任一轮任一歌单失败、超时或未达到完整 `completed`，最终验收不通过；修复后从第一轮重新计数。
+- 涉及首次运行、Step 2/3、断点续跑、候选路线、严格配比或总耗时的修改，除单元和浏览器夹具测试外，并行启动三个真实歌单测试：Apple Music `pl.u-9DU1g31kdJ`（约 123 首）、网易云 `18135667715`（约 91 首）、网易云 `7786449876`（约 1917 首）。真实账号和歌单不得写入仓库；通过本机未入库环境变量 `ATLAS_USER`、`ATLAS_PASS` 与 `ATLAS_REGRESSION_PLAYLISTS_JSON` 提供回归配置。优先从当前账号保存的公开链接只读取得 URL；链接失效时暂停该轮验收并向用户索取替代链接。不得复制凭据。
+- 三个任务分别使用独立临时运行目录和测试用 `MUSIC_ATLAS_USER_ID`，并行启动、记录各自的启动时间与重叠区间。不得指向正式 `current-data`、正式 `web-jobs` 或用户推荐历史；不得覆盖线上 Atlas。测试密钥只通过既有服务环境注入，日志不得输出密钥。
+- 验证 1917 首歌单时，须证明原歌单规模触发歌手层级模式；即使选择处理 50%，也不能转为逐曲模式。有来源的歌手所对应的本次处理曲目数是覆盖分子，处理曲目数是分母，按当次策略 `min_artist_weight_share` 判断。另两份歌单将每首曲目按“单曲标签→仅有专辑背景→仅有艺人背景→未知”的优先级只计入一类；只有前两类合计进入 `min_track_or_album_share` 发布门槛，后三类均不得计入单曲分类。当前默认下限分别为 30% 和 50%，以实际策略为准。
+- 每条任务完成时立即以该任务的测试账号并行回读隔离测试环境的最终结果，分别记录从原始链接首次提交到回读成功的墙钟耗时；不得等其余任务结束后才回读，也不得把内部完成时间当作回读时间。三组最终曲目、音乐风格分析与选曲硬约束均通过才算 `completed`，不以每次运行的独立审计或单列本地复核为完成前提。每条歌单都必须在 120 秒内达到完整终态；临时预览、仅锁定曲目、失败或超时均不算通过。资料缺口允许保留，但必须逐项如实显示，不得声称未执行的独立审计已通过。首次运行的 120 秒结果不得用续跑、跨运行复用或上一轮的本地缓存、产物替代；第三方响应缓存命中单独记录。
+- 对隔离目录中的最终结果逐组检查目标曲目数、候选类型的当前策略配比、跨组三十首唯一身份、原歌单与近期推荐排除、真实平台歌曲 URL、身份与来源校验、资料缺口显示及账户隔离。摘要模式按其实际策略验收，不套用逐曲模式的 4/3/2/1。失败或超时保留隔离目录的事件和错误供定位；修复后可单独重跑定位，但最终验收须重新并行运行三条歌单共三轮，记录各自耗时及重叠区间，不能将并行负载结果表述为独占运行耗时。
 
 ## 6. 其他约定
 

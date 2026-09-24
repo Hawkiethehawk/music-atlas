@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 def make_result(payload: dict, *, unclassified: bool = False) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     style_ref = payload["style_definitions"][0]["style_ref"]
+    source_only = payload.get("style_fact_policy") == "precollected_only"
 
     def evidence(kind):
         return [{"claim_type": kind, "claim": "TEST_ONLY synthetic evidence, not a music fact",
@@ -19,15 +20,17 @@ def make_result(payload: dict, *, unclassified: bool = False) -> dict:
 
     profiles = []
     for track in payload["tracks"]:
-        profiles.append({
+        profile = {
             "position": track["position"], "track_key": track["track_key"],
-            "classification_status": "unclassified" if unclassified else "classified",
-            "scope": "unknown" if unclassified else "track", "confidence": "low" if unclassified else "medium",
-            "style_mix": [] if unclassified else [{"style_ref": style_ref, "role": "primary", "weight": 1}],
-            "style_axes": dict.fromkeys(payload["axis_definitions"], None if unclassified else 45),
+            "classification_status": "unclassified" if unclassified or source_only else "classified",
+            "scope": "unknown" if unclassified or source_only else "track", "confidence": "low" if unclassified or source_only else "medium",
+            "style_mix": [] if unclassified or source_only else [{"style_ref": style_ref, "role": "primary", "weight": 1}],
             "summary": "TEST_ONLY fixture. Not researched and not an actual music assessment.",
-            "evidence_items": [] if unclassified else evidence("style"),
-        })
+            "evidence_items": [] if unclassified or source_only else evidence("style"),
+        }
+        if not source_only:
+            profile["style_axes"] = dict.fromkeys(payload["axis_definitions"], None if unclassified else 45)
+        profiles.append(profile)
     relations = []
     for artist in payload["relation_artists"]:
         relations.append({"artist": artist, "entity_type": "unknown" if unclassified else "band",

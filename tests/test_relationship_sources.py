@@ -1,13 +1,17 @@
 from __future__ import annotations
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import URLError
 from unittest import mock
 
 from musician_analyzer import _entity
 from contracts import normalized_name
-from relationship_sources import collect_relationships, select_island_seeds
+from relationship_sources import RelationshipClient, collect_relationships, select_island_seeds
 
 
 class FakeRelationshipClient:
@@ -52,6 +56,31 @@ class FakeRelationshipClient:
 
 
 class RelationshipSourceTests(unittest.TestCase):
+    def test_independent_seeds_overlap_without_reordering_results(self):
+        class SlowClient(FakeRelationshipClient):
+            def __init__(self):
+                super().__init__()
+                self.active = 0
+                self.peak = 0
+                self.lock = threading.Lock()
+
+            def resolve_artist(self, name):
+                with self.lock:
+                    self.active += 1
+                    self.peak = max(self.peak, self.active)
+                time.sleep(0.04 if name == "First" else 0.01)
+                with self.lock:
+                    self.active -= 1
+                return super().resolve_artist(name)
+
+        client = SlowClient()
+        seeds = ["First", "Second", "Third", "Fourth"]
+        catalog = collect_relationships(seeds, client, workers=3)
+        self.assertGreaterEqual(client.peak, 2)
+        self.assertEqual(list(catalog["artists"]), seeds)
+        self.assertEqual(catalog["seed_artists"], seeds)
+        self.assertEqual(catalog["unresolved_artists"], [])
+
     def test_selects_one_distinct_artist_per_interest_island(self):
         packet = {
             "favorite_tracks": [
@@ -90,6 +119,76 @@ class RelationshipSourceTests(unittest.TestCase):
         self.assertEqual(entity["related_projects"][0]["name"], "Side Project")
         self.assertIn("person:sharedperson", refs)
         self.assertIn("project:sideproject", refs)
+
+
+class RelationshipClientConcurrencyTests(unittest.TestCase):
+    @staticmethod
+    def response():
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                pass
+
+            def read(self, _limit):
+                return b'{"artists": []}'
+
+        return Response()
+
+    def test_parallel_requests_never_exceed_shared_request_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = RelationshipClient(Path(tmp), seconds=2, max_requests=3)
+            started = []
+
+            def fake_open(_request, timeout):
+                started.append(time.monotonic())
+                time.sleep(0.02)
+                return self.response()
+
+            urls = [f"https://www.wikidata.org/w/api.php?item={index}" for index in range(12)]
+            with mock.patch("relationship_sources.urlopen", side_effect=fake_open):
+                with ThreadPoolExecutor(max_workers=6) as pool:
+                    list(pool.map(client.get, urls))
+            self.assertEqual(client.requests, 3)
+            self.assertEqual(len(started), 3)
+            self.assertEqual(sum(event["status"] == "budget_exhausted" for event in client.events), 9)
+
+    def test_musicbrainz_slots_are_shared_between_clients(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            clients = [RelationshipClient(path / f"cache-{index}", seconds=2, rate_lock_path=path / "rate.lock")
+                       for index in range(2)]
+            started = []
+            starts_lock = threading.Lock()
+
+            def fake_open(_request, timeout):
+                with starts_lock:
+                    started.append(time.monotonic())
+                return self.response()
+
+            urls = [(clients[index % 2], f"https://musicbrainz.org/ws/2/artist/{index}?fmt=json")
+                    for index in range(4)]
+            # Windows 的短时 sleep 在全量并行负载下可提前约一轮时钟刻度；
+            # 拉大模拟间隔，并保留足够高的实际起始间隔断言。
+            with mock.patch("relationship_sources.MUSICBRAINZ_INTERVAL", 0.12), \
+                 mock.patch("relationship_sources.urlopen", side_effect=fake_open):
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    list(pool.map(lambda item: item[0].get(item[1]), urls))
+            self.assertEqual(len(started), 4)
+            self.assertTrue(all(right - left >= 0.08
+                                for left, right in zip(sorted(started), sorted(started)[1:])), started)
+
+    def test_retries_respect_budget_and_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = RelationshipClient(Path(tmp) / "cache", seconds=1, max_requests=1)
+            with mock.patch("relationship_sources.urlopen", side_effect=URLError("offline")) as fetch:
+                self.assertIsNone(client.get("https://api.discogs.com/artists/1"))
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(client.requests, 1)
+            self.assertEqual(client.events[-1]["status"], "budget_exhausted")
 
 
 class RelationshipDiscoveryTests(unittest.TestCase):

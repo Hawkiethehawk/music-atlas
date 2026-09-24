@@ -110,11 +110,12 @@ def _suggest_recall_mix_deltas(type_acceptance: dict[str, dict[str, float]]) -> 
 
 def _suggest_sequence_deltas(report: dict[str, Any]) -> dict[str, float]:
     sequence = report.get("sequence_quality", {})
-    arc = float(sequence.get("arc_conformance") or 0.0)
-    transition = float(sequence.get("mean_transition_distance") or 0.0)
+    transition = sequence.get("mean_supported_tag_distance")
+    if transition is None or not sequence.get("supported_transition_share"):
+        # No public tag comparison exists; do not tune from an invented distance.
+        return {}
     return {
-        "transition_weight": round(max(-0.05, min(0.05, (50.0 - transition) / 1000.0)), 4),
-        "arc_weight": round(max(-0.05, min(0.05, (arc - 0.7) / 10.0)), 4),
+        "transition_weight": round(max(-0.05, min(0.05, (50.0 - float(transition)) / 1000.0)), 4),
     }
 
 

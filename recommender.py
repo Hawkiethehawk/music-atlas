@@ -12,7 +12,6 @@ from urllib.parse import urlparse
 
 from contracts import (
     ContractError,
-    RANKING_FEATURE_KEYS,
     normalized_name,
     normalized_text,
     parse_as_of_date,
@@ -28,17 +27,18 @@ from preference_model import interest_profiles, match_interest, style_vector
 from explanations import explain_selected
 
 
-FEATURE_KEYS = RANKING_FEATURE_KEYS
 DEFAULT_WEIGHTS = {
-    "style_fit": 0.30,
-    "axis_fit": 0.20,
-    "relation_fit": 0.15,
-    "frequency_fit": 0.10,
+    "style_fit": 0.35,
+    "relation_fit": 0.20,
+    "frequency_fit": 0.15,
     "novelty": 0.10,
-    "evidence_quality": 0.10,
+    "evidence_quality": 0.15,
     "public_association": 0.05,
 }
+FEATURE_KEYS = tuple(DEFAULT_WEIGHTS)
 CONFIDENCE_FACTORS = {"high": 1.0, "medium": 0.78, "low": 0.55}
+# Album/artist tags are useful context but not a claim about the recording.
+SCOPE_FACTORS = {"track": 1.0, "album": 0.8, "artist": 0.55}
 EVIDENCE_BASE = {"A": 88.0, "B": 73.0, "C": 58.0}
 
 
@@ -59,7 +59,7 @@ def _clamp(value: Any) -> float:
 def _ranking_weights(packet: dict[str, Any]) -> dict[str, float]:
     raw = packet.get("recommendation_policy", {}).get("ranking_weights", DEFAULT_WEIGHTS)
     if not isinstance(raw, dict) or set(raw) != set(FEATURE_KEYS):
-        raise ContractError("ranking_weights 必须完整且仅包含七项评分维度")
+        raise ContractError("ranking_weights 必须完整且仅包含六项有据可查的评分维度")
     weights = {key: max(0.0, float(raw[key])) for key in FEATURE_KEYS}
     total = sum(weights.values())
     if total <= 0:
@@ -78,11 +78,20 @@ def _cosine(left: dict[str, float], right: dict[str, float]) -> float:
 
 
 def _candidate_style_vector(candidate: dict[str, Any]) -> dict[str, float]:
-    return {
-        str(item["style_ref"]): float(item["weight"])
-        for item in candidate.get("style_mix", [])
-        if isinstance(item, dict) and item.get("style_ref")
-    }
+    # A style is usable only when the candidate carries a public source for it.
+    sources = set(candidate.get("sources") or [])
+    evidence = candidate.get("style_evidence") or {}
+    if (evidence.get("status") == "supported" and evidence.get("scope") in {"track", "album", "artist"}
+            and evidence.get("url") in sources and evidence.get("retrieved_at")):
+        refs = [tag.get("style_ref") for tag in evidence.get("tags", [])
+                if isinstance(tag, dict) and isinstance(tag.get("style_ref"), str)]
+        if refs:
+            counts = Counter(refs)
+            return {ref: value / len(refs) for ref, value in counts.items()}
+    public_styles = [item for item in candidate.get("evidence_items", [])
+                     if isinstance(item, dict) and item.get("claim_type") == "style"
+                     and item.get("url") in sources]
+    return style_vector(candidate) if public_styles else {}
 
 
 def _user_style_vector(packet: dict[str, Any]) -> dict[str, float]:
@@ -91,6 +100,7 @@ def _user_style_vector(packet: dict[str, Any]) -> dict[str, float]:
         if not isinstance(assignment, dict) or assignment.get("classification_status") != "classified":
             continue
         confidence = CONFIDENCE_FACTORS.get(str(assignment.get("confidence") or "low"), 0.55)
+        confidence *= SCOPE_FACTORS.get(str(assignment.get("applied_scope") or "track"), 1.0)
         mix = assignment.get("style_mix", [])
         if isinstance(mix, list) and mix:
             for item in mix:
@@ -100,6 +110,19 @@ def _user_style_vector(packet: dict[str, Any]) -> dict[str, float]:
             refs = [ref for ref in assignment.get("style_refs", []) if isinstance(ref, str)]
             for ref in refs:
                 result[ref] += confidence / max(1, len(refs))
+    if result:
+        return dict(result)
+    # Artist-only analysis contains no per-track classification. Artist profiles
+    # represent documented public tags and are weighted by playlist frequency.
+    frequency = {normalized_name(item.get("artist")): int(item.get("count") or 0)
+                 for item in packet.get("primary_distribution", []) if isinstance(item, dict)}
+    for profile in packet.get("style_analysis", {}).get("artist_profiles", []):
+        if not isinstance(profile, dict) or profile.get("classification_status") != "classified":
+            continue
+        count = max(1, frequency.get(normalized_name(profile.get("artist")),
+                                      int(profile.get("primary_track_count") or 1)))
+        for ref, value in style_vector(profile).items():
+            result[ref] += value * count * CONFIDENCE_FACTORS.get(str(profile.get("confidence") or "low"), 0.55)
     return dict(result)
 
 
@@ -128,19 +151,9 @@ def _style_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
     exact = _cosine(user, item)
     family = _cosine(_parent_vector(user, parents), _parent_vector(item, parents))
     confidence = CONFIDENCE_FACTORS.get(str(candidate.get("style_confidence") or "low"), 0.55)
-    return _clamp((exact * 0.85 + family * 0.15) * (0.85 + 0.15 * confidence) * 100.0)
-
-
-def _axis_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
-    interest = match_interest(candidate, packet)
-    user_axes = interest["style_axes"] if interest else packet.get("style_analysis", {}).get("style_axes", {})
-    candidate_axes = candidate.get("style_axes", {})
-    common = [key for key in user_axes if key in candidate_axes and user_axes[key] is not None and candidate_axes[key] is not None]
-    if not common:
-        return 0.0
-    mean_distance = sum(abs(float(user_axes[key]) - float(candidate_axes[key])) for key in common) / len(common)
-    confidence = CONFIDENCE_FACTORS.get(str(candidate.get("style_confidence") or "low"), 0.55)
-    return _clamp((100.0 - mean_distance) * (0.88 + 0.12 * confidence))
+    source_scope = (candidate.get("style_evidence") or {}).get("scope")
+    scope_factor = SCOPE_FACTORS.get(str(source_scope), 1.0)
+    return _clamp((exact * 0.85 + family * 0.15) * (0.85 + 0.15 * confidence) * scope_factor * 100.0)
 
 
 def _candidate_ref_strength(candidate: dict[str, Any], packet: dict[str, Any]) -> tuple[float, float]:
@@ -150,12 +163,15 @@ def _candidate_ref_strength(candidate: dict[str, Any], packet: dict[str, Any]) -
 
 def _relation_fit(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
     graph_strength, _ = _candidate_ref_strength(candidate, packet)
+    route = resolve_candidate_route(candidate, packet)
     base = {
         "artist_continuation": 0.92,
         "musician_relation": 0.88,
         "style_neighbor": 0.50,
         "exploration": 0.32,
-    }.get(resolve_candidate_route(candidate, packet)["candidate_type"], 0.0)
+    }.get(route["candidate_type"], 0.0)
+    if route["verification_scope"] == "no_style_evidence":
+        base = 0.0
     return _clamp((base * 0.45 + graph_strength * 0.55) * 100.0)
 
 
@@ -185,7 +201,11 @@ def _novelty(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
             "exploration": 92.0,
         }.get(resolve_candidate_route(candidate, packet)["candidate_type"], 55.0)
     raw_date = candidate.get("release_date")
-    if isinstance(raw_date, str):
+    has_release_source = any(item.get("claim_type") == "release" and item.get("url") in (candidate.get("sources") or [])
+                             for item in candidate.get("evidence_items", []) if isinstance(item, dict))
+    metadata = candidate.get("metadata_verified") or {}
+    has_release_source |= bool(isinstance(metadata, dict) and metadata.get("url") in (candidate.get("sources") or []))
+    if isinstance(raw_date, str) and has_release_source:
         try:
             age_days = max(0, (reference_date - date.fromisoformat(raw_date)).days)
             if age_days <= 90:
@@ -213,53 +233,47 @@ def _evidence_quality(candidate: dict[str, Any]) -> float:
 
 def _public_association(candidate: dict[str, Any], packet: dict[str, Any]) -> float:
     relation_strength, _ = _candidate_ref_strength(candidate, packet)
-    source_classes = {classify_source(str(item.get("url") or "")) for item in candidate.get("evidence_items", [])}
+    association_items = [item for item in candidate.get("evidence_items", [])
+                         if isinstance(item, dict) and item.get("claim_type") in {"style", "relation"}
+                         and item.get("url") in (candidate.get("sources") or [])]
+    if not association_items and not resolve_candidate_route(candidate, packet)["sources"]:
+        return 0.0
+    source_classes = {classify_source(str(item.get("url") or "")) for item in association_items}
     trusted = 1.0 if source_classes & {"official", "musicbrainz", "wikidata", "bandcamp"} else 0.72
-    source_count = len({urlparse(str(item.get("url") or "")).netloc.casefold() for item in candidate.get("evidence_items", [])})
+    source_count = len({urlparse(str(item.get("url") or "")).netloc.casefold() for item in association_items})
     source_factor = min(1.0, 0.55 + source_count * 0.15)
     return _clamp((relation_strength * 0.55 + trusted * 0.25 + source_factor * 0.20) * 100.0)
 
 
 def score_candidate(candidate: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
-    """Calculate all seven dimensions from structured facts, never Agent scores."""
+    """Score sourced facts; unavailable styles are excluded, never valued at zero."""
 
     weights = _ranking_weights(packet)
     features = {
         "style_fit": round(_style_fit(candidate, packet), 4),
-        "axis_fit": round(_axis_fit(candidate, packet), 4),
         "relation_fit": round(_relation_fit(candidate, packet), 4),
         "frequency_fit": round(_frequency_fit(candidate, packet), 4),
         "novelty": round(_novelty(candidate, packet), 4),
         "evidence_quality": round(_evidence_quality(candidate), 4),
         "public_association": round(_public_association(candidate, packet), 4),
     }
-    # 没有风格/八轴资料时，该维度不参与本首歌的加权总分；不能把“未知”当
-    # 作 0 分。其他候选仍使用完整七维权重。
+    # Missing source-backed style evidence is unavailable, not a zero score.
     unavailable = set()
-    if candidate.get("style_status") == "unclassified" or not _candidate_style_vector(candidate):
+    if not _candidate_style_vector(candidate) or not (
+        style_vector(match_interest(candidate, packet)) if match_interest(candidate, packet)
+        else _user_style_vector(packet)
+    ):
         unavailable.add("style_fit")
-    if candidate.get("style_status") == "unclassified" or not any(value is not None for value in candidate.get("style_axes", {}).values()):
-        unavailable.add("axis_fit")
     active_weight = sum(weight for key, weight in weights.items() if key not in unavailable)
     effective_weights = {key: (weight / active_weight if key not in unavailable and active_weight else 0.0)
                          for key, weight in weights.items()}
     breakdown = {key: round(features[key] * effective_weights[key], 4) for key in FEATURE_KEYS}
-    return {"score": round(sum(breakdown.values()), 4), "features": features, "breakdown": breakdown}
+    return {"score": round(sum(breakdown.values()), 4), "features": features,
+            "breakdown": breakdown, "unavailable_features": sorted(unavailable)}
 
 
 def _style_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
     return _cosine(_candidate_style_vector(left), _candidate_style_vector(right))
-
-
-def _axis_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
-    left_axes = left.get("style_axes", {})
-    right_axes = right.get("style_axes", {})
-    common = [key for key in left_axes if key in right_axes
-              and left_axes[key] is not None and right_axes[key] is not None]
-    if not common:
-        return 0.0
-    distance = sum(abs(float(left_axes[key]) - float(right_axes[key])) for key in common) / len(common)
-    return max(0.0, 1.0 - distance / 100.0)
 
 
 def _candidate_similarity(left: dict[str, Any], right: dict[str, Any], packet: dict[str, Any]) -> float:
@@ -269,70 +283,54 @@ def _candidate_similarity(left: dict[str, Any], right: dict[str, Any], packet: d
     return min(
         1.0,
         _style_similarity(left, right) * float(weights["style"])
-        + _axis_similarity(left, right) * float(weights["axis"])
         + (float(weights["artist"]) if same_artist else 0.0)
         + (float(weights["project"]) if same_project else 0.0),
     )
 
 
-def _energy(candidate: dict[str, Any]) -> float:
-    axes = candidate.get("style_axes", {})
-    keys = ("heaviness", "aggression", "rhythmic_density", "vocal_harshness", "emotional_intensity")
-    values = [float(axes[key]) for key in keys if key in axes and axes[key] is not None]
-    return sum(values) / len(values) if values else 0.0
-
-
-def _axis_distance(left: dict[str, Any], right: dict[str, Any]) -> float:
-    return (1.0 - _axis_similarity(left, right)) * 100.0
-
-
 def _sequence_candidates(selected: list[dict[str, Any]], packet: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Order by documented tag continuity and rank, never an inferred energy arc."""
+    policy = packet["recommendation_policy"]["sequence_policy"]
     if len(selected) <= 1:
         ordered = list(selected)
     else:
-        policy = packet["recommendation_policy"]["sequence_policy"]
         transition_weight = float(policy["transition_weight"])
-        arc_weight = float(policy["arc_weight"])
         ranking_weight = float(policy["ranking_weight"])
-        energies = [_energy(item) for item in selected]
-        low, high = min(energies), max(energies)
-        end = low + (high - low) * 0.35
-        peak_index = max(1, round((len(selected) - 1) * 0.60))
-
-        def target(position: int) -> float:
-            if position <= peak_index:
-                return low + (high - low) * position / peak_index
-            tail = max(1, len(selected) - 1 - peak_index)
-            return high - (high - end) * (position - peak_index) / tail
-
         remaining = list(selected)
         ordered = []
         for position in range(len(selected)):
             best_index = 0
-            best_cost = float("inf")
+            best_key: tuple[float, str] | None = None
             for index, candidate in enumerate(remaining):
-                transition = _axis_distance(ordered[-1], candidate) if ordered and policy.get("prefer_adjacent_transitions") else 0.0
-                arc_error = abs(_energy(candidate) - target(position))
+                previous = ordered[-1] if ordered else None
+                left = _candidate_style_vector(previous) if previous else {}
+                right = _candidate_style_vector(candidate)
+                # No tag evidence: neutral cost, never a fabricated 0% or 100% similarity.
+                transition = (100.0 * (1.0 - _cosine(left, right)) if left and right else 50.0)
                 rank_cost = 100.0 - float(candidate["ranking_score"])
                 familiar_penalty = 0.0
                 if position == 0 and policy.get("allow_familiar_anchor"):
                     familiar_penalty = 0.0 if candidate.get("candidate_type") == "artist_continuation" else 8.0
-                cost = transition * transition_weight + arc_error * arc_weight + rank_cost * ranking_weight + familiar_penalty
-                if cost < best_cost:
-                    best_cost = cost
+                cost = (transition * transition_weight if previous and policy.get("prefer_adjacent_transitions") else 0.0)
+                cost += rank_cost * ranking_weight + familiar_penalty
+                key = (cost, str(candidate.get("canonical_track_id") or ""))
+                if best_key is None or key < best_key:
+                    best_key = key
                     best_index = index
             ordered.append(remaining.pop(best_index))
     for index, candidate in enumerate(ordered, 1):
         candidate["sequence_position"] = index
-        candidate["sequence_energy"] = round(_energy(candidate), 4)
     return ordered, {
-        "mode": "energy_arc",
+        "mode": "public_tag_continuity",
         "positions": [
             {
                 "canonical_track_id": item["canonical_track_id"],
                 "position": item["sequence_position"],
-                "energy": item["sequence_energy"],
-                "transition_distance": round(_axis_distance(ordered[index - 1], item), 4) if index else 0.0,
+                "transition_distance": (
+                    round(100.0 * (1.0 - _style_similarity(ordered[index - 1], item)), 4)
+                    if index and _candidate_style_vector(ordered[index - 1]) and _candidate_style_vector(item)
+                    else None
+                ),
             }
             for index, item in enumerate(ordered)
         ],

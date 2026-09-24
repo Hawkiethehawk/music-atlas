@@ -74,6 +74,12 @@ class AnalysisAgentTests(unittest.TestCase):
                             "style_definitions": list(self.taxonomy["styles"].values()),
                             "axis_definitions": self.taxonomy["axis_definitions"]}, **kwargs)
 
+    def legacy_case(self, request=None, **kwargs):
+        """Explicitly exercise historical saved-result validation, never a new request."""
+        legacy_request = deepcopy(request or self.requests[0])
+        legacy_request.pop("style_fact_policy", None)
+        return legacy_request, self.result(legacy_request, **kwargs)
+
     def execute(self, **kwargs):
         options = {"command": "test-fixture", "execute": fixture_execute, **kwargs}
         return execute_analysis_research(self.snapshot_path, TAXONOMY, self.directory, **options)
@@ -114,9 +120,10 @@ class AnalysisAgentTests(unittest.TestCase):
         self.assertEqual(sum(name.rstrip("!") == "imminence" for name in artists), 1)
         write_json(self.snapshot_path, snapshot)
         packet = self.analyze(self.execute())
-        self.assertEqual(packet["style_analysis"]["classified_track_count"], 3)
+        self.assertEqual(packet["style_analysis"]["classified_track_count"], 0)
+        self.assertEqual(packet["style_analysis"]["source_coverage"]["no_style_evidence_count"], 3)
         self.assertEqual(packet["primary_distribution"][0]["count"], 2)
-        self.assertTrue(any("source_track_key" in row for row in packet["track_style_assignments"]))
+        self.assertTrue(all(row["track_key"] for row in packet["track_style_assignments"]))
         self.assertEqual(packet["favorite_track_keys"], [row["track_key"] for row in packet["track_style_assignments"]])
 
     def test_invalid_budgets_and_incomplete_snapshot_do_not_prepare(self):
@@ -154,28 +161,28 @@ class AnalysisAgentTests(unittest.TestCase):
     def test_agent_cannot_submit_aggregate_scoring_or_policy_fields(self):
         for key in ("source_track_count", "style_distribution", "interest_profiles", "ranking_score", "recommendation_policy"):
             for level in ("result", "profile", "style", "evidence", "relation"):
-                value = self.result()
+                request, value = self.legacy_case()
                 target = {"result": value, "profile": value["track_profiles"][0],
                           "style": value["track_profiles"][0]["style_mix"][0],
                           "evidence": value["track_profiles"][0]["evidence_items"][0],
                           "relation": value["artist_relations"][0]}[level]
                 target[key] = 100
                 with self.subTest(key=key, level=level), self.assertRaises(ContractError):
-                    validate_research_result(value, self.requests[0], self.taxonomy)
+                    validate_research_result(value, request, self.taxonomy)
 
-    def test_classified_profiles_need_valid_scope_style_and_axes(self):
+    def test_historical_classified_profiles_need_valid_scope_style_and_axes(self):
         mutations = [("scope", "inferred"), ("confidence", "certain"), ("style_mix", []),
                      ("style_axes", dict.fromkeys(STYLE_AXIS_IDS)),
                      ("style_axes", dict.fromkeys(STYLE_AXIS_IDS, float("nan"))),
                      ("style_axes", {**dict.fromkeys(STYLE_AXIS_IDS, 50), "extra": 2})]
         for field, changed in mutations:
-            value = self.result()
+            request, value = self.legacy_case()
             value["track_profiles"][0][field] = changed
             with self.subTest(field=field, changed=changed), self.assertRaises(ContractError):
-                validate_research_result(value, self.requests[0], self.taxonomy)
+                validate_research_result(value, request, self.taxonomy)
         request = deepcopy(self.requests[0])
         request["tracks"][0]["album"] = ""
-        value = self.result(request)
+        request, value = self.legacy_case(request)
         value["track_profiles"][0]["scope"] = "release"
         with self.assertRaises(ContractError):
             validate_research_result(value, request, self.taxonomy)
@@ -184,7 +191,9 @@ class AnalysisAgentTests(unittest.TestCase):
         value = self.result(unclassified=True)
         self.assertEqual(validate_research_result(value, self.requests[0], self.taxonomy), value)
         for field, changed in (("style_axes", dict.fromkeys(STYLE_AXIS_IDS, 0)), ("scope", "artist"),
-                               ("confidence", "medium"), ("evidence_items", self.result()["track_profiles"][0]["evidence_items"])):
+                               ("confidence", "medium"), ("evidence_items", [{"claim_type": "style",
+                                 "claim": "unverified", "url": "https://example.org/forged",
+                                 "retrieved_at": datetime.now(timezone.utc).isoformat()}])):
             altered = deepcopy(value)
             altered["track_profiles"][0][field] = changed
             with self.subTest(field=field), self.assertRaises(ContractError):
@@ -221,7 +230,7 @@ class AnalysisAgentTests(unittest.TestCase):
                 ][0]["lead_vocalists"]
                 self.assertNotIn(relation["name"], [item["name"] for item in remaining])
 
-    def test_evidence_rejects_forbidden_negative_stale_future_and_invalid(self):
+    def test_historical_evidence_rejects_forbidden_negative_stale_future_and_invalid(self):
         changes = [("url", "https://music.apple.com/us/artist/sample/1"),
                    ("url", "file:///private/notes"), ("retrieved_at", "not-a-date"),
                    ("retrieved_at", "2020-01-01T00:00:00Z"),
@@ -229,29 +238,29 @@ class AnalysisAgentTests(unittest.TestCase):
                    ("verification_result", "contradictory"), ("verification_result", "inaccessible"),
                    ("verification_result", "stale")]
         for field, changed in changes:
-            value = self.result()
+            request, value = self.legacy_case()
             value["track_profiles"][0]["evidence_items"][0][field] = changed
             with self.subTest(field=field, changed=changed), self.assertRaises(ContractError):
-                validate_research_result(value, self.requests[0], self.taxonomy)
+                validate_research_result(value, request, self.taxonomy)
         # 分析阶段宽容：spotify collection、musicbrainz 搜索等 URL 虽无稳定标识符，
         # 但不致命（不会获得标识符加分，但也不应让整个任务失败）。
-        value = self.result()
+        request, value = self.legacy_case()
         value["track_profiles"][0]["evidence_items"][0]["url"] = "https://open.spotify.com/collection/tracks"
-        result = validate_research_result(value, self.requests[0], self.taxonomy)
+        result = validate_research_result(value, request, self.taxonomy)
         self.assertIn("track_profiles", result)
-        value2 = self.result()
+        request2, value2 = self.legacy_case()
         value2["track_profiles"][0]["evidence_items"][0]["url"] = "https://musicbrainz.org/artist/not-a-valid-identifier"
-        result2 = validate_research_result(value2, self.requests[0], self.taxonomy)
+        result2 = validate_research_result(value2, request2, self.taxonomy)
         self.assertIn("track_profiles", result2)
         # 仅有非 style 证据的已分类画像：自动降级为 unknown，而不是失败。
-        value = self.result()
+        request, value = self.legacy_case()
         value["track_profiles"][0]["evidence_items"][0]["claim_type"] = "release"
-        profile = validate_research_result(value, self.requests[0], self.taxonomy)["track_profiles"][0]
+        profile = validate_research_result(value, request, self.taxonomy)["track_profiles"][0]
         self.assertEqual(profile["classification_status"], "unclassified")
         self.assertEqual(profile["evidence_items"], [])
-        value = self.result()
+        request, value = self.legacy_case()
         value["track_profiles"][0]["evidence_items"] = []
-        profile = validate_research_result(value, self.requests[0], self.taxonomy)["track_profiles"][0]
+        profile = validate_research_result(value, request, self.taxonomy)["track_profiles"][0]
         # 已分类但无风格证据：自动降级为 unknown，不虚构事实也不让任务失败。
         self.assertEqual(profile["classification_status"], "unclassified")
         self.assertEqual(profile["scope"], "unknown")
@@ -553,14 +562,13 @@ class AnalysisAgentTests(unittest.TestCase):
         self.assertEqual(first["analysis_id"], second["analysis_id"])
         self.assertEqual(first["style_analysis"], second["style_analysis"])
         self.assertEqual(first["preferred_artists"], [])
-        self.assertEqual(first["style_analysis"]["classified_track_count"], 3)
+        self.assertEqual(first["style_analysis"]["classified_track_count"], 0)
+        self.assertEqual(first["style_analysis"]["source_coverage"]["no_style_evidence_count"], 3)
         self.assertEqual(first["analysis_research"]["bundle_sha256"], stable_hash(read_json(bundle_path)))
 
-    def test_agent_verified_claims_remain_unverified_in_packet_and_routes(self):
+    def test_agent_relation_claims_remain_unverified_and_style_unclassified(self):
         def self_verified(command, prompt, **kwargs):
             value = fixture_execute(command, prompt, **kwargs)
-            for row in value["track_profiles"]:
-                row["evidence_items"][0]["verification_result"] = "verified"
             for row in value["artist_relations"]:
                 for fact in row["related_projects"]:
                     fact["evidence_items"][0]["verification_result"] = "verified"
@@ -568,19 +576,17 @@ class AnalysisAgentTests(unittest.TestCase):
 
         packet = self.analyze(self.execute(execute=self_verified))
         for assignment in packet["track_style_assignments"]:
-            self.assertEqual(assignment["evidence_items"][0]["verification_result"], "unverified")
+            self.assertEqual(assignment["classification_status"], "unclassified")
+            self.assertEqual(assignment["evidence_items"], [])
         entity = next(row for row in packet["entities"] if row["primary_track_count"])
         self.assertEqual(entity["relation_status"], "researched")
         relation = entity["related_projects"][0]
         self.assertEqual(relation["evidence_items"][0]["verification_result"], "unverified")
         route = resolve_candidate_route({"artist": relation["name"]}, packet)
         self.assertEqual(route["verification_scope"], "current_packet_agent_relation")
-        payload = build_agent_input(packet)
-        self.assertEqual(len(payload["track_style_exceptions"]), 3)
-        self.assertIn(entity, payload["entities"])
-        self.assertNotIn("input_manifest", payload)
-        self.assertNotIn(str(self.snapshot_path), build_agent_prompt(packet))
-        self.assertTrue(all(item["evidence_items"] for item in payload["track_style_exceptions"]))
+        self.assertIn(entity, packet["entities"])
+        with self.assertRaises(ContractError):
+            build_agent_prompt(packet)
 
     def test_packet_cannot_promote_agent_facts_or_replace_their_sources(self):
         packet = self.analyze(self.execute())
@@ -589,7 +595,10 @@ class AnalysisAgentTests(unittest.TestCase):
             assignment = altered["track_style_assignments"][0]
             entity = altered["entities"][0]
             if change == "profile_verified":
-                assignment["evidence_items"][0]["verification_result"] = "verified"
+                assignment["evidence_items"] = [{"scope": "track", "provider": "lastfm",
+                    "url": "https://example.org/forged", "retrieved_at": "2026-09-24T00:00:00Z",
+                    "identity_status": "request_only", "tags": [{"tag": "Rock",
+                    "style_ref": packet["style_analysis"]["known_style_refs"][0]}]}]
             elif change == "profile_sources":
                 assignment["sources"] = ["https://example.org/forged"]
             elif change == "relation_verified":
@@ -603,7 +612,7 @@ class AnalysisAgentTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ContractError):
                 validate_analysis_packet(altered)
 
-    def test_mixed_unknown_and_scopes_are_preserved(self):
+    def test_uncollected_agent_scopes_cannot_be_promoted(self):
         def mixed(command, prompt, **kwargs):
             payload = payload_from_prompt(prompt)
             value = make_result(payload)
@@ -612,20 +621,19 @@ class AnalysisAgentTests(unittest.TestCase):
             value["track_profiles"][2] = make_result(payload, unclassified=True)["track_profiles"][2]
             return value
 
-        packet = self.analyze(self.execute(execute=mixed))
-        self.assertEqual(packet["style_analysis"]["classified_track_count"], 2)
-        self.assertEqual(set(packet["style_analysis"]["profile_coverage"]["assignment_scopes"]),
-                         {"agent_artist", "agent_release", "agent_unknown"})
-        self.assertEqual(len(build_agent_input(packet)["track_style_exceptions"]), 2)
+        with self.assertRaises(ContractError):
+            self.execute(execute=mixed)
+        self.assertFalse((self.directory / "research_bundle.json").exists())
 
     def test_all_unknown_remains_null_and_blocks_recommendation_preparation(self):
         def unknown(command, prompt, **kwargs):
             return make_result(payload_from_prompt(prompt), unclassified=True)
 
         packet = self.analyze(self.execute(execute=unknown))
-        self.assertEqual(packet["style_analysis"]["style_axes"], dict.fromkeys(STYLE_AXIS_IDS))
+        self.assertNotIn("style_axes", packet["style_analysis"])
+        self.assertNotIn("style_axes", packet["track_style_assignments"][0])
         self.assertEqual(packet["style_analysis"]["unclassified_track_count"], 3)
-        with self.assertRaisesRegex(ContractError, "画像覆盖不足"):
+        with self.assertRaises(ContractError):
             build_agent_prompt(packet)
 
     def test_cli_default_prepares_instead_of_reading_example_catalog(self):
@@ -657,27 +665,16 @@ class AnalysisAgentTests(unittest.TestCase):
             self.execute(execute=execute)
         execute.assert_not_called()
 
-    def test_cli_full_agent_pipeline_produces_ten_drafts_and_strict_audit_fails(self):
+    def test_cli_agent_without_public_sources_stops_before_recommendation(self):
         root = self.root / "cli"
         command = process_command(ROOT / "tests/fixtures/fake_analysis_agent.py")
-        summary = self.cli("run", "--input", ROOT / "tests/fixtures/playlist_sample.json", "--runtime-dir", root,
-                           "--analysis-command", command, "--analysis-batch-size", 2, "--as-of-date", "2026-09-06")
-        self.assertEqual(summary["profile_catalog_mode"], "agent_research")
-        self.assertEqual(summary["classified_track_count"], 3)
+        self.cli("run", "--input", ROOT / "tests/fixtures/playlist_sample.json", "--runtime-dir", root,
+                 "--analysis-command", command, "--analysis-batch-size", 2, "--as-of-date", "2026-09-06", expected=2)
         analysis = root / "musician_analysis.json"
-        bundle = root / "recommendation_bundle.json"
-        self.cli("agent", "--analysis", analysis, "--prompt", root / "agent_prompt.md", "--output", bundle,
-                 "--report-output", root / "report.txt", "--command", process_command(ROOT / "tests/fixtures/fake_agent.py"))
-        self.assertEqual(len(read_json(bundle)["recommendations"]), 10)
-        self.assertEqual(read_json(bundle)["publication_status"], "draft")
-        ranked = root / "reranked.json"
-        self.cli("validate", "--analysis", analysis, "--bundle", bundle, "--ranked-output", ranked,
-                 "--output", root / "validated.txt")
-        self.assertEqual(read_json(bundle), read_json(ranked))
-        summary = self.cli("validate", "--analysis", analysis, "--bundle", bundle, "--ranked-output", root / "blocked.json",
-                           "--output", root / "blocked.txt", "--evidence-audit", root / "audit.json", expected=2)
-        self.assertEqual(summary["status"], "evidence_audit_failed")
-        self.assertFalse((root / "blocked.json").exists())
+        self.assertEqual(read_json(analysis)["style_analysis"]["classified_track_count"], 0)
+        self.assertFalse((root / "recommendation_bundle.json").exists())
+        self.assertFalse((root / "agent_prompt.md").exists())
+        self.assertFalse(read_json(root / "coverage_report.json")["quality_gate_passed"])
 
     def test_cli_analyze_outputs_stay_together_and_import_inherits_batches(self):
         root = self.root / "cli"
@@ -698,7 +695,7 @@ class AnalysisAgentTests(unittest.TestCase):
         self.cli("run", "--input", ROOT / "tests/fixtures/playlist_sample.json", "--runtime-dir", root,
                  "--analysis-command", process_command(ROOT / "tests/fixtures/fake_analysis_agent.py", "--unclassified"), expected=2)
         self.assertTrue((root / "musician_analysis.json").exists())
-        self.assertEqual(read_json(root / "coverage_report.json")["classified_track_share"], 0)
+        self.assertEqual(read_json(root / "coverage_report.json")["source_coverage"]["track_evidence_count"], 0)
         self.assertFalse((root / "agent_prompt.md").exists())
 
     def test_cli_external_command_failure_preserves_existing_analysis(self):

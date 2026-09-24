@@ -3,9 +3,10 @@
 Playlists are analyzed at a resolution that matches their size:
 
 - ``track_research`` (<= 200 tracks): per-track agent research, unchanged.
-- ``taste_summary`` (201-2000): one agent call over the ``歌名+歌手`` list; the
-  agent returns a structured taste profile plus an editorial review.
-- ``artist_summary`` (>= 2001): one agent call over the artist distribution.
+- ``taste_summary`` (201-999): one agent call over the ``歌名+歌手`` list
+  (representative title sample above 500 tracks); the agent returns a
+  structured taste profile plus an editorial review.
+- ``artist_summary`` (>= 1000): one agent call over the artist distribution.
 
 The agent never sees or submits per-track research at these sizes. The
 program owns all statistics (duplicates, artist counts, layering), the
@@ -42,13 +43,15 @@ from contracts import (
     validate_playlist_snapshot,
     write_json,
 )
-from musician_analyzer import load_recommendation_policy
+from musician_analyzer import apply_public_style_evidence, load_recommendation_policy
 
 TRACK_RESEARCH_MAX = 200
 # 超过这个规模就只统计歌手分布（不含歌名）：逐曲歌名清单既容易触发上游内容
 # 审核，也会让 prompt 过长。
-TASTE_SUMMARY_MAX = 2000
+TASTE_SUMMARY_MAX = 999
 TASTE_BATCH_SIZE = 10
+TASTE_TITLE_LIST_FULL_MAX = 500
+TASTE_TITLE_SAMPLE_MAX = 300
 # 品味/歌手摘要模式的曲目分类覆盖门槛（用户批准的策略值，非逐曲研究的 50%）。
 TASTE_MIN_CLASSIFIED_SHARE = 0.3
 ROOT = Path(__file__).resolve().parent
@@ -121,6 +124,35 @@ def _tracklist_lines(snapshot: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _representative_tracklist_lines(snapshot: dict[str, Any], stats: dict[str, Any]) -> list[str]:
+    """Bound title input while retaining top primary artists and playlist span."""
+    tracks = snapshot["tracks"]
+    if len(tracks) <= TASTE_TITLE_LIST_FULL_MAX:
+        return _tracklist_lines(snapshot)
+    selected: set[int] = set()
+    primary = sorted(stats["primary_counter"].items(),
+                     key=lambda item: (-item[1], normalized_name(item[0])))[:13]
+    for artist, _ in primary:
+        positions = [index for index, track in enumerate(tracks) if track["artist"] == artist]
+        take = min(6, len(positions))
+        selected.update(positions[(index * len(positions)) // take] for index in range(take))
+    slots = TASTE_TITLE_SAMPLE_MAX - len(selected)
+    for slot in range(slots):
+        target = ((2 * slot + 1) * len(tracks)) // (2 * slots)
+        if target in selected:
+            for distance in range(1, len(tracks)):
+                left, right = target - distance, target + distance
+                if left >= 0 and left not in selected:
+                    target = left
+                    break
+                if right < len(tracks) and right not in selected:
+                    target = right
+                    break
+        selected.add(target)
+    return [f"歌名:{tracks[index]['title']};歌手:{'/'.join(_credited_artists(tracks[index]))}"
+            for index in sorted(selected)]
+
+
 def _artist_lines(stats: dict[str, Any], limit: int = 120) -> list[str]:
     """歌手分布清单：按参与曲目数降序，并区分主艺人数量与仅合作数量。
 
@@ -144,14 +176,26 @@ def _artist_lines(stats: dict[str, Any], limit: int = 120) -> list[str]:
     return lines
 
 
+def _priority_primary_artists(stats: dict[str, Any], limit: int = 13) -> str:
+    """Small, deterministic research priority from primary-artist frequency.
+
+    Credited-artist frequency includes guests, and neither frequency nor this
+    ordering is evidence for a genre or a reference URL.
+    """
+    rows = sorted(
+        stats["primary_counter"].items(),
+        key=lambda item: (-item[1], normalized_name(item[0])),
+    )[:limit]
+    return "\n".join(
+        f"{index}. {name}: 主艺人 {count} 首"
+        for index, (name, count) in enumerate(rows, 1)
+    )
+
+
 def _style_table(taxonomy: dict[str, Any]) -> list[str]:
     return [
         f"{item['style_ref']}|{item['label']}" for item in taxonomy["styles"].values()
     ]
-
-
-def _axes_table(taxonomy: dict[str, Any]) -> list[str]:
-    return [f"{code}|{label}" for code, label in taxonomy["axis_definitions"].items()]
 
 
 def _render_template(template: Path, replacements: dict[str, str]) -> str:
@@ -173,8 +217,13 @@ def build_taste_prompt(mode: str, snapshot: dict[str, Any], taxonomy: dict[str, 
     base = template_dir or (ROOT / "prompts")
     template = base / f"{mode}.md"
     if mode == "taste_summary":
-        listing = "\n".join(_tracklist_lines(snapshot))
-        listing_header = "以下为完整清单（歌名:xxx;歌手:yyy）："
+        lines = _representative_tracklist_lines(snapshot, stats)
+        listing = "\n".join(lines)
+        if len(snapshot["tracks"]) > TASTE_TITLE_LIST_FULL_MAX:
+            listing_header = (f"以下是原歌单顺序中的 {len(lines)}/{len(snapshot['tracks'])} 首代表性曲目"
+                              "（非完整歌名清单；只能引用此处确实列出的歌名）：")
+        else:
+            listing_header = "以下为完整歌名清单（歌名:xxx;歌手:yyy）："
     else:
         listing = "\n".join(_artist_lines(stats))
         listing_header = ("以下为歌手分布清单（歌手:xxx;曲目数:N[;主艺人M首][;仅合作]，"
@@ -188,15 +237,27 @@ def build_taste_prompt(mode: str, snapshot: dict[str, Any], taxonomy: dict[str, 
         "artist_counts": list(stats["artist_counts"])[:120],
         "artist_count_total": len(stats["artist_counts"]),
     }
-    return _render_template(template, {
+    prompt = _render_template(template, {
         "{STATISTICS_SUMMARY}": json.dumps(summary, ensure_ascii=False, indent=1),
         "{LISTING_HEADER}": listing_header,
         "{LISTING}": listing,
         "{STYLE_TABLE}": "\n".join(_style_table(taxonomy)),
-        "{AXES_TABLE}": "\n".join(_axes_table(taxonomy)),
         "{REQUEST_ID}": request_id,
         "{SNAPSHOT_ID}": snapshot["snapshot_id"],
     })
+    if mode == "taste_summary":
+        # A 2,000-track listing can bury the few artists responsible for most
+        # primary rows. Put a program-counted priority at the very beginning;
+        # it never grants a style classification or a reference URL.
+        prompt = (
+            "【主艺人研究优先序（程序统计；不是音乐风格或来源证据）】\n"
+            + _priority_primary_artists(stats) + "\n"
+            "artist_clusters 的 12–15 位艺人先考虑这份主艺人优先序，再留少量位置给"
+            "其他风格代表；不要因歌名清单取样而遗漏高频主艺人。"
+            "仅对确有可检索来源的场景归属填写 reference_url，不能为了覆盖率编造来源。\n\n"
+            + prompt
+        )
+    return prompt
 
 
 def _artist_layer(rank: int, total: int) -> str:
@@ -207,7 +268,7 @@ def _artist_layer(rank: int, total: int) -> str:
     return "longtail"
 
 
-def _assignment_for_track(track: dict[str, Any], position: int, mood_axes: dict[str, Any],
+def _assignment_for_track(track: dict[str, Any], position: int,
                           cluster_by_artist: dict[str, dict[str, Any]]) -> dict[str, Any]:
     key = track_key(track["title"], track["artist"])
     cluster = cluster_by_artist.get(normalized_name(track["artist"]))
@@ -222,7 +283,6 @@ def _assignment_for_track(track: dict[str, Any], position: int, mood_axes: dict[
         "primary_style_ref": "",
         "style_refs": [],
         "style_mix": [],
-        "style_axes": {axis: None for axis in mood_axes},
         "applied_scope": "taste_unknown",
         "rationale": "品味摘要未覆盖该艺人，保留未知，不做猜测。",
         "sources": [],
@@ -230,7 +290,7 @@ def _assignment_for_track(track: dict[str, Any], position: int, mood_axes: dict[
         "field_provenance": {
             field: {"scope": "unknown", "confidence": "low", "sources": [], "origin": "taste_summary",
                     "verification_scope": "pending_independent_verification"}
-            for field in ("style_mix", "style_axes")
+            for field in ("style_mix",)
         },
     }
     if not cluster:
@@ -244,7 +304,6 @@ def _assignment_for_track(track: dict[str, Any], position: int, mood_axes: dict[
         "style_refs": refs,
         "style_mix": [{"style_ref": ref, "role": "primary" if index == 0 else "secondary",
                        "weight": 1.0 / len(refs)} for index, ref in enumerate(refs)],
-        "style_axes": dict(mood_axes),
         "applied_scope": "taste_artist",
         "rationale": cluster["scene"],
         "sources": [cluster["reference_url"]] if cluster["reference_url"] else [],
@@ -253,7 +312,8 @@ def _assignment_for_track(track: dict[str, Any], position: int, mood_axes: dict[
 
 def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxonomy: dict[str, Any],
                         *, taxonomy_path: Path, policy: dict[str, Any],
-                        policy_path: Path | None = None) -> dict[str, Any]:
+                        policy_path: Path | None = None,
+                        source_playlist_track_count: int | None = None) -> dict[str, Any]:
     """Compile a validated taste bundle into the standard analysis packet.
 
     The packet keeps ``packet_type: musician_analysis`` so the recommendation
@@ -264,18 +324,14 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
     tracks = snapshot["tracks"]
     mode = bundle["analysis_mode"]
     stats = build_tracklist_stats(snapshot)
-    mood_axes = bundle["taste_profile"]["mood_axes"]
-    # 只有带可检索来源的场景归属才驱动风格分配；无来源的归属仅用于展示，
-    # 对应艺人保持 unclassified——不冒充已分类画像。
-    cluster_by_artist = {
-        normalized_name(cluster["artist"]): cluster
-        for cluster in bundle["artist_clusters"] if cluster["reference_url"]
-    }
+    # Agent 写入一个网页地址不证明该网页在本次被读取，更不能给曲目分类。
+    # 真正的归属只在 apply_public_style_evidence 中由平台实际返回的标签决定。
+    cluster_by_artist: dict[str, dict[str, Any]] = {}
     display_clusters = {
         normalized_name(cluster["artist"]): cluster for cluster in bundle["artist_clusters"]
     }
     assignments = [
-        _assignment_for_track(track, index, mood_axes, cluster_by_artist)
+        _assignment_for_track(track, index, cluster_by_artist)
         for index, track in enumerate(tracks)
     ]
 
@@ -337,7 +393,6 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
             "style_mix": [{"style_ref": ref, "role": "primary" if index == 0 else "secondary",
                            "weight": 1.0 / len(refs)} for index, ref in enumerate(refs)],
             "style_weights": {ref: 1.0 / len(refs) for ref in refs},
-            "style_axes": dict(mood_axes),
             "summary": display["scene"] if display else "品味摘要未覆盖该艺人。",
             "boundaries": [],
             "sources": [cluster["reference_url"]] if classified else [],
@@ -390,7 +445,6 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
         "known_style_refs": taxonomy["known_style_refs"],
         "active_style_refs": sorted(distribution_counter),
         "style_definitions": list(taxonomy["styles"].values()),
-        "axis_definitions": taxonomy["axis_definitions"],
         "frequency_basis": "primary_artist_track_count_from_current_snapshot",
         "artist_profiles": profiles,
         "artist_profile_count": len(profiles),
@@ -399,7 +453,6 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
         "unclassified_track_count": len(tracks) - classified_tracks,
         "style_distribution": style_distribution,
         "dominant_style_mix": dominant_style_mix,
-        "style_axes": dict(mood_axes),
     }
 
     identity_payload = {
@@ -410,7 +463,6 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
         "taste_bundle_sha256": stable_hash(bundle),
         "primary_distribution": primary_distribution,
         "style_analysis_refs": style_analysis["active_style_refs"],
-        "mood_axes": mood_axes,
     }
     packet = {
         "schema_version": SCHEMA_VERSION,
@@ -426,6 +478,7 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
         "source_playlist_id": snapshot.get("playlist_id", ""),
         "source_playlist_name": snapshot.get("playlist_name", ""),
         "source_track_count": len(tracks),
+        "source_playlist_track_count": source_playlist_track_count or len(tracks),
         "favorite_track_keys": stats["track_keys"],
         "favorite_tracks": [
             {"track_key": key, "title": track["title"], "artist": track["artist"],
@@ -462,7 +515,167 @@ def map_taste_to_packet(snapshot: dict[str, Any], bundle: dict[str, Any], taxono
         ]
         policy["analysis_quality"] = {"min_classified_share": TASTE_MIN_CLASSIFIED_SHARE}
         packet["recommendation_policy"] = policy
-    return validate_analysis_packet(packet)
+    # 先输出带完整身份与统计的未取证包；Web 在公开标签返回后再次调用
+    # apply_public_style_evidence，再过质量门槛。不存在 Agent URL 驱动的
+    # 临时“已分类”状态，也不把八轴字段带入新分析包。
+    pending_tags = {"provider": "lastfm", "axis_policy": "removed",
+                    "records": [{"track_key": track["track_key"], "evidence": []}
+                                for track in packet["favorite_tracks"]], "requests": []}
+    return apply_public_style_evidence(packet, pending_tags)
+
+
+def build_sourced_summary_packet(snapshot: dict[str, Any], taxonomy: dict[str, Any], *,
+                                 taxonomy_path: Path, source_tags: dict[str, Any] | None = None,
+                                 policy_path: Path | None = None,
+                                 source_playlist_track_count: int | None = None) -> dict[str, Any]:
+    """Build 201+ song analysis from public evidence, without a style-guessing Agent.
+
+    Call once without source_tags to obtain the bounded discovery input, then
+    collect public tags and call apply_public_style_evidence on that packet.
+    A supplied source_tags result is immediately reconciled here. The large
+    mode contains no per-song research even when per-track records are present.
+    """
+    snapshot = validate_playlist_snapshot(snapshot, require_complete=True)
+    playlist_count = source_playlist_track_count or (snapshot.get("reader") or {}).get(
+        "source_track_count") or snapshot["track_count"]
+    if isinstance(playlist_count, bool) or not isinstance(playlist_count, int) or playlist_count < snapshot["track_count"]:
+        raise ContractError("原始歌单规模不能小于本次处理数量")
+    mode = resolve_analysis_mode(playlist_count)
+    if mode == "track_research":
+        raise ContractError("逐曲模式使用 analyze_snapshot，不走歌手摘要构造器")
+    # This is a structural shell only. The programme supplies all counts;
+    # no model-internal claim, URL, synthetic mood, or false genre passes into
+    # the final packet. Legacy mapper discards its temporary axis placeholders
+    # before validation through apply_public_style_evidence.
+    bundle = {
+        "analysis_mode": mode,
+        "artist_clusters": [],
+        "taste_profile": {},
+        "editorial_review": {"headline": "资料待核验", "review": "", "inner_world": "", "humor_notes": []},
+        "style_tags": [],
+        "knowledge_basis": {"model_internal": "未采用", "web_verified": "由来源记录单独核验", "inference": "未采用"},
+        "limitations": [], "uncertainties": [],
+    }
+    packet = map_taste_to_packet(snapshot, bundle, taxonomy, taxonomy_path=taxonomy_path,
+                                 policy=load_recommendation_policy(policy_path), policy_path=policy_path,
+                                 source_playlist_track_count=playlist_count)
+    if source_tags is not None:
+        packet = apply_public_style_evidence(packet, source_tags)
+    return packet
+
+
+def attach_sourced_editorial(packet: dict[str, Any]) -> dict[str, Any]:
+    """Describe only the public facts actually reconciled into this packet.
+
+    This is deliberately deterministic. A generated URL or an Agent's prior
+    knowledge cannot become a source-backed style claim. Interest membership
+    is a presentation grouping and never increases the evidence coverage.
+    """
+    from agent_lastfm import ABSTRACT_ISLAND_NAMES
+
+    result = deepcopy(packet)
+    style = result["style_analysis"]
+    if style.get("evidence_model") != "sourced_tags_v1":
+        raise ContractError("来源文案只能使用已核对的公开资料分析包")
+    mode = result["analysis_mode"]
+    if mode not in TASTE_MODES:
+        raise ContractError("来源摘要只适用于品味或歌手模式")
+    total = result["source_track_count"]
+    coverage = style["source_coverage"]
+    definitions = {row["style_ref"]: row["label"] for row in style["style_definitions"]}
+    if mode == "artist_summary":
+        distribution = style.get("artist_style_distribution", [])
+        count_field = "artist_weighted_track_count"
+        top = [row["style_ref"] for row in distribution[:3]]
+        labels = "、".join(definitions[ref] for ref in top) or "尚无可映射标签"
+        summary = (
+            f"这份歌单共 {total} 首，按规模规则只分析歌手，不分析单曲。"
+            f"本次取回可映射公开标签的歌手 {coverage['sourced_artist_count']}/{coverage['artist_count']} 位，"
+            f"按他们在歌单中的主艺人曲目数加权，覆盖 {coverage['weighted_artist_track_count']}/{total} 首。"
+            f"有来源的歌手风格标签中，较常见的是{labels}；这是艺人层级的资料，"
+            "不等同于其中每首作品的风格、声音特征或听者偏好强度。未取得标签的歌手保持未知。"
+        )
+        artist_refs = {
+            normalized_name(profile["artist"]): profile.get("style_refs") or []
+            for profile in style["artist_profiles"]
+        }
+        refs_by_track = [artist_refs.get(normalized_name(track["artist"]), [])
+                         for track in result["favorite_tracks"]]
+    else:
+        distribution = style.get("style_distribution", [])
+        count_field = "count"
+        top = [row["style_ref"] for row in distribution[:3]]
+        labels = "、".join(definitions[ref] for ref in top) or "尚无可映射标签"
+        summary = (
+            f"这份歌单共 {total} 首，本次可核对的曲目标签覆盖 {coverage['track_evidence_count']} 首；"
+            f"另有 {coverage['album_background_count']} 首仅有专辑背景，"
+            f"{coverage['artist_background_count']} 首仅有艺人背景。"
+            f"已核对的单曲风格标签中，较常见的是{labels}。"
+            "专辑资料只描述所属发行，艺人资料只描述艺人，均不能冒充单曲听感。"
+            "没有取得可靠标签的部分保留未知；兴趣分组仅整理已有来源，不增加风格证据覆盖。"
+        )
+        refs_by_track = [row.get("style_refs") or [] for row in result["track_style_assignments"]]
+    if len(summary) > 300:
+        raise ContractError("来源摘要超过文案保护上限")
+
+    # Reserve the last island for an explicit evidence gap when needed. For
+    # artist-only mode the unqueried artists are omitted rather than assigned
+    # a fabricated song-level style. Smaller lists retain the gap group so
+    # every source row still has a stable display location.
+    has_unknown = any(not refs for refs in refs_by_track)
+    style_slots = 2 if has_unknown else 3
+    lead_refs = top[:style_slots]
+    record_groups: list[list[int]] = [[], [], []]
+    for index, refs in enumerate(refs_by_track):
+        if not refs:
+            if mode != "artist_summary":
+                record_groups[2].append(index)
+            continue
+        matches = [slot for slot, ref in enumerate(lead_refs) if ref in refs]
+        # A less frequent label goes to the catch-all group, not under a
+        # dominant label it never matched.
+        slot = matches[0] if matches else 2
+        record_groups[slot].append(index)
+
+    islands = []
+    for slot, name in enumerate(ABSTRACT_ISLAND_NAMES):
+        ref = lead_refs[slot] if slot < len(lead_refs) else None
+        if ref:
+            description = (f"这一组的可核对公开标签包含{definitions[ref]}；"
+                           "分组仅反映已取得的标签，未标记条目不据此作风格判断。")
+        else:
+            description = ("这一组收纳其他已核对的公开标签及资料缺口；"
+                           "无来源的条目仅作位置记录，不据此推断作品或艺人的声音。")
+        ids = record_groups[slot]
+        islands.append({"id": f"agent-island-{slot + 1}", "name": name,
+                        "summary": description, "record_ids": ids})
+
+    tags = []
+    denominator = max(1, coverage["weighted_artist_track_count"] if mode == "artist_summary"
+                      else style["classified_track_count"])
+    for row in distribution[:12]:
+        ref = row["style_ref"]
+        matched = [profile["artist"] for profile in style["artist_profiles"]
+                   if ref in (profile.get("style_refs") or [])]
+        tags.append({"tag": ref, "weight": min(100, round(row[count_field] / denominator * 100)),
+                     "matched_artists": matched[:8]})
+    review = {"headline": "有来源的风格轮廓", "review": summary,
+              "inner_world": "资料只说明公开标签能支持的范围；缺口保持未知。", "humor_notes": []}
+    result["taste_summary"] = {
+        "analysis_mode": mode, "generated_at": utc_now(), "overall_summary": summary,
+        "islands": [{"name": island["name"], "summary": island["summary"],
+                     "artists": list(dict.fromkeys(result["favorite_tracks"][rid]["artist"]
+                                                    for rid in island["record_ids"]))}
+                    for island in islands],
+        "style_tags": tags, "editorial_review": review,
+        "knowledge_basis": {"model_internal": "未采用", "web_verified": "本次实际获取的公开标签",
+                            "inference": "仅统计与分组"},
+        "limitations": ["资料未覆盖的对象保持未知；专辑与艺人标签不是单曲事实。"],
+    }
+    result["agent_islands"] = islands
+    result["agent_copy_version"] = 1
+    result["overall_summary"] = summary
+    return validate_analysis_packet(result)
 
 
 def _request_id(snapshot: dict[str, Any], mode: str) -> str:
@@ -534,22 +747,57 @@ def _normalize_summary_text(bundle: Any) -> None:
 
 
 def _normalize_clusters(bundle: Any, taxonomy: dict[str, Any]) -> None:
-    """把 artist_clusters.style_refs 规范到风格本体：去掉编造引用，空则退化到本体首项。
+    """只保留有有效本体引用的艺人聚类，不凭空补风格。
 
     契约要求每个聚类至少一个本体引用；模型偶尔会写出不存在的 style:... 引用，
-    这里统一过滤而不是让整包失败。
+    无法映射的艺人保持未知；若整包没有有效聚类，交给契约校验触发重试。
     """
     if not isinstance(bundle, dict):
         return
-    known = [ref for ref in (taxonomy.get("known_style_refs") or []) if isinstance(ref, str)]
-    known_set = set(known)
-    fallback = known[0] if known else ""
+    known_set = set(taxonomy.get("known_style_refs") or [])
+    cleaned = []
     for cluster in (bundle.get("artist_clusters") or []):
         if not isinstance(cluster, dict):
             continue
         refs = [ref for ref in (cluster.get("style_refs") or [])
                 if isinstance(ref, str) and ref in known_set]
-        cluster["style_refs"] = list(dict.fromkeys(refs)) or ([fallback] if fallback else [])
+        if refs:
+            cluster["style_refs"] = list(dict.fromkeys(refs))
+            cleaned.append(cluster)
+    bundle["artist_clusters"] = cleaned
+
+
+def _normalize_semantic_themes(bundle: Any, snapshot: dict[str, Any]) -> None:
+    """Discard unsupported theme references without inventing replacement songs.
+
+    A theme with fewer than three playlist songs has insufficient evidence and
+    is discarded. The contract still rejects fewer than two supported themes.
+    """
+    if not isinstance(bundle, dict) or not isinstance(bundle.get("semantic_themes"), list):
+        return
+    title_keys = {
+        normalized_name(track["title"])
+        for track in snapshot.get("tracks", [])
+        if isinstance(track, dict) and isinstance(track.get("title"), str)
+    }
+    themes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for theme in bundle["semantic_themes"]:
+        if not isinstance(theme, dict) or not isinstance(theme.get("tracks"), list):
+            continue
+        marker = normalized_name(theme.get("theme"))
+        if not marker or marker in seen:
+            continue
+        supported = [
+            title for title in theme["tracks"]
+            if isinstance(title, str) and normalized_name(title) in title_keys
+        ]
+        if len(supported) < 3:
+            continue
+        themes.append({**theme, "tracks": supported})
+        seen.add(marker)
+    if len(themes) >= 2:
+        bundle["semantic_themes"] = themes[:6]
 
 
 def run_taste_analysis(snapshot_path: Path, taxonomy_path: Path, directory: Path, *,
@@ -616,7 +864,8 @@ def run_taste_analysis(snapshot_path: Path, taxonomy_path: Path, directory: Path
             _normalize_clusters(raw, taxonomy)
             _normalize_style_tags(raw, taxonomy)
             _normalize_summary_text(raw)
-            _normalize_summary_text(raw)
+            if mode == "taste_summary":
+                _normalize_semantic_themes(raw, snapshot)
             try:
                 bundle = validate_taste_summary_result(raw, snapshot=snapshot, taxonomy=taxonomy, mode=mode)
                 break

@@ -218,17 +218,18 @@ function createAuthStore(dbPath) {
     return verifyPassword(String(passwordValue || ""), user.password_hash);
   }
 
-  function createSession(userId, kind = "user") {
+  function createSession(userId, kind = "user", options = {}) {
     if (!["user", "admin"].includes(kind)) throw new Error("会话类型无效");
     const user = getUserById(userId);
     if (!user || user.status !== "enabled") throw new Error("用户不可用");
     if (kind === "admin" && user.role !== "admin") throw new Error("无管理员权限");
     const token = crypto.randomBytes(32).toString("base64url");
     const now = new Date();
-    const expires = new Date(now.getTime() + (kind === "admin" ? ADMIN_SESSION_TTL_SECONDS : SESSION_TTL_SECONDS) * 1000);
+    const ttlSeconds = kind === "admin" && options.remember !== true ? ADMIN_SESSION_TTL_SECONDS : SESSION_TTL_SECONDS;
+    const expires = new Date(now.getTime() + ttlSeconds * 1000);
     db.prepare("INSERT INTO sessions (token_hash, user_id, kind, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
       .run(tokenHash(token), Number(userId), kind, now.toISOString(), expires.toISOString());
-    return { token, user: publicUser(user), expires_at: expires.toISOString() };
+    return { token, user: publicUser(user), expires_at: expires.toISOString(), ttl_seconds: ttlSeconds };
   }
 
   function getSessionUser(token, kind = "user") {
@@ -290,6 +291,42 @@ function createAuthStore(dbPath) {
     // 外键级联：sessions / preferences / playlists 同步删除；audit_log 与 runs 保留且置空 user_id。
     db.prepare("DELETE FROM users WHERE id = ?").run(Number(id));
     return publicUser(user);
+  }
+
+  function userResetSnapshot(id) {
+    const user = getUserById(id);
+    if (!user) throw new Error("用户不存在");
+    const userId = Number(user.id);
+    return {
+      user: publicUser(user),
+      preferences: db.prepare("SELECT * FROM preferences WHERE user_id = ?").all(userId),
+      playlists: db.prepare("SELECT * FROM playlists WHERE user_id = ? ORDER BY id").all(userId),
+      runs: db.prepare("SELECT * FROM runs WHERE user_id = ? ORDER BY job_id").all(userId),
+      session_count: Number(db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?").get(userId).count),
+    };
+  }
+
+  function resetUserData(id, actorId, archiveId) {
+    const snapshot = userResetSnapshot(id);
+    const userId = Number(snapshot.user.id);
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+      db.prepare("DELETE FROM preferences WHERE user_id = ?").run(userId);
+      db.prepare("DELETE FROM playlists WHERE user_id = ?").run(userId);
+      db.prepare("DELETE FROM runs WHERE user_id = ?").run(userId);
+      db.prepare("UPDATE users SET last_login_at = NULL, updated_at = ? WHERE id = ?").run(isoNow(), userId);
+      writeAudit(actorId, "admin.user.initialize", {
+        target_user_id: userId, username: snapshot.user.username, archive_id: archiveId,
+        playlists: snapshot.playlists.length, runs: snapshot.runs.length,
+        preferences: snapshot.preferences.length, sessions: snapshot.session_count,
+      });
+      db.exec("COMMIT");
+      return publicUser(getUserById(userId));
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   function publicRun(row) {
@@ -573,6 +610,8 @@ function createAuthStore(dbPath) {
     listUsers,
     updateUser,
     deleteUser,
+    userResetSnapshot,
+    resetUserData,
     getRun,
     createRun,
     updateRun,

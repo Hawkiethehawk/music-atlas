@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -333,6 +334,7 @@ class CsvPlaylistReader:
 NETEASE_DETAIL_URL = "https://music.163.com/api/v6/playlist/detail"
 NETEASE_SONG_DETAIL_URL = "https://music.163.com/api/v3/song/detail"
 NETEASE_SONG_DETAIL_BATCH_SIZE = 200
+NETEASE_SONG_DETAIL_WORKERS = 3
 QQ_MUSICU_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 QQ_PAGE_SIZE = 100
 QQ_MAX_PAGES = 50
@@ -457,6 +459,85 @@ def _fetch_netease_song_details(track_ids: list[str]) -> bytes:
         return _fetch_public_bytes(request)
     except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
         raise ContractError(f"网易云歌曲详情请求失败：{exc}") from exc
+
+
+class _NeteaseRateLimited(ContractError):
+    """A successful HTTP response can still contain an API-level 429."""
+
+
+def _fetch_netease_song_batch(track_ids: list[str]) -> bytes:
+    raw = _fetch_netease_song_details(track_ids)
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw  # Preserve the existing response-validation error in the reader.
+    if isinstance(payload, dict) and payload.get("code") == 429:
+        raise _NeteaseRateLimited("网易云歌曲详情接口限流：code=429")
+    return raw
+
+
+def _netease_rate_limited(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, _NeteaseRateLimited) or (
+            isinstance(current, HTTPError) and current.code == 429
+        ):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _fetch_netease_song_batches(
+    batches: list[list[str]], *, elapsed_by_batch: list[list[float]] | None = None,
+) -> list[bytes]:
+    """Fetch at most three batches at once, preserving their original byte order.
+
+    On rate limiting, stop scheduling parallel work and retry only unfinished
+    batches serially. Other failures still fail the entire import, rather than
+    silently treating an un-fetched song as an unavailable platform track.
+    """
+
+    def fetch(index: int) -> bytes:
+        started = time.monotonic()
+        try:
+            return _fetch_netease_song_batch(batches[index])
+        finally:
+            if elapsed_by_batch is not None:
+                elapsed_by_batch[index].append(round(time.monotonic() - started, 3))
+
+    if len(batches) <= 1:
+        return [fetch(index) for index in range(len(batches))]
+    results: list[bytes | None] = [None] * len(batches)
+    workers = min(NETEASE_SONG_DETAIL_WORKERS, len(batches))
+    throttled = False
+    next_batch = workers
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = {
+            executor.submit(fetch, index): index
+            for index in range(workers)
+        }
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                index = pending.pop(future)
+                try:
+                    results[index] = future.result()
+                except (ContractError, HTTPError) as exc:
+                    if not _netease_rate_limited(exc):
+                        raise
+                    throttled = True
+            while not throttled and next_batch < len(batches) and len(pending) < workers:
+                pending[executor.submit(fetch, next_batch)] = next_batch
+                next_batch += 1
+
+    if throttled:
+        for index, result in enumerate(results):
+            if result is None:
+                time.sleep(0.4)
+                results[index] = fetch(index)
+    if any(result is None for result in results):
+        raise ContractError("网易云歌曲详情批次缺失")
+    return [result for result in results if result is not None]
 
 
 def _netease_container(payload: dict[str, Any]) -> dict[str, Any]:
@@ -588,7 +669,9 @@ class NeteasePublicPlaylistReader:
         declared_count_file: Path | None = None,
     ) -> dict[str, Any]:
         playlist_arg = _playlist_id_from_arg(playlist_id)
+        detail_started = time.monotonic()
         raw = _fetch_netease_playlist_detail(playlist_arg)
+        playlist_detail_elapsed = round(time.monotonic() - detail_started, 3)
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -596,6 +679,10 @@ class NeteasePublicPlaylistReader:
         tracks, declared_from_api, api_playlist_name = _parse_netease_detail(payload)
         raw_parts = [raw]
         song_detail_request_count = 0
+        song_detail_elapsed = 0.0
+        song_detail_batch_elapsed: list[list[float]] = []
+        embedded_track_count = 0
+        requested_song_detail_id_count = 0
         # 网易云歌曲详情接口对下架/无版权曲目不返回条目，这些 id 属于平台侧
         # 不可用，不应该让整个歌单卡在“不完整”。
         unavailable_ids: list[str] = []
@@ -603,12 +690,32 @@ class NeteasePublicPlaylistReader:
             container = _netease_container(payload)
             track_ids = _netease_track_ids(container)
             by_id: dict[str, dict[str, Any]] = {}
+            conflicting_ids: set[str] = set()
+            requested_ids = set(track_ids)
+            for track in tracks:
+                track_id = track.get("platform_track_id")
+                if track_id not in requested_ids or track_id in conflicting_ids:
+                    continue
+                if track_id in by_id:
+                    # Conflicting/duplicate embedded identities must be checked
+                    # against the song-detail endpoint before entering the snapshot.
+                    by_id.pop(track_id)
+                    conflicting_ids.add(track_id)
+                else:
+                    by_id[track_id] = track
+            embedded_track_count = len(by_id)
+            missing_ids = list(dict.fromkeys(track_id for track_id in track_ids if track_id not in by_id))
+            requested_song_detail_id_count = len(missing_ids)
             song_detail_batch_size = _crawler_int(
                 "netease_song_detail_batch_size", NETEASE_SONG_DETAIL_BATCH_SIZE, 1, 1000
             )
-            for start in range(0, len(track_ids), song_detail_batch_size):
-                batch_ids = track_ids[start:start + song_detail_batch_size]
-                detail_raw = _fetch_netease_song_details(batch_ids)
+            batches = [
+                missing_ids[start:start + song_detail_batch_size]
+                for start in range(0, len(missing_ids), song_detail_batch_size)
+            ]
+            song_detail_batch_elapsed = [[] for _ in batches]
+            song_detail_started = time.monotonic()
+            for detail_raw in _fetch_netease_song_batches(batches, elapsed_by_batch=song_detail_batch_elapsed):
                 raw_parts.append(detail_raw)
                 song_detail_request_count += 1
                 try:
@@ -619,6 +726,7 @@ class NeteasePublicPlaylistReader:
                     track_id = track.get("platform_track_id")
                     if track_id and track_id not in by_id:
                         by_id[track_id] = track
+            song_detail_elapsed = round(time.monotonic() - song_detail_started, 3)
             ordered: list[dict[str, Any]] = []
             for track_id in track_ids:
                 track = by_id.get(track_id)
@@ -660,6 +768,12 @@ class NeteasePublicPlaylistReader:
                     "netease_song_detail_batch_size", NETEASE_SONG_DETAIL_BATCH_SIZE, 1, 1000
                 ),
                 "song_detail_request_count": song_detail_request_count,
+                "embedded_track_count": embedded_track_count,
+                "requested_song_detail_id_count": requested_song_detail_id_count,
+                "playlist_detail_elapsed_seconds": playlist_detail_elapsed,
+                "song_detail_elapsed_seconds": song_detail_elapsed,
+                "song_detail_batch_elapsed_seconds": [round(sum(item), 3) for item in song_detail_batch_elapsed],
+                "song_detail_batch_attempt_counts": [len(item) for item in song_detail_batch_elapsed],
                 "unavailable_track_count": len(unavailable_ids),
                 "unavailable_track_ids": unavailable_ids[:20],
                 "declared_count_source": (
